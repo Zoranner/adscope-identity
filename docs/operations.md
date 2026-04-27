@@ -26,8 +26,12 @@ cargo run -p adss-server
 
 - `state_documents`：保存主服务 desired state 快照。
 - `audit_events`：保存审计事件。
+- `password_tasks`：保存按域拆分的密码下发任务。
+- `agent_cursors`：保存 Agent 已应用结构版本和密码任务游标。
+- `drift_reports`：保存 Agent 对账发现的 AD 侧 drift。
+- `registration_tokens`：保存一次性 Agent 注册令牌。
 
-这一步已经把数据库边界接入主服务启动和用户更新持久化路径，但密码任务、Agent cursor、drift 等更细粒度状态仍在内存 store 中。下一阶段应把这些状态拆成独立 ORM entity，而不是继续扩大 JSON 快照。
+主服务仍使用内存 store 作为运行时聚合缓存；启用数据库时，关键同步状态会同步写入 SeaORM repository。后续生产化应继续把启动恢复逻辑扩展到密码任务、Agent cursor、drift report 和注册令牌，而不是只恢复 desired state 快照。
 
 ## Agent
 
@@ -45,7 +49,7 @@ cargo run -p adss-agent
 
 ## 当前外部依赖边界
 
-- PostgreSQL：SeaORM repository 已具备 PostgreSQL 驱动和连接入口，当前只持久化 desired state 快照与审计事件。
+- PostgreSQL：SeaORM repository 已具备 PostgreSQL 驱动和连接入口，当前持久化 desired state 快照、审计事件、密码任务、Agent cursor、drift report 和注册令牌。
 - mTLS：尚未接入传输层，当前通过 Agent 与域绑定逻辑固定授权行为。
 - KMS/HSM：尚未接入，当前密码密封函数只保留不泄露明文的接口行为。
 - LDAPS：尚未接入真实 AD，当前由 `DirectoryClient` trait 隔离，Agent runtime 已能按顺序调用结构操作和密码任务。

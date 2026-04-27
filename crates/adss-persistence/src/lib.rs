@@ -1,4 +1,4 @@
-use adss_contract::{AuditEvent, DesiredState, DomainConfig};
+use adss_contract::{AuditEvent, DesiredState, DomainConfig, PasswordTask};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait,
     QueryFilter, QueryOrder, Set,
@@ -44,12 +44,104 @@ mod entities {
 
         impl ActiveModelBehavior for ActiveModel {}
     }
+
+    pub mod password_task {
+        use sea_orm::entity::prelude::*;
+
+        #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+        #[sea_orm(table_name = "password_tasks")]
+        pub struct Model {
+            #[sea_orm(primary_key, auto_increment = false)]
+            pub task_id: i64,
+            pub domain_id: String,
+            pub employee_id: String,
+            pub encrypted_password: String,
+        }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
+
+        impl ActiveModelBehavior for ActiveModel {}
+    }
+
+    pub mod agent_cursor {
+        use sea_orm::entity::prelude::*;
+
+        #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+        #[sea_orm(table_name = "agent_cursors")]
+        pub struct Model {
+            #[sea_orm(primary_key, auto_increment = false)]
+            pub agent_id: String,
+            pub domain_id: String,
+            pub structure_version: i64,
+            pub password_task_cursor: i64,
+        }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
+
+        impl ActiveModelBehavior for ActiveModel {}
+    }
+
+    pub mod drift_report {
+        use sea_orm::entity::prelude::*;
+
+        #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+        #[sea_orm(table_name = "drift_reports")]
+        pub struct Model {
+            #[sea_orm(primary_key, auto_increment = false)]
+            pub id: i64,
+            pub domain_id: String,
+            pub agent_id: String,
+            pub observed_structure_version: i64,
+            pub drifted_objects_json: String,
+        }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
+
+        impl ActiveModelBehavior for ActiveModel {}
+    }
+
+    pub mod registration_token {
+        use sea_orm::entity::prelude::*;
+
+        #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+        #[sea_orm(table_name = "registration_tokens")]
+        pub struct Model {
+            #[sea_orm(primary_key, auto_increment = false)]
+            pub token: String,
+            pub domain_id: String,
+        }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
+
+        impl ActiveModelBehavior for ActiveModel {}
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoreSnapshot {
     pub desired_state: DesiredState,
     pub domains: Vec<DomainConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentCursorRecord {
+    pub agent_id: String,
+    pub domain_id: String,
+    pub structure_version: u64,
+    pub password_task_cursor: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DriftReportRecord {
+    pub id: u64,
+    pub domain_id: String,
+    pub agent_id: String,
+    pub observed_structure_version: u64,
+    pub drifted_objects: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -89,6 +181,53 @@ CREATE TABLE IF NOT EXISTS audit_events (
     target TEXT NOT NULL,
     result TEXT NOT NULL,
     detail_json TEXT NOT NULL
+)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS password_tasks (
+    task_id BIGINT PRIMARY KEY NOT NULL,
+    domain_id TEXT NOT NULL,
+    employee_id TEXT NOT NULL,
+    encrypted_password TEXT NOT NULL
+)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS agent_cursors (
+    agent_id TEXT PRIMARY KEY NOT NULL,
+    domain_id TEXT NOT NULL,
+    structure_version BIGINT NOT NULL,
+    password_task_cursor BIGINT NOT NULL
+)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS drift_reports (
+    id BIGINT PRIMARY KEY NOT NULL,
+    domain_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    observed_structure_version BIGINT NOT NULL,
+    drifted_objects_json TEXT NOT NULL
+)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS registration_tokens (
+    token TEXT PRIMARY KEY NOT NULL,
+    domain_id TEXT NOT NULL
 )
 "#,
             )
@@ -185,5 +324,163 @@ CREATE TABLE IF NOT EXISTS audit_events (
                 })
             })
             .collect()
+    }
+
+    pub async fn append_password_task(
+        &self,
+        task_id: u64,
+        domain_id: &str,
+        employee_id: &str,
+        encrypted_password: &str,
+    ) -> anyhow::Result<()> {
+        use entities::password_task;
+
+        password_task::ActiveModel {
+            task_id: Set(task_id as i64),
+            domain_id: Set(domain_id.to_string()),
+            employee_id: Set(employee_id.to_string()),
+            encrypted_password: Set(encrypted_password.to_string()),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_password_tasks_after(
+        &self,
+        domain_id: &str,
+        cursor: u64,
+    ) -> anyhow::Result<Vec<PasswordTask>> {
+        use entities::password_task;
+
+        let models = password_task::Entity::find()
+            .filter(password_task::Column::DomainId.eq(domain_id))
+            .filter(password_task::Column::TaskId.gt(cursor as i64))
+            .order_by_asc(password_task::Column::TaskId)
+            .all(&self.db)
+            .await?;
+        Ok(models
+            .into_iter()
+            .map(|model| PasswordTask {
+                task_id: model.task_id as u64,
+                domain_id: model.domain_id,
+                employee_id: model.employee_id,
+                encrypted_password: model.encrypted_password,
+            })
+            .collect())
+    }
+
+    pub async fn upsert_agent_cursor(&self, cursor: &AgentCursorRecord) -> anyhow::Result<()> {
+        use entities::agent_cursor;
+
+        agent_cursor::Entity::delete_by_id(cursor.agent_id.as_str())
+            .exec(&self.db)
+            .await?;
+        agent_cursor::ActiveModel {
+            agent_id: Set(cursor.agent_id.clone()),
+            domain_id: Set(cursor.domain_id.clone()),
+            structure_version: Set(cursor.structure_version as i64),
+            password_task_cursor: Set(cursor.password_task_cursor as i64),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn load_agent_cursor(
+        &self,
+        agent_id: &str,
+    ) -> anyhow::Result<Option<AgentCursorRecord>> {
+        use entities::agent_cursor;
+
+        let Some(model) = agent_cursor::Entity::find_by_id(agent_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(AgentCursorRecord {
+            agent_id: model.agent_id,
+            domain_id: model.domain_id,
+            structure_version: model.structure_version as u64,
+            password_task_cursor: model.password_task_cursor as u64,
+        }))
+    }
+
+    pub async fn append_drift_report(&self, report: &DriftReportRecord) -> anyhow::Result<()> {
+        use entities::drift_report;
+
+        drift_report::ActiveModel {
+            id: Set(report.id as i64),
+            domain_id: Set(report.domain_id.clone()),
+            agent_id: Set(report.agent_id.clone()),
+            observed_structure_version: Set(report.observed_structure_version as i64),
+            drifted_objects_json: Set(serde_json::to_string(&report.drifted_objects)?),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_drift_reports(
+        &self,
+        domain_id: &str,
+    ) -> anyhow::Result<Vec<DriftReportRecord>> {
+        use entities::drift_report;
+
+        let models = drift_report::Entity::find()
+            .filter(drift_report::Column::DomainId.eq(domain_id))
+            .order_by_asc(drift_report::Column::Id)
+            .all(&self.db)
+            .await?;
+        models
+            .into_iter()
+            .map(|model| {
+                Ok(DriftReportRecord {
+                    id: model.id as u64,
+                    domain_id: model.domain_id,
+                    agent_id: model.agent_id,
+                    observed_structure_version: model.observed_structure_version as u64,
+                    drifted_objects: serde_json::from_str::<Vec<String>>(
+                        &model.drifted_objects_json,
+                    )?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn insert_registration_token(
+        &self,
+        token: &str,
+        domain_id: &str,
+    ) -> anyhow::Result<()> {
+        use entities::registration_token;
+
+        registration_token::Entity::delete_by_id(token)
+            .exec(&self.db)
+            .await?;
+        registration_token::ActiveModel {
+            token: Set(token.to_string()),
+            domain_id: Set(domain_id.to_string()),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn consume_registration_token(&self, token: &str) -> anyhow::Result<Option<String>> {
+        use entities::registration_token;
+
+        let Some(model) = registration_token::Entity::find_by_id(token)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(None);
+        };
+        registration_token::Entity::delete_by_id(token)
+            .exec(&self.db)
+            .await?;
+        Ok(Some(model.domain_id))
     }
 }

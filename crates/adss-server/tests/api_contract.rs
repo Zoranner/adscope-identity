@@ -77,6 +77,117 @@ async fn server_persists_desired_state_and_audit_events_through_orm_repository()
 }
 
 #[tokio::test]
+async fn server_persists_password_tasks_agent_cursor_and_drift_reports() {
+    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    let state = AppState::seeded_with_repository(repository.clone())
+        .await
+        .unwrap();
+    let app = build_router(state);
+
+    let password = PasswordChangeRequest {
+        password: "P@ssw0rd-never-leak".to_string(),
+    };
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/users/E001/password", &password))
+        .await
+        .expect("password response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let tasks = repository
+        .list_password_tasks_after("domain-a", 0)
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].employee_id, "E001");
+    assert!(!tasks[0].encrypted_password.contains("P@ssw0rd-never-leak"));
+
+    let report = AgentReportRequest {
+        domain_id: "domain-a".to_string(),
+        agent_id: "agent-a".to_string(),
+        applied_structure_version: 3,
+        applied_password_task_cursor: tasks[0].task_id,
+        summary: adss_contract::SyncSummary {
+            succeeded: 1,
+            failed: 0,
+            skipped: 0,
+            pending_manual: 0,
+        },
+        object_results: Vec::new(),
+    };
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/agent/report", &report))
+        .await
+        .expect("report response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let cursor = repository
+        .load_agent_cursor("agent-a")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cursor.structure_version, 3);
+    assert_eq!(cursor.password_task_cursor, tasks[0].task_id);
+
+    let drift = DriftReportRequest {
+        domain_id: "domain-a".to_string(),
+        agent_id: "agent-a".to_string(),
+        observed_structure_version: 3,
+        drifted_objects: vec!["employee:E001:mail".to_string()],
+    };
+    let response = app
+        .oneshot(json_request("/api/agent/drift-report", &drift))
+        .await
+        .expect("drift response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let drift_reports = repository.list_drift_reports("domain-a").await.unwrap();
+    assert_eq!(drift_reports.len(), 1);
+    assert_eq!(drift_reports[0].drifted_objects, vec!["employee:E001:mail"]);
+}
+
+#[tokio::test]
+async fn server_consumes_registration_tokens_from_orm_repository_once() {
+    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository
+        .insert_registration_token("db-register-domain-a", "domain-a")
+        .await
+        .unwrap();
+    let state = AppState::seeded_with_repository(repository.clone())
+        .await
+        .unwrap();
+    let app = build_router(state);
+    let request = RegisterAgentRequest {
+        registration_token: "db-register-domain-a".to_string(),
+        agent_id: "agent-db".to_string(),
+        domain_id: "domain-a".to_string(),
+        certificate_subject: "CN=agent-db".to_string(),
+    };
+
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/agent/register", &request))
+        .await
+        .expect("register response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(json_request("/api/agent/register", &request))
+        .await
+        .expect("register response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let consumed = repository
+        .consume_registration_token("db-register-domain-a")
+        .await
+        .unwrap();
+    assert_eq!(consumed, None);
+}
+
+#[tokio::test]
 async fn user_update_changes_desired_state_and_filters_non_whitelisted_attributes() {
     let state = AppState::seeded();
     let app = build_router(state);

@@ -4,7 +4,7 @@ use adss_contract::{
     PasswordChangeResponse, PasswordTask, PollStructurePayload, RegisterAgentRequest,
     RegisterAgentResponse, UpdateUserRequest, User, UserStatus, sanitize_user_attributes,
 };
-use adss_persistence::{OrmRepository, StoreSnapshot};
+use adss_persistence::{AgentCursorRecord, DriftReportRecord, OrmRepository, StoreSnapshot};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -90,6 +90,43 @@ impl AppState {
         }
         Ok(())
     }
+
+    async fn persist_password_tasks(&self, tasks: &[PasswordTask]) -> Result<(), ApiError> {
+        if let Some(repository) = &self.repository {
+            for task in tasks {
+                repository
+                    .append_password_task(
+                        task.task_id,
+                        &task.domain_id,
+                        &task.employee_id,
+                        &task.encrypted_password,
+                    )
+                    .await
+                    .map_err(|_| ApiError::Persistence)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn persist_agent_cursor(&self, cursor: &AgentCursorRecord) -> Result<(), ApiError> {
+        if let Some(repository) = &self.repository {
+            repository
+                .upsert_agent_cursor(cursor)
+                .await
+                .map_err(|_| ApiError::Persistence)?;
+        }
+        Ok(())
+    }
+
+    async fn persist_drift_report(&self, report: &DriftReportRecord) -> Result<(), ApiError> {
+        if let Some(repository) = &self.repository {
+            repository
+                .append_drift_report(report)
+                .await
+                .map_err(|_| ApiError::Persistence)?;
+        }
+        Ok(())
+    }
 }
 
 impl Store {
@@ -159,6 +196,7 @@ impl Store {
             agent_cursors: HashMap::new(),
             next_password_task_id: 1,
             next_audit_sequence: 1,
+            next_drift_report_id: 1,
         }
     }
 
@@ -194,6 +232,7 @@ struct Store {
     agent_cursors: HashMap<String, u64>,
     next_password_task_id: u64,
     next_audit_sequence: u64,
+    next_drift_report_id: u64,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -263,28 +302,36 @@ async fn change_password(
     Path(employee_id): Path<String>,
     Json(request): Json<PasswordChangeRequest>,
 ) -> Result<Json<PasswordChangeResponse>, ApiError> {
-    let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-    let domain_ids: Vec<String> = store.domains.keys().cloned().collect();
-    let created_tasks = domain_ids.len();
+    let (password_tasks, audit_event, created_tasks) = {
+        let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
+        let domain_ids: Vec<String> = store.domains.keys().cloned().collect();
+        let created_tasks = domain_ids.len();
+        let mut password_tasks = Vec::with_capacity(created_tasks);
 
-    for domain_id in domain_ids {
-        let task_id = store.next_password_task_id;
-        store.next_password_task_id += 1;
-        store.password_tasks.push(PasswordTask {
-            task_id,
-            domain_id,
-            employee_id: employee_id.clone(),
-            encrypted_password: seal_password_for_storage(&request.password),
-        });
-    }
-    record_audit(
-        &mut store,
-        "user:local",
-        "password_tasks_created",
-        format!("user:{employee_id}"),
-        "accepted",
-        BTreeMap::from([("created_tasks".to_string(), created_tasks.to_string())]),
-    );
+        for domain_id in domain_ids {
+            let task_id = store.next_password_task_id;
+            store.next_password_task_id += 1;
+            let task = PasswordTask {
+                task_id,
+                domain_id,
+                employee_id: employee_id.clone(),
+                encrypted_password: seal_password_for_storage(&request.password),
+            };
+            store.password_tasks.push(task.clone());
+            password_tasks.push(task);
+        }
+        let audit_event = record_audit(
+            &mut store,
+            "user:local",
+            "password_tasks_created",
+            format!("user:{employee_id}"),
+            "accepted",
+            BTreeMap::from([("created_tasks".to_string(), created_tasks.to_string())]),
+        );
+        (password_tasks, audit_event, created_tasks)
+    };
+    state.persist_password_tasks(&password_tasks).await?;
+    state.persist_audit(&audit_event).await?;
 
     Ok(Json(PasswordChangeResponse {
         employee_id,
@@ -353,6 +400,14 @@ async fn domain_status(
 }
 
 async fn audit_events(State(state): State<AppState>) -> Result<Json<Vec<AuditEvent>>, ApiError> {
+    if let Some(repository) = &state.repository {
+        return Ok(Json(
+            repository
+                .list_audit_events()
+                .await
+                .map_err(|_| ApiError::Persistence)?,
+        ));
+    }
     let store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
     Ok(Json(store.audit_events.clone()))
 }
@@ -361,30 +416,43 @@ async fn register_agent(
     State(state): State<AppState>,
     Json(request): Json<RegisterAgentRequest>,
 ) -> Result<Json<RegisterAgentResponse>, ApiError> {
-    let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-    let token_domain_id = store
-        .registration_tokens
-        .remove(&request.registration_token)
-        .ok_or(ApiError::Unauthorized)?;
+    let token_domain_id = if let Some(repository) = &state.repository {
+        repository
+            .consume_registration_token(&request.registration_token)
+            .await
+            .map_err(|_| ApiError::Persistence)?
+            .ok_or(ApiError::Unauthorized)?
+    } else {
+        let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
+        store
+            .registration_tokens
+            .remove(&request.registration_token)
+            .ok_or(ApiError::Unauthorized)?
+    };
 
-    if token_domain_id != request.domain_id || !store.domains.contains_key(&request.domain_id) {
-        return Err(ApiError::Unauthorized);
-    }
+    let audit_event = {
+        let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
 
-    store
-        .agents
-        .insert(request.agent_id.clone(), request.domain_id.clone());
-    record_audit(
-        &mut store,
-        format!("agent:{}", request.agent_id),
-        "agent_registered",
-        format!("domain:{}", request.domain_id),
-        "accepted",
-        BTreeMap::from([(
-            "certificate_subject".to_string(),
-            request.certificate_subject,
-        )]),
-    );
+        if token_domain_id != request.domain_id || !store.domains.contains_key(&request.domain_id) {
+            return Err(ApiError::Unauthorized);
+        }
+
+        store
+            .agents
+            .insert(request.agent_id.clone(), request.domain_id.clone());
+        record_audit(
+            &mut store,
+            format!("agent:{}", request.agent_id),
+            "agent_registered",
+            format!("domain:{}", request.domain_id),
+            "accepted",
+            BTreeMap::from([(
+                "certificate_subject".to_string(),
+                request.certificate_subject,
+            )]),
+        )
+    };
+    state.persist_audit(&audit_event).await?;
 
     Ok(Json(RegisterAgentResponse {
         agent_id: request.agent_id,
@@ -463,31 +531,43 @@ async fn agent_report(
     State(state): State<AppState>,
     Json(request): Json<AgentReportRequest>,
 ) -> Result<Json<AgentReportResponse>, ApiError> {
-    let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-    authorize_agent(&store, &request.agent_id, &request.domain_id)?;
-    store
-        .agent_structure_versions
-        .insert(request.agent_id.clone(), request.applied_structure_version);
-    store
-        .agent_cursors
-        .insert(request.agent_id, request.applied_password_task_cursor);
-    record_audit(
-        &mut store,
-        "agent:report",
-        "agent_report_accepted",
-        format!("domain:{}", request.domain_id),
-        "accepted",
-        BTreeMap::from([
-            (
-                "applied_structure_version".to_string(),
-                request.applied_structure_version.to_string(),
-            ),
-            (
-                "applied_password_task_cursor".to_string(),
-                request.applied_password_task_cursor.to_string(),
-            ),
-        ]),
-    );
+    let (cursor, audit_event) = {
+        let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
+        authorize_agent(&store, &request.agent_id, &request.domain_id)?;
+        store
+            .agent_structure_versions
+            .insert(request.agent_id.clone(), request.applied_structure_version);
+        store.agent_cursors.insert(
+            request.agent_id.clone(),
+            request.applied_password_task_cursor,
+        );
+        let cursor = AgentCursorRecord {
+            agent_id: request.agent_id,
+            domain_id: request.domain_id.clone(),
+            structure_version: request.applied_structure_version,
+            password_task_cursor: request.applied_password_task_cursor,
+        };
+        let audit_event = record_audit(
+            &mut store,
+            "agent:report",
+            "agent_report_accepted",
+            format!("domain:{}", request.domain_id),
+            "accepted",
+            BTreeMap::from([
+                (
+                    "applied_structure_version".to_string(),
+                    request.applied_structure_version.to_string(),
+                ),
+                (
+                    "applied_password_task_cursor".to_string(),
+                    request.applied_password_task_cursor.to_string(),
+                ),
+            ]),
+        );
+        (cursor, audit_event)
+    };
+    state.persist_agent_cursor(&cursor).await?;
+    state.persist_audit(&audit_event).await?;
     Ok(Json(AgentReportResponse { accepted: true }))
 }
 
@@ -495,20 +575,33 @@ async fn drift_report(
     State(state): State<AppState>,
     Json(request): Json<DriftReportRequest>,
 ) -> Result<Json<StatusMessage>, ApiError> {
-    let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-    authorize_agent(&store, &request.agent_id, &request.domain_id)?;
-    let drift_count = request.drifted_objects.len();
-    let domain_id = request.domain_id.clone();
-    let agent_id = request.agent_id.clone();
-    store.drift_reports.push(request);
-    record_audit(
-        &mut store,
-        format!("agent:{agent_id}"),
-        "drift_report_recorded",
-        format!("domain:{domain_id}"),
-        "accepted",
-        BTreeMap::from([("drift_count".to_string(), drift_count.to_string())]),
-    );
+    let (drift_report, audit_event) = {
+        let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
+        authorize_agent(&store, &request.agent_id, &request.domain_id)?;
+        let drift_count = request.drifted_objects.len();
+        let domain_id = request.domain_id.clone();
+        let agent_id = request.agent_id.clone();
+        let drift_report = DriftReportRecord {
+            id: store.next_drift_report_id,
+            domain_id: domain_id.clone(),
+            agent_id: agent_id.clone(),
+            observed_structure_version: request.observed_structure_version,
+            drifted_objects: request.drifted_objects.clone(),
+        };
+        store.next_drift_report_id += 1;
+        store.drift_reports.push(request);
+        let audit_event = record_audit(
+            &mut store,
+            format!("agent:{agent_id}"),
+            "drift_report_recorded",
+            format!("domain:{domain_id}"),
+            "accepted",
+            BTreeMap::from([("drift_count".to_string(), drift_count.to_string())]),
+        );
+        (drift_report, audit_event)
+    };
+    state.persist_drift_report(&drift_report).await?;
+    state.persist_audit(&audit_event).await?;
     Ok(Json(StatusMessage::ok(
         "drift_recorded_without_reverse_write",
     )))
