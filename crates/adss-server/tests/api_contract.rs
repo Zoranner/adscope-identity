@@ -2,6 +2,7 @@ use adss_contract::{
     AgentPollRequest, AgentReportRequest, DriftReportRequest, PasswordChangeRequest,
     PollStructurePayload, RegisterAgentRequest, UpdateUserRequest,
 };
+use adss_persistence::OrmRepository;
 use adss_server::{AppState, ServerConfig, build_router};
 use axum::{
     body::Body,
@@ -38,6 +39,41 @@ fn server_config_uses_default_bind_address_and_accepts_env_override() {
 
     let overridden = ServerConfig::from_bind_addr(Some("0.0.0.0:18080".to_string()));
     assert_eq!(overridden.bind_addr, "0.0.0.0:18080");
+}
+
+#[tokio::test]
+async fn server_persists_desired_state_and_audit_events_through_orm_repository() {
+    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    let state = AppState::seeded_with_repository(repository.clone())
+        .await
+        .unwrap();
+    let app = build_router(state);
+
+    let request = UpdateUserRequest {
+        display_name: Some("张三丰".to_string()),
+        relative_dn: None,
+        attributes: BTreeMap::new(),
+    };
+
+    let response = app
+        .oneshot(method_json_request(
+            Method::PATCH,
+            "/api/users/E001",
+            &request,
+        ))
+        .await
+        .expect("update response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let snapshot = repository.load_snapshot().await.unwrap().unwrap();
+    assert_eq!(snapshot.desired_state.version, 4);
+    assert_eq!(snapshot.desired_state.users[0].display_name, "张三丰");
+
+    let events = repository.list_audit_events().await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].action, "user_updated");
 }
 
 #[tokio::test]

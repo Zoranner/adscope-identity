@@ -4,6 +4,7 @@ use adss_contract::{
     PasswordChangeResponse, PasswordTask, PollStructurePayload, RegisterAgentRequest,
     RegisterAgentResponse, UpdateUserRequest, User, UserStatus, sanitize_user_attributes,
 };
+use adss_persistence::{OrmRepository, StoreSnapshot};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -20,12 +21,22 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     pub bind_addr: String,
+    pub database_url: Option<String>,
 }
 
 impl ServerConfig {
     pub fn from_bind_addr(bind_addr: Option<String>) -> Self {
         Self {
             bind_addr: bind_addr.unwrap_or_else(|| "127.0.0.1:8080".to_string()),
+            database_url: None,
+        }
+    }
+
+    pub fn from_env() -> Self {
+        Self {
+            bind_addr: std::env::var("ADSS_BIND_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:8080".to_string()),
+            database_url: std::env::var("ADSS_DATABASE_URL").ok(),
         }
     }
 }
@@ -33,10 +44,56 @@ impl ServerConfig {
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Mutex<Store>>,
+    repository: Option<OrmRepository>,
 }
 
 impl AppState {
     pub fn seeded() -> Self {
+        Self::from_store(Store::seeded(), None)
+    }
+
+    pub async fn seeded_with_repository(repository: OrmRepository) -> anyhow::Result<Self> {
+        let store = match repository.load_snapshot().await? {
+            Some(snapshot) => Store::from_snapshot(snapshot),
+            None => {
+                let store = Store::seeded();
+                repository.save_snapshot(&store.snapshot()).await?;
+                store
+            }
+        };
+        Ok(Self::from_store(store, Some(repository)))
+    }
+
+    fn from_store(store: Store, repository: Option<OrmRepository>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(store)),
+            repository,
+        }
+    }
+
+    async fn persist_snapshot(&self, snapshot: &StoreSnapshot) -> Result<(), ApiError> {
+        if let Some(repository) = &self.repository {
+            repository
+                .save_snapshot(snapshot)
+                .await
+                .map_err(|_| ApiError::Persistence)?;
+        }
+        Ok(())
+    }
+
+    async fn persist_audit(&self, event: &AuditEvent) -> Result<(), ApiError> {
+        if let Some(repository) = &self.repository {
+            repository
+                .append_audit_event(event)
+                .await
+                .map_err(|_| ApiError::Persistence)?;
+        }
+        Ok(())
+    }
+}
+
+impl Store {
+    fn seeded() -> Self {
         let desired_state = DesiredState {
             version: 3,
             ous: vec![OrgUnit {
@@ -91,19 +148,35 @@ impl AppState {
         ]);
 
         Self {
-            inner: Arc::new(Mutex::new(Store {
-                desired_state,
-                domains,
-                agents,
-                registration_tokens,
-                drift_reports: Vec::new(),
-                audit_events: Vec::new(),
-                agent_structure_versions: HashMap::new(),
-                password_tasks: Vec::new(),
-                agent_cursors: HashMap::new(),
-                next_password_task_id: 1,
-                next_audit_sequence: 1,
-            })),
+            desired_state,
+            domains,
+            agents,
+            registration_tokens,
+            drift_reports: Vec::new(),
+            audit_events: Vec::new(),
+            agent_structure_versions: HashMap::new(),
+            password_tasks: Vec::new(),
+            agent_cursors: HashMap::new(),
+            next_password_task_id: 1,
+            next_audit_sequence: 1,
+        }
+    }
+
+    fn from_snapshot(snapshot: StoreSnapshot) -> Self {
+        let mut store = Self::seeded();
+        store.desired_state = snapshot.desired_state;
+        store.domains = snapshot
+            .domains
+            .into_iter()
+            .map(|domain| (domain.domain_id.clone(), domain))
+            .collect();
+        store
+    }
+
+    fn snapshot(&self) -> StoreSnapshot {
+        StoreSnapshot {
+            desired_state: self.desired_state.clone(),
+            domains: self.domains.values().cloned().collect(),
         }
     }
 }
@@ -147,33 +220,40 @@ async fn update_user(
     Path(employee_id): Path<String>,
     Json(request): Json<UpdateUserRequest>,
 ) -> Result<Json<User>, ApiError> {
-    let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-    let user = store
-        .desired_state
-        .users
-        .iter_mut()
-        .find(|user| user.employee_id == employee_id)
-        .ok_or(ApiError::NotFound)?;
+    let (updated_user, snapshot, audit_event) = {
+        let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
+        let user = store
+            .desired_state
+            .users
+            .iter_mut()
+            .find(|user| user.employee_id == employee_id)
+            .ok_or(ApiError::NotFound)?;
 
-    if let Some(display_name) = request.display_name {
-        user.display_name = display_name;
-    }
-    if let Some(relative_dn) = request.relative_dn {
-        user.relative_dn = relative_dn;
-    }
-    user.attributes = sanitize_user_attributes(request.attributes, &["mail", "telephoneNumber"]);
-    let updated_user = user.clone();
-    store.desired_state.version += 1;
-    let target = format!("user:{employee_id}");
-    let version = store.desired_state.version.to_string();
-    record_audit(
-        &mut store,
-        "user:local",
-        "user_updated",
-        target,
-        "accepted",
-        BTreeMap::from([("structure_version".to_string(), version)]),
-    );
+        if let Some(display_name) = request.display_name {
+            user.display_name = display_name;
+        }
+        if let Some(relative_dn) = request.relative_dn {
+            user.relative_dn = relative_dn;
+        }
+        user.attributes =
+            sanitize_user_attributes(request.attributes, &["mail", "telephoneNumber"]);
+        let updated_user = user.clone();
+        store.desired_state.version += 1;
+        let target = format!("user:{employee_id}");
+        let version = store.desired_state.version.to_string();
+        let audit_event = record_audit(
+            &mut store,
+            "user:local",
+            "user_updated",
+            target,
+            "accepted",
+            BTreeMap::from([("structure_version".to_string(), version)]),
+        );
+        let snapshot = store.snapshot();
+        (updated_user, snapshot, audit_event)
+    };
+    state.persist_snapshot(&snapshot).await?;
+    state.persist_audit(&audit_event).await?;
 
     Ok(Json(updated_user))
 }
@@ -441,17 +521,19 @@ fn record_audit(
     target: impl Into<String>,
     result: impl Into<String>,
     detail: BTreeMap<String, String>,
-) {
+) -> AuditEvent {
     let sequence = store.next_audit_sequence;
     store.next_audit_sequence += 1;
-    store.audit_events.push(AuditEvent {
+    let event = AuditEvent {
         sequence,
         actor: actor.into(),
         action: action.into(),
         target: target.into(),
         result: result.into(),
         detail,
-    });
+    };
+    store.audit_events.push(event.clone());
+    event
 }
 
 fn authorize_agent(store: &Store, agent_id: &str, domain_id: &str) -> Result<(), ApiError> {
@@ -496,6 +578,7 @@ enum ApiError {
     Forbidden,
     NotFound,
     StatePoisoned,
+    Persistence,
 }
 
 impl ApiError {
@@ -505,6 +588,7 @@ impl ApiError {
             ApiError::Forbidden => "domain_binding_mismatch",
             ApiError::NotFound => "not_found",
             ApiError::StatePoisoned => "state_poisoned",
+            ApiError::Persistence => "persistence",
         }
     }
 }
@@ -515,7 +599,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden => StatusCode::FORBIDDEN,
             ApiError::NotFound => StatusCode::NOT_FOUND,
-            ApiError::StatePoisoned => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::StatePoisoned | ApiError::Persistence => StatusCode::INTERNAL_SERVER_ERROR,
         };
         status.into_response()
     }

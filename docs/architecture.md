@@ -48,6 +48,8 @@ AD 手工变更只作为 drift 回传和告警，不自动合并回主服务。�
 
 Agent runtime 的一轮执行流程为 `poll -> desired state reconcile -> password tasks -> report`。运行时通过 `ControlPlaneClient` 对接主服务，通过 `DirectoryClient` 对接 AD；这两个边界允许测试中使用内存或 dry-run 实现，生产中替换为 HTTP/mTLS 和 LDAPS 实现。
 
+数据库访问通过 SeaORM repository 隔离。首个持久化切面保存 desired state 快照和审计事件，后续应继续把密码任务、Agent cursor、drift report 等状态拆成独立实体，避免应用层长期依赖大 JSON 文档。
+
 ## 删除与离职
 
 用户删除或离职不物理删除 AD 对象，默认禁用账号并移动到域配置的隔离 OU。组和 OU 的破坏性删除首版不自动执行，只标记为 drift 或 pending destructive change，等待后续显式确认机制。

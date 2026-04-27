@@ -15,6 +15,20 @@ cargo run -p adss-server
 
 当前主服务使用内存状态实现，用于固定 API、同步协议和审计契约。生产化接入 PostgreSQL 时应保持现有 contract 不变，把内存 store 替换为持久化 repository。
 
+主服务也可以通过 `ADSS_DATABASE_URL` 启用 ORM repository。当前 repository 使用 SeaORM 管理 schema 和 CRUD，已支持 SQLite 与 PostgreSQL 驱动；本地验证可先使用 SQLite。
+
+```powershell
+$env:ADSS_DATABASE_URL = "sqlite://adss.db?mode=rwc"
+cargo run -p adss-server
+```
+
+当前 ORM 层包含：
+
+- `state_documents`：保存主服务 desired state 快照。
+- `audit_events`：保存审计事件。
+
+这一步已经把数据库边界接入主服务启动和用户更新持久化路径，但密码任务、Agent cursor、drift 等更细粒度状态仍在内存 store 中。下一阶段应把这些状态拆成独立 ORM entity，而不是继续扩大 JSON 快照。
+
 ## Agent
 
 Agent 入口位于 `adss-agent` crate。Agent 从环境变量读取主服务地址、域 ID 和 Agent ID。
@@ -31,7 +45,7 @@ cargo run -p adss-agent
 
 ## 当前外部依赖边界
 
-- PostgreSQL：尚未接入，当前以内存 store 固定领域和 API 契约。
+- PostgreSQL：SeaORM repository 已具备 PostgreSQL 驱动和连接入口，当前只持久化 desired state 快照与审计事件。
 - mTLS：尚未接入传输层，当前通过 Agent 与域绑定逻辑固定授权行为。
 - KMS/HSM：尚未接入，当前密码密封函数只保留不泄露明文的接口行为。
 - LDAPS：尚未接入真实 AD，当前由 `DirectoryClient` trait 隔离，Agent runtime 已能按顺序调用结构操作和密码任务。
