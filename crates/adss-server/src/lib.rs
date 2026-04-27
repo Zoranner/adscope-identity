@@ -17,6 +17,19 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerConfig {
+    pub bind_addr: String,
+}
+
+impl ServerConfig {
+    pub fn from_bind_addr(bind_addr: Option<String>) -> Self {
+        Self {
+            bind_addr: bind_addr.unwrap_or_else(|| "127.0.0.1:8080".to_string()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Mutex<Store>>,

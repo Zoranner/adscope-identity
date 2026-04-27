@@ -2,7 +2,7 @@ use adss_contract::{
     AgentPollRequest, AgentReportRequest, DriftReportRequest, PasswordChangeRequest,
     PollStructurePayload, RegisterAgentRequest, UpdateUserRequest,
 };
-use adss_server::{AppState, build_router};
+use adss_server::{AppState, ServerConfig, build_router};
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
@@ -29,6 +29,15 @@ async fn agent_cannot_poll_another_domain_tasks() {
         .expect("poll response");
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn server_config_uses_default_bind_address_and_accepts_env_override() {
+    let default_config = ServerConfig::from_bind_addr(None);
+    assert_eq!(default_config.bind_addr, "127.0.0.1:8080");
+
+    let overridden = ServerConfig::from_bind_addr(Some("0.0.0.0:18080".to_string()));
+    assert_eq!(overridden.bind_addr, "0.0.0.0:18080");
 }
 
 #[tokio::test]

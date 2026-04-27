@@ -46,7 +46,8 @@ AD 域内 Agent 主动轮询
 
 AD 手工变更只作为 drift 回传和告警，不自动合并回主服务。中心服务始终是单一事实源。
 
+Agent runtime 的一轮执行流程为 `poll -> desired state reconcile -> password tasks -> report`。运行时通过 `ControlPlaneClient` 对接主服务，通过 `DirectoryClient` 对接 AD；这两个边界允许测试中使用内存或 dry-run 实现，生产中替换为 HTTP/mTLS 和 LDAPS 实现。
+
 ## 删除与离职
 
 用户删除或离职不物理删除 AD 对象，默认禁用账号并移动到域配置的隔离 OU。组和 OU 的破坏性删除首版不自动执行，只标记为 drift 或 pending destructive change，等待后续显式确认机制。
-
