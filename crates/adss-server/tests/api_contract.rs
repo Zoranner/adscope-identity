@@ -261,6 +261,68 @@ async fn agent_report_advances_cursor_after_successful_password_task() {
     assert_eq!(poll.accepted_password_task_cursor, 5);
 }
 
+#[tokio::test]
+async fn audit_events_record_security_relevant_actions_without_plaintext_passwords() {
+    let state = AppState::seeded();
+    let app = build_router(state);
+
+    let password = PasswordChangeRequest {
+        password: "P@ssw0rd-never-leak".to_string(),
+    };
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/users/E001/password", &password))
+        .await
+        .expect("password response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let forbidden_poll = AgentPollRequest {
+        domain_id: "domain-b".to_string(),
+        agent_id: "agent-a".to_string(),
+        last_structure_version: 0,
+        password_task_cursor: 0,
+    };
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/agent/poll", &forbidden_poll))
+        .await
+        .expect("poll response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let report = AgentReportRequest {
+        domain_id: "domain-a".to_string(),
+        agent_id: "agent-a".to_string(),
+        applied_structure_version: 3,
+        applied_password_task_cursor: 1,
+        summary: adss_contract::SyncSummary {
+            succeeded: 1,
+            failed: 0,
+            skipped: 0,
+            pending_manual: 0,
+        },
+        object_results: Vec::new(),
+    };
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/agent/report", &report))
+        .await
+        .expect("report response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(empty_request(Method::GET, "/api/audit/events"))
+        .await
+        .expect("audit response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&body).unwrap();
+
+    assert!(text.contains("\"action\":\"password_tasks_created\""));
+    assert!(text.contains("\"action\":\"agent_poll_denied\""));
+    assert!(text.contains("\"action\":\"agent_report_accepted\""));
+    assert!(!text.contains("P@ssw0rd-never-leak"));
+}
+
 fn json_request<T: serde::Serialize>(uri: &str, value: &T) -> Request<Body> {
     method_json_request(Method::POST, uri, value)
 }

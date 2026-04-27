@@ -281,6 +281,16 @@ pub struct DriftReportRequest {
     pub drifted_objects: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditEvent {
+    pub sequence: u64,
+    pub actor: String,
+    pub action: String,
+    pub target: String,
+    pub result: String,
+    pub detail: BTreeMap<String, String>,
+}
+
 pub fn sanitize_user_attributes(
     attributes: BTreeMap<String, String>,
     whitelist: &[&str],

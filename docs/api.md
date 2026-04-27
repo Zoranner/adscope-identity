@@ -10,6 +10,8 @@
 
 `GET /api/sync/domains/{domain_id}/status` 用于查询域同步状态，包括目标结构版本、已应用结构版本、密码任务游标和 drift 数量。
 
+`GET /api/audit/events` 用于查询审计事件。审计事件记录 actor、action、target、result 和非敏感 detail；密码明文、可逆密文和域控凭据不得出现在响应中。
+
 ## Agent 接口
 
 `POST /api/agent/register` 使用一次性注册令牌绑定 Agent 与域。令牌使用后作废。
