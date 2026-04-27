@@ -4,11 +4,13 @@ use adss_contract::{
     PasswordChangeResponse, PasswordTask, PollStructurePayload, RegisterAgentRequest,
     RegisterAgentResponse, UpdateUserRequest, User, UserStatus, sanitize_user_attributes,
 };
-use adss_persistence::{AgentCursorRecord, DriftReportRecord, OrmRepository, StoreSnapshot};
+use adss_persistence::{
+    AgentCredentialRecord, AgentCursorRecord, DriftReportRecord, OrmRepository, StoreSnapshot,
+};
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, patch, post, put},
 };
@@ -16,7 +18,10 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+const AGENT_KEY_HEADER: &str = "x-adss-agent-key";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
@@ -53,7 +58,7 @@ impl AppState {
     }
 
     pub async fn seeded_with_repository(repository: OrmRepository) -> anyhow::Result<Self> {
-        let store = match repository.load_snapshot().await? {
+        let mut store = match repository.load_snapshot().await? {
             Some(snapshot) => Store::from_snapshot(snapshot),
             None => {
                 let store = Store::seeded();
@@ -61,6 +66,14 @@ impl AppState {
                 store
             }
         };
+        for credential in repository.list_agent_credentials().await? {
+            store
+                .agents
+                .insert(credential.agent_id.clone(), credential.domain_id);
+            store
+                .agent_keys
+                .insert(credential.agent_id, credential.agent_key);
+        }
         Ok(Self::from_store(store, Some(repository)))
     }
 
@@ -127,6 +140,19 @@ impl AppState {
         }
         Ok(())
     }
+
+    async fn persist_agent_credential(
+        &self,
+        credential: &AgentCredentialRecord,
+    ) -> Result<(), ApiError> {
+        if let Some(repository) = &self.repository {
+            repository
+                .upsert_agent_credential(credential)
+                .await
+                .map_err(|_| ApiError::Persistence)?;
+        }
+        Ok(())
+    }
 }
 
 impl Store {
@@ -179,6 +205,10 @@ impl Store {
             ("agent-a".to_string(), "domain-a".to_string()),
             ("agent-b".to_string(), "domain-b".to_string()),
         ]);
+        let agent_keys = HashMap::from([
+            ("agent-a".to_string(), "agent-a-key".to_string()),
+            ("agent-b".to_string(), "agent-b-key".to_string()),
+        ]);
         let registration_tokens = HashMap::from([
             ("register-domain-a".to_string(), "domain-a".to_string()),
             ("register-domain-b".to_string(), "domain-b".to_string()),
@@ -188,6 +218,7 @@ impl Store {
             desired_state,
             domains,
             agents,
+            agent_keys,
             registration_tokens,
             drift_reports: Vec::new(),
             audit_events: Vec::new(),
@@ -224,6 +255,7 @@ struct Store {
     desired_state: DesiredState,
     domains: HashMap<String, DomainConfig>,
     agents: HashMap<String, String>,
+    agent_keys: HashMap<String, String>,
     registration_tokens: HashMap<String, String>,
     drift_reports: Vec<DriftReportRequest>,
     audit_events: Vec<AuditEvent>,
@@ -430,17 +462,26 @@ async fn register_agent(
             .ok_or(ApiError::Unauthorized)?
     };
 
-    let audit_event = {
+    let (audit_event, credential) = {
         let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
 
         if token_domain_id != request.domain_id || !store.domains.contains_key(&request.domain_id) {
             return Err(ApiError::Unauthorized);
         }
 
+        let agent_key = generate_agent_key(&request.agent_id, &request.domain_id);
         store
             .agents
             .insert(request.agent_id.clone(), request.domain_id.clone());
-        record_audit(
+        store
+            .agent_keys
+            .insert(request.agent_id.clone(), agent_key.clone());
+        let credential = AgentCredentialRecord {
+            agent_id: request.agent_id.clone(),
+            domain_id: request.domain_id.clone(),
+            agent_key,
+        };
+        let audit_event = record_audit(
             &mut store,
             format!("agent:{}", request.agent_id),
             "agent_registered",
@@ -450,22 +491,31 @@ async fn register_agent(
                 "certificate_subject".to_string(),
                 request.certificate_subject,
             )]),
-        )
+        );
+        (audit_event, credential)
     };
+    state.persist_agent_credential(&credential).await?;
     state.persist_audit(&audit_event).await?;
 
     Ok(Json(RegisterAgentResponse {
         agent_id: request.agent_id,
         domain_id: request.domain_id,
+        agent_key: credential.agent_key,
     }))
 }
 
 async fn agent_poll(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(request): Json<AgentPollRequest>,
 ) -> Result<Json<AgentPollResponse>, ApiError> {
     let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-    if let Err(error) = authorize_agent(&store, &request.agent_id, &request.domain_id) {
+    if let Err(error) = authorize_agent(
+        &store,
+        &request.agent_id,
+        &request.domain_id,
+        agent_key_from_headers(&headers),
+    ) {
         record_audit(
             &mut store,
             format!("agent:{}", request.agent_id),
@@ -528,12 +578,18 @@ async fn agent_poll(
 }
 
 async fn agent_report(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(request): Json<AgentReportRequest>,
 ) -> Result<Json<AgentReportResponse>, ApiError> {
     let (cursor, audit_event) = {
         let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-        authorize_agent(&store, &request.agent_id, &request.domain_id)?;
+        authorize_agent(
+            &store,
+            &request.agent_id,
+            &request.domain_id,
+            agent_key_from_headers(&headers),
+        )?;
         store
             .agent_structure_versions
             .insert(request.agent_id.clone(), request.applied_structure_version);
@@ -572,12 +628,18 @@ async fn agent_report(
 }
 
 async fn drift_report(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(request): Json<DriftReportRequest>,
 ) -> Result<Json<StatusMessage>, ApiError> {
     let (drift_report, audit_event) = {
         let mut store = state.inner.lock().map_err(|_| ApiError::StatePoisoned)?;
-        authorize_agent(&store, &request.agent_id, &request.domain_id)?;
+        authorize_agent(
+            &store,
+            &request.agent_id,
+            &request.domain_id,
+            agent_key_from_headers(&headers),
+        )?;
         let drift_count = request.drifted_objects.len();
         let domain_id = request.domain_id.clone();
         let agent_id = request.agent_id.clone();
@@ -629,12 +691,36 @@ fn record_audit(
     event
 }
 
-fn authorize_agent(store: &Store, agent_id: &str, domain_id: &str) -> Result<(), ApiError> {
+fn authorize_agent(
+    store: &Store,
+    agent_id: &str,
+    domain_id: &str,
+    agent_key: Option<&str>,
+) -> Result<(), ApiError> {
     match store.agents.get(agent_id) {
-        Some(bound_domain_id) if bound_domain_id == domain_id => Ok(()),
+        Some(bound_domain_id) if bound_domain_id == domain_id => {
+            match (store.agent_keys.get(agent_id), agent_key) {
+                (Some(expected_key), Some(provided_key)) if expected_key == provided_key => Ok(()),
+                _ => Err(ApiError::Unauthorized),
+            }
+        }
         Some(_) => Err(ApiError::Forbidden),
         None => Err(ApiError::Unauthorized),
     }
+}
+
+fn agent_key_from_headers(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AGENT_KEY_HEADER)
+        .and_then(|value| value.to_str().ok())
+}
+
+fn generate_agent_key(agent_id: &str, domain_id: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("adss-ak:{domain_id}:{agent_id}:{nanos}")
 }
 
 fn seal_password_for_storage(password: &str) -> String {

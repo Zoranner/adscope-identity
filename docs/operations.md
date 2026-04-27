@@ -30,6 +30,7 @@ cargo run -p adss-server
 - `agent_cursors`：保存 Agent 已应用结构版本和密码任务游标。
 - `drift_reports`：保存 Agent 对账发现的 AD 侧 drift。
 - `registration_tokens`：保存一次性 Agent 注册令牌。
+- `agent_credentials`：保存 Agent 与域绑定后的共享密钥。
 
 主服务仍使用内存 store 作为运行时聚合缓存；启用数据库时，关键同步状态会同步写入 SeaORM repository。后续生产化应继续把启动恢复逻辑扩展到密码任务、Agent cursor、drift report 和注册令牌，而不是只恢复 desired state 快照。
 
@@ -41,16 +42,19 @@ Agent 入口位于 `adss-agent` crate。Agent 从环境变量读取主服务地�
 $env:ADSS_SERVER_URL = "http://127.0.0.1:8080"
 $env:ADSS_DOMAIN_ID = "domain-a"
 $env:ADSS_AGENT_ID = "agent-a"
+$env:ADSS_AGENT_KEY = "agent-a-key"
 $env:ADSS_AGENT_DRY_RUN = "1"
 cargo run -p adss-agent
 ```
 
 当前 Agent 只允许 `ADSS_AGENT_DRY_RUN=1` 运行，使用 dry-run directory client 执行一轮 `poll -> reconcile/password -> report`。真实部署前必须接入 LDAPS directory client，并移除 dry-run 强制保护。
 
+共享密钥来自 `POST /api/agent/register` 的注册响应。该密钥是 mTLS 前的最小认证材料，部署时应存入受限 Secret，不应写入普通配置仓库或日志。
+
 ## 当前外部依赖边界
 
 - PostgreSQL：SeaORM repository 已具备 PostgreSQL 驱动和连接入口，当前持久化 desired state 快照、审计事件、密码任务、Agent cursor、drift report 和注册令牌。
-- mTLS：尚未接入传输层，当前通过 Agent 与域绑定逻辑固定授权行为。
+- mTLS：尚未接入传输层，当前使用 `X-ADSS-Agent-Key` 共享密钥作为过渡认证，并结合 Agent 与域绑定逻辑固定授权行为。
 - KMS/HSM：尚未接入，当前密码密封函数只保留不泄露明文的接口行为。
 - LDAPS：尚未接入真实 AD，当前由 `DirectoryClient` trait 隔离，Agent runtime 已能按顺序调用结构操作和密码任务。
 

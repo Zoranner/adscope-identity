@@ -9,7 +9,7 @@ Agent 使用 `POST /api/agent/poll` 主动轮询主服务。请求包含：
 - `last_structure_version`：本地已成功应用的结构版本。
 - `password_task_cursor`：本地已成功处理的密码任务游标。
 
-主服务必须验证 Agent 与域的绑定关系。绑定 A 域的 Agent 不能拉取 B 域任务。
+请求必须携带 `X-ADSS-Agent-Key`。主服务必须验证 Agent 与域的绑定关系以及共享密钥。绑定 A 域的 Agent 不能拉取 B 域任务。
 
 ## 注册
 
@@ -18,9 +18,9 @@ Agent 使用 `POST /api/agent/register` 完成首次绑定。请求包含：
 - `registration_token`：主服务预先签发的一次性注册令牌。
 - `agent_id`：Agent 实例标识。
 - `domain_id`：Agent 所属域。
-- `certificate_subject`：客户端证书主体，用于后续 mTLS 绑定。
+- `certificate_subject`：客户端证书主体预留字段，用于后续 mTLS 绑定。
 
-注册令牌只能使用一次，并且只能绑定令牌所属域。注册成功后，Agent 才允许轮询该域的同步任务。
+注册令牌只能使用一次，并且只能绑定令牌所属域。注册成功后，主服务返回 `agent_key`；Agent 后续必须使用该共享密钥轮询和回传该域的同步任务。该密钥是过渡认证材料，后续可替换或叠加 mTLS。
 
 ## 结构载荷
 

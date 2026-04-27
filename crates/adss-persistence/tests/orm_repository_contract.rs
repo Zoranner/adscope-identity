@@ -1,5 +1,7 @@
 use adss_contract::{AuditEvent, DesiredState, DomainConfig, OrgUnit};
-use adss_persistence::{AgentCursorRecord, DriftReportRecord, OrmRepository, StoreSnapshot};
+use adss_persistence::{
+    AgentCredentialRecord, AgentCursorRecord, DriftReportRecord, OrmRepository, StoreSnapshot,
+};
 use std::collections::BTreeMap;
 
 #[tokio::test]
@@ -161,4 +163,30 @@ async fn orm_repository_consumes_registration_token_once() {
 
     assert_eq!(domain_id.as_deref(), Some("domain-a"));
     assert_eq!(second_attempt, None);
+}
+
+#[tokio::test]
+async fn orm_repository_persists_agent_credentials() {
+    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+
+    repository
+        .upsert_agent_credential(&AgentCredentialRecord {
+            agent_id: "agent-a".to_string(),
+            domain_id: "domain-a".to_string(),
+            agent_key: "agent-a-key".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let credential = repository
+        .load_agent_credential("agent-a")
+        .await
+        .unwrap()
+        .unwrap();
+    let credentials = repository.list_agent_credentials().await.unwrap();
+
+    assert_eq!(credential.domain_id, "domain-a");
+    assert_eq!(credential.agent_key, "agent-a-key");
+    assert_eq!(credentials, vec![credential]);
 }

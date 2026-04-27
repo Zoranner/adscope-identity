@@ -49,8 +49,14 @@
 - `token`：一次性注册令牌。
 - `domain_id`：令牌允许绑定的域。
 
+`agent_credentials`
+
+- `agent_id`：Agent 标识。
+- `domain_id`：Agent 绑定域。
+- `agent_key`：共享密钥。该字段是 mTLS 前的过渡认证材料，不得进入审计、日志或导出文件。
+
 ## 边界
 
-当前数据库层已经接入主服务启动、用户更新、密码任务创建、Agent report、drift report 和 Agent 注册令牌消费路径。主服务仍保留内存 store 作为运行时聚合缓存，但关键同步状态已经有 ORM 持久化表承接。
+当前数据库层已经接入主服务启动、用户更新、密码任务创建、Agent report、drift report、Agent 注册令牌消费和 Agent 共享密钥路径。主服务仍保留内存 store 作为运行时聚合缓存，但关键同步状态已经有 ORM 持久化表承接。
 
 密码材料不得直接落明文列。`password_tasks.encrypted_password` 只能保存 KMS/HSM 返回的密文引用或密文材料，并保持审计与日志不可见。

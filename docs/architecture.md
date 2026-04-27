@@ -46,9 +46,9 @@ AD 域内 Agent 主动轮询
 
 AD 手工变更只作为 drift 回传和告警，不自动合并回主服务。中心服务始终是单一事实源。
 
-Agent runtime 的一轮执行流程为 `poll -> desired state reconcile -> password tasks -> report`。运行时通过 `ControlPlaneClient` 对接主服务，通过 `DirectoryClient` 对接 AD；这两个边界允许测试中使用内存或 dry-run 实现，生产中替换为 HTTP/mTLS 和 LDAPS 实现。
+Agent runtime 的一轮执行流程为 `poll -> desired state reconcile -> password tasks -> report`。运行时通过 `ControlPlaneClient` 对接主服务，通过 `DirectoryClient` 对接 AD；这两个边界允许测试中使用内存或 dry-run 实现。当前控制面先使用 HTTP 加 `X-ADSS-Agent-Key` 共享密钥完成最小认证，生产加强阶段再替换或叠加 mTLS，AD 执行面替换为 LDAPS 实现。
 
-数据库访问通过 SeaORM repository 隔离。首个持久化切面保存 desired state 快照和审计事件，后续应继续把密码任务、Agent cursor、drift report 等状态拆成独立实体，避免应用层长期依赖大 JSON 文档。
+数据库访问通过 SeaORM repository 隔离。当前持久化切面保存 desired state 快照、审计事件、密码任务、Agent cursor、drift report、注册令牌和 Agent 共享密钥，避免应用层长期依赖大 JSON 文档。
 
 ## 删除与离职
 

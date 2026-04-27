@@ -2,7 +2,9 @@
 
 ## Agent 认证
 
-Agent 注册使用一次性注册令牌绑定 `agent_id`、`domain_id` 和客户端证书。注册后令牌作废，后续通信依赖 mTLS 和 Agent 身份。证书吊销、Agent 禁用或域绑定不匹配时，主服务必须拒绝轮询和回报。
+首版最小实现使用一次性注册令牌绑定 `agent_id` 和 `domain_id`，注册成功后主服务返回一次性展示的共享密钥 `agent_key`。Agent 后续访问 `poll`、`report` 和 `drift-report` 时必须通过 `X-ADSS-Agent-Key` 请求头提交密钥；主服务同时校验 `agent_id`、`domain_id` 绑定关系和密钥，任一不匹配都拒绝。
+
+共享密钥是 mTLS 前的过渡方案，不等价于客户端证书认证。部署时必须通过 Secret Manager、Windows DPAPI、受限配置文件或等价机制保存 Agent 密钥，禁止写入普通日志、审计 detail、错误响应和导出文件。后续加强方向是把共享密钥替换或叠加为 mTLS 客户端证书、密钥轮换、吊销列表和 Agent 禁用状态。
 
 ## AD 权限
 

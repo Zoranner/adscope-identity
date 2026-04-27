@@ -239,6 +239,7 @@ pub struct RegisterAgentRequest {
 pub struct RegisterAgentResponse {
     pub agent_id: String,
     pub domain_id: String,
+    pub agent_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

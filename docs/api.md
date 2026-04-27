@@ -14,10 +14,10 @@
 
 ## Agent 接口
 
-`POST /api/agent/register` 使用一次性注册令牌绑定 Agent 与域。令牌使用后作废。
+`POST /api/agent/register` 使用一次性注册令牌绑定 Agent 与域。令牌使用后作废，响应返回 `agent_key`，该密钥只应在注册交付链路中保存一次。
 
-`POST /api/agent/poll` 由 Agent 主动轮询结构状态和密码任务。主服务必须校验 Agent 与 `domain_id` 的绑定关系。
+`POST /api/agent/poll` 由 Agent 主动轮询结构状态和密码任务。请求必须携带 `X-ADSS-Agent-Key`，主服务必须校验 Agent 与 `domain_id` 的绑定关系以及共享密钥。
 
-`POST /api/agent/report` 回传执行结果，并推进已应用结构版本和密码任务游标。
+`POST /api/agent/report` 回传执行结果，并推进已应用结构版本和密码任务游标。请求必须携带 `X-ADSS-Agent-Key`。
 
-`POST /api/agent/drift-report` 回传本地 AD 对账差异。该接口只记录 drift，不允许触发反向写入。
+`POST /api/agent/drift-report` 回传本地 AD 对账差异。请求必须携带 `X-ADSS-Agent-Key`。该接口只记录 drift，不允许触发反向写入。

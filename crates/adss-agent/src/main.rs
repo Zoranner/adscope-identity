@@ -12,7 +12,8 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let control_plane = HttpControlPlaneClient::new(config.server_url.clone());
+    let control_plane =
+        HttpControlPlaneClient::new(config.server_url.clone(), config.agent_key.clone());
     let directory = DryRunDirectoryClient;
     let mut runtime = AgentRuntime::new(
         config.domain_id.clone(),

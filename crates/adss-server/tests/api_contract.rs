@@ -1,6 +1,6 @@
 use adss_contract::{
     AgentPollRequest, AgentReportRequest, DriftReportRequest, PasswordChangeRequest,
-    PollStructurePayload, RegisterAgentRequest, UpdateUserRequest,
+    PollStructurePayload, RegisterAgentRequest, RegisterAgentResponse, UpdateUserRequest,
 };
 use adss_persistence::OrmRepository;
 use adss_server::{AppState, ServerConfig, build_router};
@@ -25,11 +25,52 @@ async fn agent_cannot_poll_another_domain_tasks() {
     };
 
     let response = app
-        .oneshot(json_request("/api/agent/poll", &request))
+        .oneshot(agent_json_request(
+            "/api/agent/poll",
+            "agent-a-key",
+            &request,
+        ))
         .await
         .expect("poll response");
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn agent_poll_requires_matching_shared_key() {
+    let state = AppState::seeded();
+    let app = build_router(state);
+
+    let request = AgentPollRequest {
+        domain_id: "domain-a".to_string(),
+        agent_id: "agent-a".to_string(),
+        last_structure_version: 0,
+        password_task_cursor: 0,
+    };
+
+    let response = app
+        .clone()
+        .oneshot(json_request("/api/agent/poll", &request))
+        .await
+        .expect("poll response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .clone()
+        .oneshot(agent_json_request("/api/agent/poll", "wrong-key", &request))
+        .await
+        .expect("poll response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(agent_json_request(
+            "/api/agent/poll",
+            "agent-a-key",
+            &request,
+        ))
+        .await
+        .expect("poll response");
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[test]
@@ -118,7 +159,11 @@ async fn server_persists_password_tasks_agent_cursor_and_drift_reports() {
     };
     let response = app
         .clone()
-        .oneshot(json_request("/api/agent/report", &report))
+        .oneshot(agent_json_request(
+            "/api/agent/report",
+            "agent-a-key",
+            &report,
+        ))
         .await
         .expect("report response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -138,7 +183,11 @@ async fn server_persists_password_tasks_agent_cursor_and_drift_reports() {
         drifted_objects: vec!["employee:E001:mail".to_string()],
     };
     let response = app
-        .oneshot(json_request("/api/agent/drift-report", &drift))
+        .oneshot(agent_json_request(
+            "/api/agent/drift-report",
+            "agent-a-key",
+            &drift,
+        ))
         .await
         .expect("drift response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -173,6 +222,9 @@ async fn server_consumes_registration_tokens_from_orm_repository_once() {
         .await
         .expect("register response");
     assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let registered: RegisterAgentResponse = serde_json::from_slice(&body).unwrap();
+    assert!(!registered.agent_key.is_empty());
 
     let response = app
         .oneshot(json_request("/api/agent/register", &request))
@@ -221,7 +273,7 @@ async fn user_update_changes_desired_state_and_filters_non_whitelisted_attribute
         password_task_cursor: 0,
     };
     let response = app
-        .oneshot(json_request("/api/agent/poll", &poll))
+        .oneshot(agent_json_request("/api/agent/poll", "agent-a-key", &poll))
         .await
         .expect("poll response");
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -260,6 +312,9 @@ async fn agent_registration_binds_domain_and_consumes_one_time_token() {
         .await
         .expect("register response");
     assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let registered: RegisterAgentResponse = serde_json::from_slice(&body).unwrap();
+    assert!(!registered.agent_key.is_empty());
 
     let poll = AgentPollRequest {
         domain_id: "domain-a".to_string(),
@@ -269,7 +324,11 @@ async fn agent_registration_binds_domain_and_consumes_one_time_token() {
     };
     let response = app
         .clone()
-        .oneshot(json_request("/api/agent/poll", &poll))
+        .oneshot(agent_json_request(
+            "/api/agent/poll",
+            &registered.agent_key,
+            &poll,
+        ))
         .await
         .expect("poll response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -295,7 +354,11 @@ async fn drift_report_is_visible_in_domain_status_without_changing_desired_state
 
     let response = app
         .clone()
-        .oneshot(json_request("/api/agent/drift-report", &drift))
+        .oneshot(agent_json_request(
+            "/api/agent/drift-report",
+            "agent-a-key",
+            &drift,
+        ))
         .await
         .expect("drift response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -320,7 +383,7 @@ async fn drift_report_is_visible_in_domain_status_without_changing_desired_state
         password_task_cursor: 0,
     };
     let response = app
-        .oneshot(json_request("/api/agent/poll", &poll))
+        .oneshot(agent_json_request("/api/agent/poll", "agent-a-key", &poll))
         .await
         .expect("poll response");
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -341,7 +404,11 @@ async fn stale_agent_cursor_receives_full_snapshot() {
     };
 
     let response = app
-        .oneshot(json_request("/api/agent/poll", &request))
+        .oneshot(agent_json_request(
+            "/api/agent/poll",
+            "agent-a-key",
+            &request,
+        ))
         .await
         .expect("poll response");
 
@@ -395,7 +462,11 @@ async fn agent_report_advances_cursor_after_successful_password_task() {
 
     let response = app
         .clone()
-        .oneshot(json_request("/api/agent/report", &report))
+        .oneshot(agent_json_request(
+            "/api/agent/report",
+            "agent-a-key",
+            &report,
+        ))
         .await
         .expect("report response");
 
@@ -408,7 +479,7 @@ async fn agent_report_advances_cursor_after_successful_password_task() {
         password_task_cursor: 5,
     };
     let response = app
-        .oneshot(json_request("/api/agent/poll", &poll))
+        .oneshot(agent_json_request("/api/agent/poll", "agent-a-key", &poll))
         .await
         .expect("poll response");
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -440,7 +511,11 @@ async fn audit_events_record_security_relevant_actions_without_plaintext_passwor
     };
     let response = app
         .clone()
-        .oneshot(json_request("/api/agent/poll", &forbidden_poll))
+        .oneshot(agent_json_request(
+            "/api/agent/poll",
+            "agent-a-key",
+            &forbidden_poll,
+        ))
         .await
         .expect("poll response");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -460,7 +535,11 @@ async fn audit_events_record_security_relevant_actions_without_plaintext_passwor
     };
     let response = app
         .clone()
-        .oneshot(json_request("/api/agent/report", &report))
+        .oneshot(agent_json_request(
+            "/api/agent/report",
+            "agent-a-key",
+            &report,
+        ))
         .await
         .expect("report response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -481,6 +560,16 @@ async fn audit_events_record_security_relevant_actions_without_plaintext_passwor
 
 fn json_request<T: serde::Serialize>(uri: &str, value: &T) -> Request<Body> {
     method_json_request(Method::POST, uri, value)
+}
+
+fn agent_json_request<T: serde::Serialize>(uri: &str, agent_key: &str, value: &T) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("x-adss-agent-key", agent_key)
+        .body(Body::from(serde_json::to_vec(value).unwrap()))
+        .unwrap()
 }
 
 fn method_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T) -> Request<Body> {

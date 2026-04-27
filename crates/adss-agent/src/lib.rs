@@ -28,6 +28,7 @@ pub struct AgentProcessConfig {
     pub server_url: String,
     pub domain_id: String,
     pub agent_id: String,
+    pub agent_key: String,
     pub dry_run: bool,
     pub initial_structure_version: u64,
     pub initial_password_task_cursor: u64,
@@ -38,12 +39,14 @@ impl AgentProcessConfig {
         server_url: impl Into<String>,
         domain_id: impl Into<String>,
         agent_id: impl Into<String>,
+        agent_key: impl Into<String>,
         dry_run: bool,
     ) -> Self {
         Self {
             server_url: server_url.into(),
             domain_id: domain_id.into(),
             agent_id: agent_id.into(),
+            agent_key: agent_key.into(),
             dry_run,
             initial_structure_version: 0,
             initial_password_task_cursor: 0,
@@ -55,30 +58,39 @@ impl AgentProcessConfig {
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
         let domain_id = std::env::var("ADSS_DOMAIN_ID")?;
         let agent_id = std::env::var("ADSS_AGENT_ID")?;
+        let agent_key = std::env::var("ADSS_AGENT_KEY")?;
         let dry_run = std::env::var("ADSS_AGENT_DRY_RUN")
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        Ok(Self::new(server_url, domain_id, agent_id, dry_run))
+        Ok(Self::new(
+            server_url, domain_id, agent_id, agent_key, dry_run,
+        ))
     }
 }
 
 #[derive(Clone)]
 pub struct HttpControlPlaneClient {
     base_url: String,
+    agent_key: String,
     client: reqwest::Client,
 }
 
 impl HttpControlPlaneClient {
-    pub fn new(base_url: impl Into<String>) -> Self {
+    pub fn new(base_url: impl Into<String>, agent_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
+            agent_key: agent_key.into(),
             client: reqwest::Client::new(),
         }
     }
 
     pub fn endpoint(&self, path: &str) -> String {
         format!("{}/{}", self.base_url, path.trim_start_matches('/'))
+    }
+
+    pub fn agent_key(&self) -> &str {
+        &self.agent_key
     }
 }
 
@@ -91,6 +103,7 @@ impl ControlPlaneClient for HttpControlPlaneClient {
         Ok(self
             .client
             .post(self.endpoint("/api/agent/poll"))
+            .header("x-adss-agent-key", &self.agent_key)
             .json(&request)
             .send()
             .await?
@@ -103,6 +116,7 @@ impl ControlPlaneClient for HttpControlPlaneClient {
         Ok(self
             .client
             .post(self.endpoint("/api/agent/report"))
+            .header("x-adss-agent-key", &self.agent_key)
             .json(&request)
             .send()
             .await?

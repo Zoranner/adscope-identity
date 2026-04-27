@@ -119,6 +119,24 @@ mod entities {
 
         impl ActiveModelBehavior for ActiveModel {}
     }
+
+    pub mod agent_credential {
+        use sea_orm::entity::prelude::*;
+
+        #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+        #[sea_orm(table_name = "agent_credentials")]
+        pub struct Model {
+            #[sea_orm(primary_key, auto_increment = false)]
+            pub agent_id: String,
+            pub domain_id: String,
+            pub agent_key: String,
+        }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
+
+        impl ActiveModelBehavior for ActiveModel {}
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -142,6 +160,13 @@ pub struct DriftReportRecord {
     pub agent_id: String,
     pub observed_structure_version: u64,
     pub drifted_objects: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentCredentialRecord {
+    pub agent_id: String,
+    pub domain_id: String,
+    pub agent_key: String,
 }
 
 #[derive(Clone)]
@@ -228,6 +253,17 @@ CREATE TABLE IF NOT EXISTS drift_reports (
 CREATE TABLE IF NOT EXISTS registration_tokens (
     token TEXT PRIMARY KEY NOT NULL,
     domain_id TEXT NOT NULL
+)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS agent_credentials (
+    agent_id TEXT PRIMARY KEY NOT NULL,
+    domain_id TEXT NOT NULL,
+    agent_key TEXT NOT NULL
 )
 "#,
             )
@@ -482,5 +518,61 @@ CREATE TABLE IF NOT EXISTS registration_tokens (
             .exec(&self.db)
             .await?;
         Ok(Some(model.domain_id))
+    }
+
+    pub async fn upsert_agent_credential(
+        &self,
+        credential: &AgentCredentialRecord,
+    ) -> anyhow::Result<()> {
+        use entities::agent_credential;
+
+        agent_credential::Entity::delete_by_id(credential.agent_id.as_str())
+            .exec(&self.db)
+            .await?;
+        agent_credential::ActiveModel {
+            agent_id: Set(credential.agent_id.clone()),
+            domain_id: Set(credential.domain_id.clone()),
+            agent_key: Set(credential.agent_key.clone()),
+        }
+        .insert(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn load_agent_credential(
+        &self,
+        agent_id: &str,
+    ) -> anyhow::Result<Option<AgentCredentialRecord>> {
+        use entities::agent_credential;
+
+        let Some(model) = agent_credential::Entity::find_by_id(agent_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(AgentCredentialRecord {
+            agent_id: model.agent_id,
+            domain_id: model.domain_id,
+            agent_key: model.agent_key,
+        }))
+    }
+
+    pub async fn list_agent_credentials(&self) -> anyhow::Result<Vec<AgentCredentialRecord>> {
+        use entities::agent_credential;
+
+        let models = agent_credential::Entity::find()
+            .order_by_asc(agent_credential::Column::AgentId)
+            .all(&self.db)
+            .await?;
+        Ok(models
+            .into_iter()
+            .map(|model| AgentCredentialRecord {
+                agent_id: model.agent_id,
+                domain_id: model.domain_id,
+                agent_key: model.agent_key,
+            })
+            .collect())
     }
 }
