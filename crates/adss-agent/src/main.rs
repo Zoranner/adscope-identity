@@ -1,7 +1,8 @@
 use adss_agent::{
-    AgentCursor, AgentProcessConfig, AgentRuntime, DryRunDirectoryClient, HttpControlPlaneClient,
+    AgentProcessConfig, AgentRuntime, DryRunDirectoryClient, FileLocalStateStore,
+    HttpControlPlaneClient,
 };
-use adss_contract::DomainConfig;
+use tokio::time::{Duration, sleep};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,23 +16,19 @@ async fn main() -> anyhow::Result<()> {
     let control_plane =
         HttpControlPlaneClient::new(config.server_url.clone(), config.agent_key.clone());
     let directory = DryRunDirectoryClient;
+    let local_state = FileLocalStateStore::new(config.state_path.clone());
     let mut runtime = AgentRuntime::new(
         config.domain_id.clone(),
-        config.agent_id.clone(),
-        DomainConfig {
-            domain_id: config.domain_id,
-            mirror_root_dn: "OU=Mirror,DC=example,DC=com".to_string(),
-            quarantine_ou_dn: "OU=Quarantine,DC=example,DC=com".to_string(),
-            employee_id_attribute: "employeeID".to_string(),
-        },
-        AgentCursor {
-            structure_version: config.initial_structure_version,
-            password_task_cursor: config.initial_password_task_cursor,
-        },
         control_plane,
         directory,
+        local_state,
     );
+    let interval = Duration::from_secs(config.interval_seconds);
 
-    runtime.run_once().await?;
-    Ok(())
+    loop {
+        if let Err(error) = runtime.run_once().await {
+            eprintln!("agent sync failed: {error:#}");
+        }
+        sleep(interval).await;
+    }
 }
