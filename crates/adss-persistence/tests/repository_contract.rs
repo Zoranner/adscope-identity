@@ -86,6 +86,102 @@ async fn repository_returns_current_state_after_multiple_updates() {
 }
 
 #[tokio::test]
+async fn repository_returns_all_ous_when_user_changes_after_confirmed_revision() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            vec![OrganizationalUnit {
+                id: "ou-rd".to_string(),
+                name: "研发部".to_string(),
+                parent_id: None,
+                changed_revision: 0,
+            }],
+            vec![user_patch("1001", "first@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .confirm_directory_revision("domain-a", 1)
+        .await
+        .unwrap();
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1001", "latest@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+    let batch = repository
+        .list_directory_changed_after("domain-a", 1, false, 100)
+        .await
+        .unwrap();
+
+    assert_eq!(batch.organizational_units.len(), 1);
+    assert_eq!(batch.organizational_units[0].id, "ou-rd");
+    assert_eq!(batch.users.len(), 1);
+    assert_eq!(batch.users[0].email.as_deref(), Some("latest@example.com"));
+    assert_eq!(batch.batch_revision, 2);
+}
+
+#[tokio::test]
+async fn repository_returns_all_ous_when_child_ou_changes_after_confirmed_revision() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            vec![
+                OrganizationalUnit {
+                    id: "ou-root".to_string(),
+                    name: "Root".to_string(),
+                    parent_id: None,
+                    changed_revision: 0,
+                },
+                OrganizationalUnit {
+                    id: "ou-child".to_string(),
+                    name: "Child".to_string(),
+                    parent_id: Some("ou-root".to_string()),
+                    changed_revision: 0,
+                },
+            ],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .confirm_directory_revision("domain-a", 1)
+        .await
+        .unwrap();
+    repository
+        .upsert_directory(
+            vec![OrganizationalUnit {
+                id: "ou-child".to_string(),
+                name: "Renamed Child".to_string(),
+                parent_id: Some("ou-root".to_string()),
+                changed_revision: 0,
+            }],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+    let batch = repository
+        .list_directory_changed_after("domain-a", 1, false, 100)
+        .await
+        .unwrap();
+
+    assert_eq!(batch.organizational_units.len(), 2);
+    assert_eq!(batch.organizational_units[0].id, "ou-root");
+    assert_eq!(batch.organizational_units[1].id, "ou-child");
+    assert_eq!(batch.organizational_units[1].name, "Renamed Child");
+}
+
+#[tokio::test]
 async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one() {
     let repository = sqlite_repository().await;
 

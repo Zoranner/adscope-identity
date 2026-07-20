@@ -315,6 +315,7 @@ fn open_credential_batch_for_agent(
                     password_envelope_key,
                 )
                 .ok_or(ApiError::Persistence)?,
+                status: credential.status,
                 changed_revision: credential.changed_revision,
             })
         })

@@ -22,24 +22,39 @@ struct TestApp {
 }
 
 #[tokio::test]
-async fn user_directory_update_returns_only_changed_user() {
-    let TestApp { app, .. } = test_app().await;
+async fn user_directory_update_returns_changed_user_with_ou_context() {
+    let TestApp { app, repository } = test_app().await;
 
-    patch_user(&app, "1001", "first@example.com").await;
+    repository
+        .upsert_directory(
+            vec![adss_contract::OrganizationalUnit {
+                id: "ou-root".to_string(),
+                name: "Root".to_string(),
+                parent_id: None,
+                changed_revision: 0,
+            }],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
     confirm(&app, SyncChannel::Directory, 1, true).await;
+    patch_user(&app, "1001", "first@example.com").await;
+    confirm(&app, SyncChannel::Directory, 2, true).await;
     patch_user(&app, "1002", "second@example.com").await;
 
-    let response = agent_sync(&app, 1, 0, false, false).await;
+    let response = agent_sync(&app, 2, 0, false, false).await;
 
-    assert_eq!(response.directory.server_revision, 2);
-    assert_eq!(response.directory.batch_revision, 2);
+    assert_eq!(response.directory.server_revision, 3);
+    assert_eq!(response.directory.batch_revision, 3);
     assert_eq!(response.directory.users.len(), 1);
     assert_eq!(response.directory.users[0].employee_id, "1002");
     assert_eq!(
         response.directory.users[0].email.as_deref(),
         Some("second@example.com")
     );
-    assert!(response.directory.organizational_units.is_empty());
+    assert_eq!(response.directory.organizational_units.len(), 1);
+    assert_eq!(response.directory.organizational_units[0].id, "ou-root");
     assert!(response.directory.groups.is_empty());
     assert!(response.credentials.credentials.is_empty());
 }

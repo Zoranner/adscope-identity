@@ -176,6 +176,7 @@ pub struct CredentialRecord {
 pub struct CredentialCiphertextEntry {
     pub employee_id: String,
     pub password_ciphertext: String,
+    pub status: UserStatus,
     pub changed_revision: u64,
 }
 
@@ -407,15 +408,6 @@ CREATE TABLE IF NOT EXISTS domains (
             anyhow::bail!("applied directory revision exceeds server revision");
         }
 
-        let organizational_units = organizational_unit::Entity::find()
-            .filter(organizational_unit::Column::ChangedRevision.gt(threshold))
-            .order_by_asc(organizational_unit::Column::ChangedRevision)
-            .order_by_asc(organizational_unit::Column::Id)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(OrganizationalUnit::try_from)
-            .collect::<anyhow::Result<Vec<_>>>()?;
         let users = user::Entity::find()
             .filter(user::Column::ChangedRevision.gt(threshold))
             .order_by_asc(user::Column::ChangedRevision)
@@ -434,6 +426,26 @@ CREATE TABLE IF NOT EXISTS domains (
             .into_iter()
             .map(Group::try_from)
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let changed_organizational_units = organizational_unit::Entity::find()
+            .filter(organizational_unit::Column::ChangedRevision.gt(threshold))
+            .order_by_asc(organizational_unit::Column::ChangedRevision)
+            .order_by_asc(organizational_unit::Column::Id)
+            .all(&self.db)
+            .await?;
+        let has_directory_changes =
+            !changed_organizational_units.is_empty() || !users.is_empty() || !groups.is_empty();
+        let organizational_units = if has_directory_changes {
+            organizational_unit::Entity::find()
+                .order_by_asc(organizational_unit::Column::ChangedRevision)
+                .order_by_asc(organizational_unit::Column::Id)
+                .all(&self.db)
+                .await?
+        } else {
+            changed_organizational_units
+        }
+        .into_iter()
+        .map(OrganizationalUnit::try_from)
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(DirectoryBatch {
             server_revision,
@@ -505,7 +517,7 @@ CREATE TABLE IF NOT EXISTS domains (
         rebuild: bool,
         limit: usize,
     ) -> anyhow::Result<CredentialCiphertextBatch> {
-        use entities::user_credential;
+        use entities::{user, user_credential};
 
         let domain = self.require_domain(domain_id).await?;
         let server_revision = self.current_credential_revision().await?;
@@ -537,7 +549,7 @@ CREATE TABLE IF NOT EXISTS domains (
             .copied()
             .unwrap_or(server_revision);
 
-        let credentials = user_credential::Entity::find()
+        let credential_models = user_credential::Entity::find()
             .filter(user_credential::Column::ChangedRevision.gt(threshold))
             .filter(
                 user_credential::Column::ChangedRevision.lte(u64_to_i64_revision(batch_revision)?),
@@ -545,16 +557,22 @@ CREATE TABLE IF NOT EXISTS domains (
             .order_by_asc(user_credential::Column::ChangedRevision)
             .order_by_asc(user_credential::Column::EmployeeId)
             .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|model| {
-                Ok(CredentialCiphertextEntry {
-                    employee_id: model.employee_id,
-                    password_ciphertext: model.password_ciphertext,
-                    changed_revision: i64_to_u64_revision(model.changed_revision)?,
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .await?;
+        let mut credentials = Vec::with_capacity(credential_models.len());
+        for model in credential_models {
+            let status = user::Entity::find_by_id(model.employee_id.as_str())
+                .one(&self.db)
+                .await?
+                .map(|user| user_status_from_storage(&user.status))
+                .transpose()?
+                .unwrap_or(UserStatus::Active);
+            credentials.push(CredentialCiphertextEntry {
+                employee_id: model.employee_id,
+                password_ciphertext: model.password_ciphertext,
+                status,
+                changed_revision: i64_to_u64_revision(model.changed_revision)?,
+            });
+        }
 
         Ok(CredentialCiphertextBatch {
             server_revision,

@@ -9,6 +9,7 @@ publish.workspace = true
 adss-contract = { path = "../adss-contract" }
 anyhow.workspace = true
 async-trait.workspace = true
+ldap3.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
 

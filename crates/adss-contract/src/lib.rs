@@ -80,6 +80,7 @@ impl DirectoryBatch {
 pub struct CredentialEntry {
     pub employee_id: String,
     pub plaintext_password: String,
+    pub status: UserStatus,
     pub changed_revision: u64,
 }
 
@@ -89,6 +90,7 @@ impl fmt::Debug for CredentialEntry {
             .debug_struct("CredentialEntry")
             .field("employee_id", &self.employee_id)
             .field("plaintext_password", &"[redacted]")
+            .field("status", &self.status)
             .field("changed_revision", &self.changed_revision)
             .finish()
     }
@@ -198,10 +200,15 @@ pub struct DirectoryOperation {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum DirectoryOperationTarget {
-    OuParentId(String),
+    OrganizationalUnit(OrganizationalUnit),
+    User(User),
     UserOrganizationalUnitId(String),
+    Group(Group),
     QuarantineDn(String),
-    GroupMemberEmployeeIds(Vec<String>),
+    GroupMembers {
+        group: Group,
+        member_employee_ids: Vec<String>,
+    },
 }
 
 impl DirectoryOperation {
@@ -254,18 +261,15 @@ impl DirectoryPlan {
         let mut operations = Vec::new();
 
         for ou in ordered_organizational_units(&batch.organizational_units)? {
-            let operation =
-                DirectoryOperation::new(DirectoryOperationKind::EnsureOu, ou.id.clone());
-            operations.push(match &ou.parent_id {
-                Some(parent_id) => {
-                    operation.with_target(DirectoryOperationTarget::OuParentId(parent_id.clone()))
-                }
-                None => operation,
-            });
+            operations.push(
+                DirectoryOperation::new(DirectoryOperationKind::EnsureOu, ou.id.clone())
+                    .with_target(DirectoryOperationTarget::OrganizationalUnit(ou.clone())),
+            );
         }
 
         operations.extend(batch.users.iter().map(|user| {
             DirectoryOperation::new(DirectoryOperationKind::EnsureUser, user.employee_id.clone())
+                .with_target(DirectoryOperationTarget::User(user.clone()))
         }));
         operations.extend(
             batch
@@ -286,12 +290,14 @@ impl DirectoryPlan {
         );
         operations.extend(batch.groups.iter().map(|group| {
             DirectoryOperation::new(DirectoryOperationKind::EnsureGroup, group.id.clone())
+                .with_target(DirectoryOperationTarget::Group(group.clone()))
         }));
         operations.extend(batch.groups.iter().map(|group| {
             DirectoryOperation::new(DirectoryOperationKind::EnsureGroupMembers, group.id.clone())
-                .with_target(DirectoryOperationTarget::GroupMemberEmployeeIds(
-                    group.member_employee_ids.clone(),
-                ))
+                .with_target(DirectoryOperationTarget::GroupMembers {
+                    group: group.clone(),
+                    member_employee_ids: group.member_employee_ids.clone(),
+                })
         }));
 
         for user in batch

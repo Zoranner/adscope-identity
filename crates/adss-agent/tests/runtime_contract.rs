@@ -1,6 +1,6 @@
 use adss_agent::{
-    AgentRuntime, ControlPlaneClient, DirectoryClient, FileLocalStateStore, LocalRevisionState,
-    LocalStateStore,
+    AgentRuntime, ControlPlaneClient, DirectoryClient, DirectoryExecutionContext,
+    FileLocalStateStore, LocalRevisionState, LocalStateStore,
 };
 use adss_contract::{
     AgentConfirmRequest, AgentConfirmResponse, AgentSyncRequest, AgentSyncResponse,
@@ -342,7 +342,11 @@ impl RecordingDirectory {
 
 #[async_trait]
 impl DirectoryClient for RecordingDirectory {
-    async fn apply(&self, operation: &DirectoryOperation) -> anyhow::Result<()> {
+    async fn apply(
+        &self,
+        operation: &DirectoryOperation,
+        _context: &DirectoryExecutionContext,
+    ) -> anyhow::Result<()> {
         if self.fail_directory_kind == Some(directory_kind_name(operation.kind)) {
             anyhow::bail!("directory operation failed");
         }
@@ -350,7 +354,11 @@ impl DirectoryClient for RecordingDirectory {
         Ok(())
     }
 
-    async fn set_password(&self, credential: &CredentialEntry) -> anyhow::Result<()> {
+    async fn set_password(
+        &self,
+        credential: &CredentialEntry,
+        _context: &DirectoryExecutionContext,
+    ) -> anyhow::Result<()> {
         if self.fail_password_employee_id == Some(credential.employee_id.as_str()) {
             anyhow::bail!("password failed");
         }
@@ -445,6 +453,7 @@ fn credential_batch(batch_revision: u64) -> CredentialBatch {
         credentials: vec![CredentialEntry {
             employee_id: "1001".to_string(),
             plaintext_password: "NewPass123!".to_string(),
+            status: UserStatus::Active,
             changed_revision: batch_revision,
         }],
         has_more: false,

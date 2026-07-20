@@ -58,16 +58,31 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
         ]
     );
     assert_eq!(
+        plan.operations[0].target,
+        Some(DirectoryOperationTarget::OrganizationalUnit(
+            batch.organizational_units[0].clone()
+        ))
+    );
+    assert_eq!(
+        plan.operations[1].target,
+        Some(DirectoryOperationTarget::User(batch.users[0].clone()))
+    );
+    assert_eq!(
         plan.operations[2].target,
         Some(DirectoryOperationTarget::UserOrganizationalUnitId(
             "ou-rd".to_string()
         ))
     );
     assert_eq!(
+        plan.operations[3].target,
+        Some(DirectoryOperationTarget::Group(batch.groups[0].clone()))
+    );
+    assert_eq!(
         plan.operations[4].target,
-        Some(DirectoryOperationTarget::GroupMemberEmployeeIds(vec![
-            "1001".to_string()
-        ]))
+        Some(DirectoryOperationTarget::GroupMembers {
+            group: batch.groups[0].clone(),
+            member_employee_ids: vec!["1001".to_string()]
+        })
     );
 }
 
@@ -105,8 +120,8 @@ fn directory_plan_orders_parent_ou_before_child_ou() {
     assert_eq!(subjects, vec!["ou-parent", "ou-child"]);
     assert_eq!(
         plan.operations[1].target,
-        Some(DirectoryOperationTarget::OuParentId(
-            "ou-parent".to_string()
+        Some(DirectoryOperationTarget::OrganizationalUnit(
+            batch.organizational_units[0].clone()
         ))
     );
 }
@@ -215,6 +230,10 @@ fn disabled_users_are_ensured_then_disabled_and_moved_to_quarantine() {
         ]
     );
     assert_eq!(
+        plan.operations[0].target,
+        Some(DirectoryOperationTarget::User(batch.users[0].clone()))
+    );
+    assert_eq!(
         plan.operations[2].target,
         Some(DirectoryOperationTarget::QuarantineDn(
             config.quarantine_ou_dn
@@ -230,6 +249,7 @@ fn credential_debug_output_does_not_include_password_payload() {
         credentials: vec![CredentialEntry {
             employee_id: "1001".to_string(),
             plaintext_password: "Secret123!".to_string(),
+            status: UserStatus::Active,
             changed_revision: 12,
         }],
         has_more: false,
@@ -249,6 +269,7 @@ fn credential_wire_json_includes_password_payload() {
         credentials: vec![CredentialEntry {
             employee_id: "1001".to_string(),
             plaintext_password: "Secret123!".to_string(),
+            status: UserStatus::Active,
             changed_revision: 12,
         }],
         has_more: false,
