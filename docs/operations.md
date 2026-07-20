@@ -1,61 +1,94 @@
 # 运行与部署说明
 
-## 主服务
+## 主服务环境变量
 
-主服务入口位于 `adss-server` crate。默认监听 `127.0.0.1:8080`，可通过 `ADSS_BIND_ADDR` 覆盖。
+主服务入口位于 `adss-server` crate。MVP 必须使用数据库启动，缺少 `ADSS_DATABASE_URL` 会直接失败。
 
-```powershell
-cargo run -p adss-server
-```
+必需环境变量：
 
-```powershell
-$env:ADSS_BIND_ADDR = "0.0.0.0:8080"
-cargo run -p adss-server
-```
+- `ADSS_DATABASE_URL`：SeaORM 数据库连接串，例如 `sqlite://adss.db?mode=rwc`。
+- `ADSS_DEV_PASSWORD_ENCRYPTION_KEY`：MVP 开发 envelope 使用的密钥材料。该机制不是生产 KMS。
 
-当前主服务使用内存状态实现，用于固定 API、同步协议和审计契约。生产化接入 PostgreSQL 时应保持现有 contract 不变，把内存 store 替换为持久化 repository。
+可选环境变量：
 
-主服务也可以通过 `ADSS_DATABASE_URL` 启用 ORM repository。当前 repository 使用 SeaORM 管理 schema 和 CRUD，已支持 SQLite 与 PostgreSQL 驱动；本地验证可先使用 SQLite。
+- `ADSS_BIND_ADDR`：监听地址，默认 `127.0.0.1:8080`。
+
+示例：
 
 ```powershell
 $env:ADSS_DATABASE_URL = "sqlite://adss.db?mode=rwc"
+$env:ADSS_DEV_PASSWORD_ENCRYPTION_KEY = "local-dev-only-key"
+$env:ADSS_BIND_ADDR = "127.0.0.1:8080"
 cargo run -p adss-server
 ```
 
-当前 ORM 层包含：
+启动时主服务会初始化 MVP schema：
 
-- `state_documents`：保存主服务 desired state 快照。
-- `audit_events`：保存审计事件。
-- `password_tasks`：保存按域拆分的密码下发任务。
-- `agent_cursors`：保存 Agent 已应用结构版本和密码任务游标。
-- `drift_reports`：保存 Agent 对账发现的 AD 侧 drift。
-- `registration_tokens`：保存一次性 Agent 注册令牌。
-- `agent_credentials`：保存 Agent 与域绑定后的共享密钥。
+- `sync_metadata`
+- `organizational_units`
+- `users`
+- `groups`
+- `user_credentials`
+- `domains`
 
-主服务仍使用内存 store 作为运行时聚合缓存；启用数据库时，关键同步状态会同步写入 SeaORM repository。后续生产化应继续把启动恢复逻辑扩展到密码任务、Agent cursor、drift report 和注册令牌，而不是只恢复 desired state 快照。
+当前没有域管理 API。测试或部署初始化需要通过 repository、迁移脚本或运维脚本预置 `domains` 记录，并写入 `agent_key_hash`。
 
-## Agent
+## Agent 环境变量
 
-Agent 入口位于 `adss-agent` crate。Agent 从环境变量读取主服务地址、域 ID 和 Agent ID。
+Agent 入口位于 `adss-agent` crate。
+
+必需环境变量：
+
+- `ADSS_DOMAIN_ID`：本 Agent 绑定的域。
+- `ADSS_AGENT_KEY`：该域的 Agent key 明文，由 Agent 本地 Secret 保存。
+- `ADSS_AGENT_STATE_PATH`：本地 revision state 文件路径。
+- `ADSS_AGENT_DRY_RUN=1`：当前必须启用 dry-run。
+
+可选环境变量：
+
+- `ADSS_SERVER_URL`：主服务地址，默认 `http://127.0.0.1:8080`。
+- `ADSS_AGENT_INTERVAL_SECONDS`：轮询间隔秒数，默认 `60`，必须大于 `0`。
+
+示例：
 
 ```powershell
 $env:ADSS_SERVER_URL = "http://127.0.0.1:8080"
 $env:ADSS_DOMAIN_ID = "domain-a"
-$env:ADSS_AGENT_ID = "agent-a"
-$env:ADSS_AGENT_KEY = "agent-a-key"
+$env:ADSS_AGENT_KEY = "domain-a-agent-key"
+$env:ADSS_AGENT_STATE_PATH = ".\agent-domain-a-state.json"
+$env:ADSS_AGENT_INTERVAL_SECONDS = "60"
 $env:ADSS_AGENT_DRY_RUN = "1"
 cargo run -p adss-agent
 ```
 
-当前 Agent 只允许 `ADSS_AGENT_DRY_RUN=1` 运行，使用 dry-run directory client 执行一轮 `poll -> reconcile/password -> report`。真实部署前必须接入 LDAPS directory client，并移除 dry-run 强制保护。
+本地 state 文件只保存：
 
-共享密钥来自 `POST /api/agent/register` 的注册响应。该密钥是 mTLS 前的最小认证材料，部署时应存入受限 Secret，不应写入普通配置仓库或日志。
+```json
+{
+  "applied_directory_revision": 0,
+  "applied_credential_revision": 0
+}
+```
 
-## 当前外部依赖边界
+文件无法解析时，Agent 会以 `0/0` 进度和 rebuild flags 重新拉取，并在 confirm 被中心接受后覆盖 state。
 
-- PostgreSQL：SeaORM repository 已具备 PostgreSQL 驱动和连接入口，当前持久化 desired state 快照、审计事件、密码任务、Agent cursor、drift report 和注册令牌。
-- mTLS：尚未接入传输层，当前使用 `X-ADSS-Agent-Key` 共享密钥作为过渡认证，并结合 Agent 与域绑定逻辑固定授权行为。
-- KMS/HSM：尚未接入，当前密码密封函数只保留不泄露明文的接口行为。
-- LDAPS：尚未接入真实 AD，当前由 `DirectoryClient` trait 隔离，Agent runtime 已能按顺序调用结构操作和密码任务。
+## 当前运行能力
 
-这些边界不能在部署说明中宣称已具备生产能力。下一阶段应优先把 PostgreSQL repository、真实 mTLS 和 LDAPS client 分别作为独立可验证提交推进。
+当前主链已经是 repository-backed MVP：
+
+- 中心写入目录当前事实并推进目录 revision。
+- 中心改密写入当前 verifier 和 ciphertext 并推进凭据 revision。
+- Agent 定时 sync，分别执行目录和凭据通道。
+- Agent 只有在 confirm `accepted=true` 后才保存本地 revision。
+
+真实 LDAPS 尚未接入。Agent 仍使用 `DryRunDirectoryClient`，非 dry-run 启动会失败。当前不能宣称已经能修改真实 AD。
+
+## 部署前置条件
+
+进入真实环境前至少需要补齐：
+
+- 主服务必须放在 TLS 后面，凭据响应禁止明文 HTTP。
+- `ADSS_DEV_PASSWORD_ENCRYPTION_KEY` 必须替换为 KMS/HSM 或等价 envelope。
+- Agent 需要真实 LDAPS DirectoryClient。
+- 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
+- 受管用户应禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。

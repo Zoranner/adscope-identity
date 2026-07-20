@@ -2,54 +2,90 @@
 
 ## 目标
 
-系统采用中心主服务与域内 Agent 的控制面/执行面分离架构。主服务是组织结构、用户生命周期、组成员关系、密码密文、同步版本和审计的唯一事实源；每个 AD 域内运行本地 Agent，由 Agent 主动轮询主服务并通过 LDAPS 幂等更新本地域。
+系统用于把中心服务维护的组织结构、用户信息、组成员关系和密码同步到多个独立 AD 域。中心服务是唯一事实源，各域通过本地域内 Agent 定时主动拉取并执行。
 
-首版只覆盖同步核心能力：组织结构、用户、组、成员关系、密码下发、结果回传与 drift 告警。不纳入完整 Web 管理平台、审批流、HR 对接、计算机账号、GPO 或证书同步。
+MVP 只保留最小可用主链：
+
+- 中心维护当前目录事实和当前凭据事实。
+- 每个域一个 Agent 主动拉取。
+- 目录和凭据按独立通道同步。
+- Agent 成功执行整批后确认 revision。
+- 域内人工修改不反向合并到中心。
 
 ## 拓扑
 
 ```text
-管理员 / 用户
+用户 / 管理入口
   |
   v
 中心主服务 API
   |
   v
-中心数据库 / 事实源
+中心数据库
   ^
   |
-AD 域内 Agent 主动轮询
+域内 Agent 定时 sync / confirm
   |
   v
 本地域控 AD
 ```
 
-主服务不主动访问域控，也不要求能访问 Agent 的内网地址。Agent 绑定一个 `domain_id`，只能拉取本域任务。一个域可以部署多个 Agent，但同一时间的任务领取和 cursor 推进必须由主服务保证幂等。
+主服务不主动访问域控，也不要求能访问 Agent 内网地址。Agent 只保存本地域的本地 revision state 和认证密钥。
 
-## 领域对象
+## 当前事实模型
 
-- `User`：以 `employee_id` 为全局唯一主键，包含 `sam_account_name`、`upn`、显示名、状态、目标 OU 和白名单属性。
-- `OrgUnit`：中心组织树节点，映射为域镜像根下的相对 DN。
-- `Group`：组定义与 AD 侧 `sAMAccountName`。
-- `GroupMembership`：组与用户的成员关系。
-- `Domain`：域配置、镜像根 DN、隔离 OU、工号属性映射和 Agent 策略。
-- `StructureVersion`：组织、用户、组、成员关系的目标状态版本。
-- `PasswordTask`：面向单个域的密码下发任务，不在接口响应中暴露明文。
-- `SyncRun`：Agent 一次执行的结果摘要。
-- `AuditEvent`：记录人、Agent、对象、动作、结果与时间。
+`organizational_units` 保存中心组织节点。节点使用稳定 `id` 和 `parent_id` 表达树关系，Agent 在域配置的 `mirror_root_dn` 下生成 AD OU。
+
+`users` 保存用户目录事实。`employee_id` 是跨域唯一标识，`username`、显示名、邮箱、手机、电话、目标 OU 和状态都属于目录通道。`disabled` 用户仍是受管用户，Agent 先确保用户存在，再禁用并移动到 `quarantine_ou_dn`。
+
+`groups` 保存组当前状态。成员集合直接保存在组记录中，不单独建成员实体。MVP 中组名固定映射为 AD 组 CN 和账号名。
+
+`user_credentials` 保存当前凭据事实。每个用户只保留当前 verifier 和 ciphertext，不保留旧密码历史，也不创建按域复制的密码任务。
+
+`domains` 保存域配置、Agent key hash 和该域已确认的目录/凭据 revision。
+
+## Revision 模型
+
+目录通道使用 `directory_revision`。任意 OU、用户、组或组成员变化都会在同一个中心事务中分配新的目录 revision，并写入受影响对象的 `changed_revision`。
+
+凭据通道使用 `credential_revision`。每次中心改密分配新的凭据 revision，并写入该用户当前凭据的 `changed_revision`。
+
+Agent 拉取的是最终当前状态，不重放旧中间状态：
+
+- 目录拉取返回 `changed_revision > applied_directory_revision` 的当前 OU、用户和组。
+- 凭据拉取返回 `changed_revision > applied_credential_revision` 的当前密码材料。
+- rebuild 请求把对应通道进度视为 `0`。
 
 ## 同步执行
 
-组织结构采用版本化 desired state reconcile。Agent 上报本地 cursor，主服务根据版本返回无变化、增量或完整快照。Agent 执行顺序固定为 OU、组、用户、用户位置、组成员、密码任务、删除隔离策略。
+Agent 每轮执行：
 
-密码修改采用高优先级任务队列。用户在主服务改密后，主服务为每个已接入域创建独立 `PasswordTask`。单域失败不影响其他域，失败原因必须回传并可重试。
+```text
+读取本地 applied revisions
+→ POST /api/agent/sync
+→ 执行目录批次
+→ 目录成功后 POST /api/agent/confirm
+→ 执行凭据批次
+→ 凭据成功后 POST /api/agent/confirm
+→ confirm accepted 后写本地 state
+→ 等待下一轮
+```
 
-AD 手工变更只作为 drift 回传和告警，不自动合并回主服务。中心服务始终是单一事实源。
+目录计划由契约层生成，顺序为父 OU、用户、用户位置、组、组成员、disabled 用户禁用和隔离。凭据批次独立执行，失败不会阻止目录通道确认。
 
-Agent runtime 的一轮执行流程为 `poll -> desired state reconcile -> password tasks -> report`。运行时通过 `ControlPlaneClient` 对接主服务，通过 `DirectoryClient` 对接 AD；这两个边界允许测试中使用内存或 dry-run 实现。当前控制面先使用 HTTP 加 `X-ADSS-Agent-Key` 共享密钥完成最小认证，生产加强阶段再替换或叠加 mTLS，AD 执行面替换为 LDAPS 实现。
+`server_revision` 表示中心当前全局 revision，`batch_revision` 表示本批允许确认的最高 revision。Agent 只能在整批成功后确认 `batch_revision`。
 
-数据库访问通过 SeaORM repository 隔离。当前持久化切面保存 desired state 快照、审计事件、密码任务、Agent cursor、drift report、注册令牌和 Agent 共享密钥，避免应用层长期依赖大 JSON 文档。
+## 简化边界
 
-## 删除与离职
+MVP 不包含：
 
-用户删除或离职不物理删除 AD 对象，默认禁用账号并移动到域配置的隔离 OU。组和 OU 的破坏性删除首版不自动执行，只标记为 drift 或 pending destructive change，等待后续显式确认机制。
+- Agent 注册流程。
+- 任务队列和任务领取。
+- 旧 poll/report cursor 模型。
+- drift 上报与生命周期。
+- 多 Agent 协调。
+- 物理删除 OU、组或用户。
+- 域内人工修改反向同步。
+- 生产 KMS、mTLS 和真实 LDAPS 实现。
+
+这些能力只能在主链稳定后按明确需求单独设计和验证。

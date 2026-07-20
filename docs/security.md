@@ -1,31 +1,50 @@
 # 安全边界
 
-## Agent 认证
+## 中心唯一改密
 
-首版最小实现使用一次性注册令牌绑定 `agent_id` 和 `domain_id`，注册成功后主服务返回一次性展示的共享密钥 `agent_key`。Agent 后续访问 `poll`、`report` 和 `drift-report` 时必须通过 `X-ADSS-Agent-Key` 请求头提交密钥；主服务同时校验 `agent_id`、`domain_id` 绑定关系和密钥，任一不匹配都拒绝。
+MVP 规定用户密码只能通过中心服务修改。域内 AD 的普通 Change Password 路径不作为事实源，也不会传播到其他域。
 
-共享密钥是 mTLS 前的过渡方案，不等价于客户端证书认证。部署时必须通过 Secret Manager、Windows DPAPI、受限配置文件或等价机制保存 Agent 密钥，禁止写入普通日志、审计 detail、错误响应和导出文件。后续加强方向是把共享密钥替换或叠加为 mTLS 客户端证书、密钥轮换、吊销列表和 Agent 禁用状态。
+受管账号应在 AD 中禁止用户自行 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 的“更改密码”入口。Agent 使用被委派的 Reset Password 权限设置中心下发的密码。
+
+## Verifier 与 Ciphertext
+
+`user_credentials.password_verifier` 用于中心登录和改密前校验。它不能还原密码，也不下发给 Agent。
+
+`user_credentials.password_ciphertext` 用于保存中心当前密码材料。服务端在 `/api/agent/sync` 内存中解封后组装 `CredentialEntry.plaintext_password`，Agent 立即用该明文设置 AD 密码。
+
+当前 envelope 格式是 MVP 开发边界，使用 `ADSS_DEV_PASSWORD_ENCRYPTION_KEY` 和本地可逆算法固定接口语义。它不是生产 KMS，不具备生产密钥托管、轮换、访问审计和硬件保护能力。生产部署前必须替换为 KMS/HSM 或等价机制。
+
+## Agent Key
+
+`domains.agent_key_hash` 保存 Agent key 的 `sha256:` 摘要，不保存明文 key。请求时服务端对 `x-adss-agent-key` 做同样摘要，并使用常量时间比较。
+
+Agent key 仍是 MVP 共享密钥方案，不等价于 mTLS。部署时应通过 Windows DPAPI、Secret Manager、受限配置文件或等价机制保存 Agent key，禁止进入日志、错误响应、审计详情或配置仓库。
+
+## 凭据传输
+
+凭据响应会包含 Agent 可执行的明文密码，因此必须满足：
+
+- 只允许通过 TLS 调用 `/api/agent/sync`。
+- 成功响应设置 `Cache-Control: no-store`。
+- 禁止在代理、网关、日志、tracing、错误回显、崩溃 dump 中记录响应体。
+- Agent 不把明文密码写入本地 state 或日志。
+- Agent 设置密码后立即丢弃明文。
+
+当前测试和 dry-run 只能验证协议行为，不代表 TLS、日志链路和代理缓存已经满足生产要求。
 
 ## AD 权限
 
-Agent 访问域控必须使用 LDAPS。域内服务账号应采用最小权限或委派权限，只允许管理镜像根和隔离 OU 内的目标对象。域控高权限凭据不得集中存放在主服务。
+Agent 访问域控必须使用 LDAPS。域内服务账号应采用最小权限委派，只允许管理镜像根和隔离 OU 内的目标对象，并只授予需要的创建、移动、属性写入、组成员写入、禁用和 Reset Password 权限。
 
-## 密码材料
+域控高权限凭据不得集中存放在主服务。主服务只保存中心业务事实、域同步配置和 Agent 认证摘要。
 
-主服务保存的密码材料必须是可逆密文，密钥由 KMS、HSM 或等价机制管理，并支持轮换、最小权限访问和审计。明文密码只允许在改密、下发和 AD 设置的最短执行路径中出现。
+## 延后能力
 
-禁止将明文密码写入：
+以下能力不属于当前 MVP 主链：
 
-- 应用日志。
-- 审计详情。
-- 错误响应。
-- tracing 字段。
-- 配置文件。
-- 备份导出。
-- 排错 dump。
-
-## 审计
-
-所有用户操作、Agent 注册、Agent 轮询、密码任务创建、密码下发结果、LDAPS 权限错误、对象冲突和 drift 发现都必须进入审计。审计记录描述动作和结果，不保存密码明文。
-
-审计事件的 detail 字段只能保存结构版本、任务数量、cursor、错误类型、drift 数量等非敏感摘要。Agent 轮询被拒绝时必须记录拒绝原因，但不能记录注册令牌、客户端私钥、密码材料或域控服务账号凭据。
+- Agent 注册令牌。
+- mTLS 客户端证书绑定。
+- Agent key 轮换和吊销。
+- 完整审计平台。
+- drift 生命周期管理。
+- 生产级密码哈希和 KMS envelope。

@@ -1,54 +1,109 @@
 # Agent 同步协议
 
-## 轮询
+## 同步边界
 
-Agent 使用 `POST /api/agent/poll` 主动轮询主服务。请求包含：
+每个域部署一个 Agent。Agent 定时主动请求主服务，主服务不主动连接域控或 Agent。中心数据库保存当前事实；域内 AD 是下游镜像，域内人工修改不传播回中心。
 
-- `domain_id`：Agent 所属域。
-- `agent_id`：Agent 身份。
-- `last_structure_version`：本地已成功应用的结构版本。
-- `password_task_cursor`：本地已成功处理的密码任务游标。
+Agent 请求使用 `x-adss-agent-key` 认证，并且只能访问请求 `domain_id` 对应的域配置和同步数据。
 
-请求必须携带 `X-ADSS-Agent-Key`。主服务必须验证 Agent 与域的绑定关系以及共享密钥。绑定 A 域的 Agent 不能拉取 B 域任务。
+## 双通道
 
-## 注册
+MVP 同步拆成两个独立通道：
 
-Agent 使用 `POST /api/agent/register` 完成首次绑定。请求包含：
+- `directory`：OU、用户资料、用户状态、用户目标 OU、组和组成员。
+- `credential`：中心当前密码材料。
 
-- `registration_token`：主服务预先签发的一次性注册令牌。
-- `agent_id`：Agent 实例标识。
-- `domain_id`：Agent 所属域。
-- `certificate_subject`：客户端证书主体预留字段，用于后续 mTLS 绑定。
+两个通道分别拉取、执行和确认。目录失败不阻塞凭据执行，凭据失败不回退目录确认。
 
-注册令牌只能使用一次，并且只能绑定令牌所属域。注册成功后，主服务返回 `agent_key`；Agent 后续必须使用该共享密钥轮询和回传该域的同步任务。该密钥是过渡认证材料，后续可替换或叠加 mTLS。
+## Sync 请求
 
-## 结构载荷
+`POST /api/agent/sync`
 
-响应中的 `structure` 有三种形态：
+```json
+{
+  "domain_id": "domain-a",
+  "applied_directory_revision": 10,
+  "applied_credential_revision": 7,
+  "rebuild_directory": false,
+  "rebuild_credentials": false
+}
+```
 
-- `no_change`：结构版本一致，无需 reconcile。
-- `delta`：返回从上次版本到当前版本的目标状态变化。
-- `snapshot`：返回完整目标状态，用于首次同步、cursor 过旧或状态不可信时重建。
+`applied_*_revision` 表示 Agent 本地已经成功执行并被中心接受的 revision。请求 revision 不能高于中心为该域记录的 applied revision；如果上次 confirm 响应丢失，Agent 必须先重试 confirm。
 
-首版实现可以把 `delta` 表示为当前目标状态，由 Agent 端幂等 reconcile。后续当数据规模增大时再细化对象级差异。
+`rebuild_directory=true` 表示目录通道从 revision `0` 重新拉取当前对象。`rebuild_credentials=true` 表示凭据通道从 revision `0` 重新拉取当前凭据。Agent 本地 state 文件无法解析时使用两个 rebuild 标记恢复。
 
-## 密码任务
+## Sync 响应
 
-响应中的 `password_tasks` 只包含当前域且 `task_id > password_task_cursor` 的任务。任务对象不得序列化明文密码。真实实现中 Agent 应在受控路径中解密或获取一次性下发材料，并立即调用 LDAPS 设置密码。
+```json
+{
+  "directory": {
+    "server_revision": 12,
+    "batch_revision": 12,
+    "organizational_units": [],
+    "users": [],
+    "groups": [],
+    "has_more": false
+  },
+  "credentials": {
+    "server_revision": 9,
+    "batch_revision": 9,
+    "credentials": [],
+    "has_more": false
+  },
+  "directory_config": {
+    "domain_id": "domain-a",
+    "mirror_root_dn": "OU=Mirror,DC=a,DC=example,DC=com",
+    "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
+    "upn_suffix": "a.example.com",
+    "employee_id_attribute": "employeeID"
+  }
+}
+```
 
-## 结果回传
+`server_revision` 是中心当前全局 revision。`batch_revision` 是本次响应允许 Agent 确认的最高 revision。Agent 只能确认 `batch_revision`，不能直接确认未返回的更高版本。
 
-Agent 使用 `POST /api/agent/report` 回传：
+目录通道当前取消分页，`batch_revision` 等于 `server_revision`，`has_more=false`。凭据通道可按批返回，服务端保证 `batch_revision` 不越过本批实际返回范围。
 
-- 已应用结构版本。
-- 已处理密码任务 cursor。
-- 成功、失败、跳过、待人工处理统计。
-- 对象级结果、错误码和 AD 拒绝原因。
+## 目录执行
 
-主服务只在认证通过且 report 合法时推进 cursor。失败任务保留可重试状态，禁止静默丢弃。
+目录响应包含 changed revision 大于请求进度的当前对象状态。Agent 不重放旧中间状态。
 
-## Drift 回传
+Agent 将目录批次转为固定执行顺序：
 
-Agent 使用 `POST /api/agent/drift-report` 回传本地域摘要对账结果。Drift 只进入告警和审计，不触发 AD 到主服务的反向写入。
+- 父 OU 先于子 OU。
+- 确保用户存在并同步属性。
+- active 用户移动到目标 OU。
+- 确保组存在。
+- 同步组成员集合。
+- disabled 用户禁用并移动到隔离 OU。
 
-域状态通过 `GET /api/sync/domains/{domain_id}/status` 查询。状态至少包含目标结构版本、已应用结构版本、密码任务游标和 drift 数量。
+目录批次必须整体执行成功后才能确认。OU 环、重复 OU ID 等非法批次会失败确认，不推进本地 revision。
+
+## 凭据执行
+
+凭据响应包含中心当前密文在服务端内存解封后的明文密码。响应必须通过 TLS 传输，并设置 `Cache-Control: no-store`。Agent 不落盘明文密码，只在本轮立即通过 LDAPS Reset Password 设置到本域。
+
+凭据批次整体成功后确认 `batch_revision`。任一密码设置失败时，Agent 发送失败 confirm，不推进本地凭据 revision，下轮继续重试。
+
+## Confirm 请求
+
+`POST /api/agent/confirm`
+
+```json
+{
+  "domain_id": "domain-a",
+  "channel": "credential",
+  "target_revision": 9,
+  "success": false,
+  "error_code": "password_denied"
+}
+```
+
+规则：
+
+- `success=true` 时，中心推进对应通道的 applied revision。
+- `success=false` 时，中心接受失败回报但不推进 revision。
+- 服务端拒绝倒退确认。
+- 服务端拒绝超过当前全局 revision 的确认。
+- Agent 只有收到 `accepted=true` 才能保存本地 state。

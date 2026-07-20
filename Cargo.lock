@@ -18,7 +18,6 @@ name = "adss-contract"
 version = "0.1.0"
 dependencies = [
  "serde",
- "thiserror",
 ]
 
 [[package]]
@@ -30,7 +29,6 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
- "thiserror",
  "tokio",
 ]
 
@@ -47,7 +45,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror",
  "tokio",
  "tower",
 ]

@@ -1,62 +1,75 @@
 # 数据库设计
 
-## ORM 选择
+## 当前事实源
 
-数据库层使用 SeaORM。当前代码将 ORM 封装在 `adss-persistence` crate 中，主服务只依赖 repository 能力，不直接操作具体表。
+MVP 使用 SeaORM 封装数据库访问，主服务通过 `MvpRepository` 读写当前事实。中心数据库是运行时唯一事实源，不再使用内存业务 Store 承担主链同步状态。
 
-当前私有 Cargo 源尚未提供 SeaORM `2.0.0` stable，项目锁定 `2.0.0-rc.38`。后续私有源同步 stable 后，应单独升级并跑完整验证。
+当前 schema 仍通过 `CREATE TABLE IF NOT EXISTS` 初始化。正式生产迁移工具、schema 版本和历史归档属于后续任务。
 
-## 当前表
+## MVP 表
 
-`state_documents`
+`sync_metadata`
 
-- `key`：状态文档主键。
-- `value_json`：序列化后的主服务状态快照。
+- `key`：元数据主键，当前固定为默认行。
+- `directory_revision`：目录通道当前全局 revision。
+- `credential_revision`：凭据通道当前全局 revision。
 
-`audit_events`
+`organizational_units`
 
-- `sequence`：审计序号。
-- `actor`：操作者或 Agent。
-- `action`：动作名。
-- `target`：目标对象。
-- `result`：结果。
-- `detail_json`：非敏感摘要 JSON。
+- `id`：中心稳定 OU 标识。
+- `name`：OU 名称。
+- `parent_id`：父 OU 标识，根节点为空。
+- `changed_revision`：该 OU 当前状态最后一次变化所在的目录 revision。
 
-`password_tasks`
+`users`
 
-- `task_id`：密码任务序号。
-- `domain_id`：目标域。
-- `employee_id`：目标用户工号。
-- `encrypted_password`：密码密文或密文引用，禁止明文。
+- `employee_id`：跨域唯一用户标识。
+- `username`：AD 账号名，MVP 中也作为 UPN 本地部分来源。
+- `display_name`：显示名。
+- `email`：邮箱。
+- `mobile`：手机号。
+- `telephone`：办公电话。
+- `organizational_unit_id`：用户目标 OU。
+- `status`：`active` 或 `disabled`。
+- `changed_revision`：该用户当前目录状态最后一次变化所在的目录 revision。
 
-`agent_cursors`
+`groups`
 
-- `agent_id`：Agent 标识。
-- `domain_id`：绑定域。
-- `structure_version`：已应用结构版本。
-- `password_task_cursor`：已处理密码任务游标。
+- `id`：中心稳定组标识。
+- `name`：组名，MVP 中映射为 AD 组 CN 和账号名。
+- `member_employee_ids_json`：成员工号数组 JSON。
+- `changed_revision`：该组当前状态最后一次变化所在的目录 revision。
 
-`drift_reports`
+`user_credentials`
 
-- `id`：drift report 序号。
-- `domain_id`：上报域。
-- `agent_id`：上报 Agent。
-- `observed_structure_version`：Agent 观察到的结构版本。
-- `drifted_objects_json`：drift 对象摘要。
+- `employee_id`：用户标识。
+- `password_ciphertext`：中心保存的当前密码密文。
+- `password_verifier`：中心登录和改密校验使用的 verifier。
+- `changed_revision`：该用户当前凭据最后一次变化所在的凭据 revision。
 
-`registration_tokens`
+`domains`
 
-- `token`：一次性注册令牌。
-- `domain_id`：令牌允许绑定的域。
+- `id`：域标识，也是 Agent 同步请求中的 `domain_id`。
+- `name`：域显示名。
+- `enabled`：域是否允许同步。
+- `mirror_root_dn`：本系统管理对象所在镜像根 DN。
+- `quarantine_ou_dn`：禁用用户隔离 OU DN。
+- `upn_suffix`：该域 UPN 后缀。
+- `employee_id_attribute`：AD 中保存工号的属性名。
+- `agent_key_hash`：Agent key 摘要，不保存明文 key。
+- `applied_directory_revision`：该域已确认应用的目录 revision。
+- `applied_credential_revision`：该域已确认应用的凭据 revision。
 
-`agent_credentials`
+## Revision 规则
 
-- `agent_id`：Agent 标识。
-- `domain_id`：Agent 绑定域。
-- `agent_key`：共享密钥。该字段是 mTLS 前的过渡认证材料，不得进入审计、日志或导出文件。
+一次中心目录写事务分配一个新的 `directory_revision`，本次涉及的 OU、用户和组共享该 revision。Agent 拉取时按对象 `changed_revision > applied_directory_revision` 返回当前完整对象状态。
 
-## 边界
+一次中心改密事务分配一个新的 `credential_revision`，只保留该用户最新的 `user_credentials` 行。Agent 拉取时按 `changed_revision > applied_credential_revision` 返回待设置的当前密码材料。
 
-当前数据库层已经接入主服务启动、用户更新、密码任务创建、Agent report、drift report、Agent 注册令牌消费和 Agent 共享密钥路径。主服务仍保留内存 store 作为运行时聚合缓存，但关键同步状态已经有 ORM 持久化表承接。
+确认写入只更新 `domains` 中目标通道的一列，并拒绝倒退或超过全局 revision 的确认。
 
-密码材料不得直接落明文列。`password_tasks.encrypted_password` 只能保存 KMS/HSM 返回的密文引用或密文材料，并保持审计与日志不可见。
+## 旧表边界
+
+旧 `OrmRepository` 及 `state_documents`、`audit_events`、`password_tasks`、`agent_cursors`、`drift_reports`、`registration_tokens`、`agent_credentials` 仍保留在代码中用于过渡编译和历史测试边界，但它们已经不是 MVP 同步主链。
+
+MVP 主链不依赖旧快照、密码任务队列、Agent cursor、drift report 或注册令牌表。
