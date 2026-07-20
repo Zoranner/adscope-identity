@@ -15,10 +15,18 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::env;
+use std::{
+    env,
+    io::Write,
+    path::Path as FsPath,
+    process::{Command, Stdio},
+    sync::Arc,
+};
 
 const AGENT_KEY_HEADER: &str = "x-adss-agent-key";
-const PASSWORD_ENVELOPE_KEY_ENV: &str = "ADSS_DEV_PASSWORD_ENCRYPTION_KEY";
+const PASSWORD_ENVELOPE_PROVIDER_ENV: &str = "ADSS_PASSWORD_ENVELOPE_PROVIDER";
+const PASSWORD_ENVELOPE_LOCAL_KEY_ENV: &str = "ADSS_PASSWORD_ENVELOPE_LOCAL_KEY";
+const PASSWORD_ENVELOPE_COMMAND_ENV: &str = "ADSS_PASSWORD_ENVELOPE_COMMAND";
 const DEFAULT_BATCH_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,27 +56,24 @@ impl ServerConfig {
 pub struct AppState {
     repository: Repository,
     batch_limit: usize,
-    password_envelope_key: Vec<u8>,
+    password_envelope: Arc<dyn PasswordEnvelope>,
 }
 
 impl AppState {
     pub fn from_env(repository: Repository) -> anyhow::Result<Self> {
-        let password_envelope_key = env::var(PASSWORD_ENVELOPE_KEY_ENV).map_err(|_| {
-            anyhow::anyhow!("{PASSWORD_ENVELOPE_KEY_ENV} is required for the MVP server")
-        })?;
-        if password_envelope_key.is_empty() {
-            anyhow::bail!("{PASSWORD_ENVELOPE_KEY_ENV} must not be empty");
-        }
-
-        Ok(Self::with_password_envelope_key(
+        Ok(Self::with_password_envelope(
             repository,
             DEFAULT_BATCH_LIMIT,
-            password_envelope_key,
+            password_envelope_from_env()?,
         ))
     }
 
     pub fn new_for_tests(repository: Repository, password_envelope_key: impl Into<String>) -> Self {
-        Self::with_password_envelope_key(repository, DEFAULT_BATCH_LIMIT, password_envelope_key)
+        Self::with_password_envelope(
+            repository,
+            DEFAULT_BATCH_LIMIT,
+            Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
+        )
     }
 
     pub fn with_batch_limit_for_tests(
@@ -76,19 +81,22 @@ impl AppState {
         batch_limit: usize,
         password_envelope_key: impl Into<String>,
     ) -> Self {
-        Self::with_password_envelope_key(repository, batch_limit, password_envelope_key)
+        Self::with_password_envelope(
+            repository,
+            batch_limit,
+            Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
+        )
     }
 
-    fn with_password_envelope_key(
+    fn with_password_envelope(
         repository: Repository,
         batch_limit: usize,
-        password_envelope_key: impl Into<String>,
+        password_envelope: Arc<dyn PasswordEnvelope>,
     ) -> Self {
-        let password_envelope_key = password_envelope_key.into();
         Self {
             repository,
             batch_limit: batch_limit.max(1),
-            password_envelope_key: password_envelope_key.into_bytes(),
+            password_envelope,
         }
     }
 }
@@ -173,10 +181,10 @@ async fn change_password(
         .repository
         .change_user_password(UserCredentialInput {
             employee_id: employee_id.clone(),
-            password_ciphertext: seal_password_for_storage(
-                &request.new_password,
-                &state.password_envelope_key,
-            )?,
+            password_ciphertext: state
+                .password_envelope
+                .seal(&request.new_password)
+                .map_err(|_| ApiError::Persistence)?,
             password_verifier: password_verifier(&request.new_password),
         })
         .await
@@ -221,7 +229,7 @@ async fn agent_sync(
         .await
         .map_err(|_| ApiError::Persistence)?;
     let credentials =
-        open_credential_batch_for_agent(credential_ciphertexts, &state.password_envelope_key)?;
+        open_credential_batch_for_agent(credential_ciphertexts, state.password_envelope.as_ref())?;
 
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
@@ -302,7 +310,7 @@ async fn authorize_domain_agent(
 
 fn open_credential_batch_for_agent(
     batch: CredentialCiphertextBatch,
-    password_envelope_key: &[u8],
+    password_envelope: &dyn PasswordEnvelope,
 ) -> Result<CredentialBatch, ApiError> {
     let credentials = batch
         .credentials
@@ -312,7 +320,7 @@ fn open_credential_batch_for_agent(
                 employee_id: credential.employee_id,
                 plaintext_password: open_password_for_agent(
                     &credential.password_ciphertext,
-                    password_envelope_key,
+                    password_envelope,
                 )
                 .ok_or(ApiError::Persistence)?,
                 status: credential.status,
@@ -339,33 +347,132 @@ fn agent_key_hash(agent_key: &str) -> String {
     format!("sha256:{}", sha256_hex(agent_key.as_bytes()))
 }
 
-// Dev/MVP reversible envelope for local testing. This is not production encryption and must be
-// replaced by a proper KMS-backed envelope before deployment.
-fn seal_password_for_storage(
-    password: &str,
-    password_envelope_key: &[u8],
-) -> Result<String, ApiError> {
-    if password_envelope_key.is_empty() {
-        return Err(ApiError::Persistence);
-    }
-
-    Ok(format!(
-        "mvp-envelope:v1:{}",
-        hex::encode(xor_with_password_stream(
-            password.as_bytes(),
-            password_envelope_key
-        ))
-    ))
+fn open_password_for_agent(
+    ciphertext: &str,
+    password_envelope: &dyn PasswordEnvelope,
+) -> Option<String> {
+    password_envelope.open(ciphertext).ok()
 }
 
-fn open_password_for_agent(ciphertext: &str, password_envelope_key: &[u8]) -> Option<String> {
-    if password_envelope_key.is_empty() {
-        return None;
+trait PasswordEnvelope: Send + Sync {
+    fn seal(&self, plaintext: &str) -> anyhow::Result<String>;
+    fn open(&self, ciphertext: &str) -> anyhow::Result<String>;
+}
+
+#[derive(Debug)]
+struct LocalPasswordEnvelope {
+    key: Vec<u8>,
+}
+
+impl LocalPasswordEnvelope {
+    fn new(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into().into_bytes(),
+        }
+    }
+}
+
+impl PasswordEnvelope for LocalPasswordEnvelope {
+    fn seal(&self, plaintext: &str) -> anyhow::Result<String> {
+        if self.key.is_empty() {
+            anyhow::bail!("local password envelope key must not be empty");
+        }
+
+        Ok(format!(
+            "local-envelope:v1:{}",
+            hex::encode(xor_with_password_stream(plaintext.as_bytes(), &self.key))
+        ))
     }
 
-    let encoded = ciphertext.strip_prefix("mvp-envelope:v1:")?;
-    let ciphertext = hex::decode(encoded).ok()?;
-    String::from_utf8(xor_with_password_stream(&ciphertext, password_envelope_key)).ok()
+    fn open(&self, ciphertext: &str) -> anyhow::Result<String> {
+        if self.key.is_empty() {
+            anyhow::bail!("local password envelope key must not be empty");
+        }
+
+        let encoded = ciphertext
+            .strip_prefix("local-envelope:v1:")
+            .ok_or_else(|| anyhow::anyhow!("unsupported password envelope"))?;
+        let ciphertext = hex::decode(encoded)?;
+        Ok(String::from_utf8(xor_with_password_stream(
+            &ciphertext,
+            &self.key,
+        ))?)
+    }
+}
+
+#[derive(Debug)]
+struct CommandPasswordEnvelope {
+    command: String,
+}
+
+impl CommandPasswordEnvelope {
+    fn new(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
+        }
+    }
+
+    fn run(&self, action: &str, input: &str) -> anyhow::Result<String> {
+        let mut child = Command::new(&self.command)
+            .arg(action)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("password envelope command stdin unavailable"))?;
+        stdin.write_all(input.as_bytes())?;
+        drop(stdin);
+
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            anyhow::bail!("password envelope command failed");
+        }
+
+        let output = String::from_utf8(output.stdout)?;
+        Ok(output.trim_end_matches(['\r', '\n']).to_string())
+    }
+}
+
+impl PasswordEnvelope for CommandPasswordEnvelope {
+    fn seal(&self, plaintext: &str) -> anyhow::Result<String> {
+        self.run("seal", plaintext)
+    }
+
+    fn open(&self, ciphertext: &str) -> anyhow::Result<String> {
+        self.run("open", ciphertext)
+    }
+}
+
+fn password_envelope_from_env() -> anyhow::Result<Arc<dyn PasswordEnvelope>> {
+    let provider = env::var(PASSWORD_ENVELOPE_PROVIDER_ENV)
+        .map_err(|_| anyhow::anyhow!("{PASSWORD_ENVELOPE_PROVIDER_ENV} is required"))?;
+
+    match provider.as_str() {
+        "local" => {
+            let key = env::var(PASSWORD_ENVELOPE_LOCAL_KEY_ENV)
+                .map_err(|_| anyhow::anyhow!("{PASSWORD_ENVELOPE_LOCAL_KEY_ENV} is required"))?;
+            if key.is_empty() {
+                anyhow::bail!("{PASSWORD_ENVELOPE_LOCAL_KEY_ENV} must not be empty");
+            }
+            Ok(Arc::new(LocalPasswordEnvelope::new(key)))
+        }
+        "command" => {
+            let command = env::var(PASSWORD_ENVELOPE_COMMAND_ENV)
+                .map_err(|_| anyhow::anyhow!("{PASSWORD_ENVELOPE_COMMAND_ENV} is required"))?;
+            if command.is_empty() {
+                anyhow::bail!("{PASSWORD_ENVELOPE_COMMAND_ENV} must not be empty");
+            }
+            if !FsPath::new(&command).is_file() {
+                anyhow::bail!("{PASSWORD_ENVELOPE_COMMAND_ENV} must point to a file");
+            }
+            Ok(Arc::new(CommandPasswordEnvelope::new(command)))
+        }
+        _ => anyhow::bail!("unsupported password envelope provider: {provider}"),
+    }
 }
 
 /// MVP stand-in verifier: deterministic and content-sensitive for tests, but not a production
@@ -402,7 +509,7 @@ fn xor_with_password_stream(input: &[u8], password_envelope_key: &[u8]) -> Vec<u
 
     while output.len() < input.len() {
         let mut hasher = Sha256::new();
-        hasher.update(b"adss:mvp-password-envelope:v1");
+        hasher.update(b"adss:local-password-envelope:v1");
         hasher.update(password_envelope_key);
         hasher.update(counter.to_be_bytes());
         let block = hasher.finalize();

@@ -12,7 +12,7 @@ MVP 规定用户密码只能通过中心服务修改。域内 AD 的普通 Chang
 
 `user_credentials.password_ciphertext` 用于保存中心当前密码材料。服务端在 `/api/agent/sync` 内存中解封后组装 `CredentialEntry.plaintext_password`，Agent 立即用该明文设置 AD 密码。
 
-当前 envelope 格式是 MVP 开发边界，使用 `ADSS_DEV_PASSWORD_ENCRYPTION_KEY` 和本地可逆算法固定接口语义。它不是生产 KMS，不具备生产密钥托管、轮换、访问审计和硬件保护能力。生产部署前必须替换为 KMS/HSM 或等价机制。
+主服务通过 password envelope provider 处理 `password_ciphertext`。`local` provider 仅允许本地开发和自动化测试；生产必须使用 `command` provider 对接 KMS/HSM 或等价密钥服务，并由外部密钥系统承担密钥托管、轮换、访问审计和硬件保护能力。
 
 ## Agent Key
 
@@ -47,4 +47,4 @@ Agent 访问域控必须使用 LDAPS。域内服务账号应采用最小权限�
 - Agent key 轮换和吊销。
 - 完整审计平台。
 - drift 生命周期管理。
-- 生产级密码哈希和 KMS envelope。
+- 生产级密码哈希。
