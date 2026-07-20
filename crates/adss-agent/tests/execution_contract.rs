@@ -3,7 +3,7 @@ use adss_agent::{
 };
 use adss_contract::{
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DirectoryOperationKind,
-    DirectoryPlan, DomainDirectoryConfig, MvpGroup, MvpOrganizationalUnit, MvpUser, MvpUserStatus,
+    DirectoryPlan, DomainDirectoryConfig, Group, OrganizationalUnit, User, UserStatus,
 };
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
@@ -133,13 +133,13 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
     DirectoryBatch {
         server_revision: batch_revision,
         batch_revision,
-        organizational_units: vec![MvpOrganizationalUnit {
+        organizational_units: vec![OrganizationalUnit {
             id: "ou-rd".to_string(),
             name: "Research".to_string(),
             parent_id: None,
             changed_revision: batch_revision,
         }],
-        users: vec![MvpUser {
+        users: vec![User {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),
             display_name: "Zhang San".to_string(),
@@ -147,10 +147,10 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             mobile: None,
             telephone: None,
             organizational_unit_id: "ou-rd".to_string(),
-            status: MvpUserStatus::Active,
+            status: UserStatus::Active,
             changed_revision: batch_revision,
         }],
-        groups: vec![MvpGroup {
+        groups: vec![Group {
             id: "dev".to_string(),
             name: "Developers".to_string(),
             member_employee_ids: vec!["1001".to_string()],

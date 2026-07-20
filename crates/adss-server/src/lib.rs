@@ -1,10 +1,10 @@
 use adss_contract::{
     AgentConfirmRequest, AgentConfirmResponse, AgentSyncRequest, AgentSyncResponse,
-    CredentialBatch, CredentialEntry, DomainDirectoryConfig, MvpPasswordChangeRequest,
-    MvpPasswordChangeResponse, MvpUserStatus, SyncChannel, UserLoginRequest, UserLoginResponse,
+    CredentialBatch, CredentialEntry, DomainDirectoryConfig, PasswordChangeRequest,
+    PasswordChangeResponse, SyncChannel, UserLoginRequest, UserLoginResponse, UserStatus,
 };
 use adss_persistence::{
-    CredentialCiphertextBatch, MvpRepository, UserCredentialInput, UserDirectoryPatch,
+    CredentialCiphertextBatch, Repository, UserCredentialInput, UserDirectoryPatch,
 };
 use axum::{
     Json, Router,
@@ -46,13 +46,13 @@ impl ServerConfig {
 
 #[derive(Clone)]
 pub struct AppState {
-    repository: MvpRepository,
+    repository: Repository,
     batch_limit: usize,
     password_envelope_key: Vec<u8>,
 }
 
 impl AppState {
-    pub fn from_env(repository: MvpRepository) -> anyhow::Result<Self> {
+    pub fn from_env(repository: Repository) -> anyhow::Result<Self> {
         let password_envelope_key = env::var(PASSWORD_ENVELOPE_KEY_ENV).map_err(|_| {
             anyhow::anyhow!("{PASSWORD_ENVELOPE_KEY_ENV} is required for the MVP server")
         })?;
@@ -67,15 +67,12 @@ impl AppState {
         ))
     }
 
-    pub fn new_for_tests(
-        repository: MvpRepository,
-        password_envelope_key: impl Into<String>,
-    ) -> Self {
+    pub fn new_for_tests(repository: Repository, password_envelope_key: impl Into<String>) -> Self {
         Self::with_password_envelope_key(repository, DEFAULT_BATCH_LIMIT, password_envelope_key)
     }
 
     pub fn with_batch_limit_for_tests(
-        repository: MvpRepository,
+        repository: Repository,
         batch_limit: usize,
         password_envelope_key: impl Into<String>,
     ) -> Self {
@@ -83,7 +80,7 @@ impl AppState {
     }
 
     fn with_password_envelope_key(
-        repository: MvpRepository,
+        repository: Repository,
         batch_limit: usize,
         password_envelope_key: impl Into<String>,
     ) -> Self {
@@ -159,8 +156,8 @@ async fn update_user(
 async fn change_password(
     State(state): State<AppState>,
     Path(employee_id): Path<String>,
-    Json(request): Json<MvpPasswordChangeRequest>,
-) -> Result<Json<MvpPasswordChangeResponse>, ApiError> {
+    Json(request): Json<PasswordChangeRequest>,
+) -> Result<Json<PasswordChangeResponse>, ApiError> {
     let credential = state
         .repository
         .get_credential_record(&employee_id)
@@ -185,7 +182,7 @@ async fn change_password(
         .await
         .map_err(|_| ApiError::Persistence)?;
 
-    Ok(Json(MvpPasswordChangeResponse {
+    Ok(Json(PasswordChangeResponse {
         employee_id,
         credential_revision,
     }))
@@ -277,7 +274,7 @@ async fn agent_confirm(
 }
 
 async fn authorize_domain_agent(
-    repository: &MvpRepository,
+    repository: &Repository,
     domain_id: &str,
     agent_key: Option<&str>,
 ) -> Result<adss_persistence::DomainRecord, ApiError> {
@@ -430,7 +427,7 @@ struct UpdateUserDirectoryRequest {
     mobile: Option<String>,
     telephone: Option<String>,
     organizational_unit_id: String,
-    status: MvpUserStatus,
+    status: UserStatus,
 }
 
 #[derive(Debug, Serialize)]

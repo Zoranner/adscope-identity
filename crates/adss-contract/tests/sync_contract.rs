@@ -1,7 +1,7 @@
 use adss_contract::{
     AgentConfirmRequest, CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperationKind,
-    DirectoryOperationTarget, DirectoryPlan, DirectoryPlanError, DomainDirectoryConfig, MvpGroup,
-    MvpOrganizationalUnit, MvpUser, MvpUserStatus, SyncChannel,
+    DirectoryOperationTarget, DirectoryPlan, DirectoryPlanError, DomainDirectoryConfig, Group,
+    OrganizationalUnit, SyncChannel, User, UserStatus,
 };
 use serde::{
     Serialize,
@@ -14,13 +14,13 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
     let batch = DirectoryBatch {
         server_revision: 7,
         batch_revision: 7,
-        organizational_units: vec![MvpOrganizationalUnit {
+        organizational_units: vec![OrganizationalUnit {
             id: "ou-rd".to_string(),
             name: "研发部".to_string(),
             parent_id: None,
             changed_revision: 7,
         }],
-        users: vec![MvpUser {
+        users: vec![User {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),
             display_name: "张三".to_string(),
@@ -28,10 +28,10 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
             mobile: Some("13800000000".to_string()),
             telephone: None,
             organizational_unit_id: "ou-rd".to_string(),
-            status: MvpUserStatus::Active,
+            status: UserStatus::Active,
             changed_revision: 7,
         }],
-        groups: vec![MvpGroup {
+        groups: vec![Group {
             id: "dev".to_string(),
             name: "Developers".to_string(),
             member_employee_ids: vec!["1001".to_string()],
@@ -77,13 +77,13 @@ fn directory_plan_orders_parent_ou_before_child_ou() {
         server_revision: 8,
         batch_revision: 8,
         organizational_units: vec![
-            MvpOrganizationalUnit {
+            OrganizationalUnit {
                 id: "ou-child".to_string(),
                 name: "研发二部".to_string(),
                 parent_id: Some("ou-parent".to_string()),
                 changed_revision: 8,
             },
-            MvpOrganizationalUnit {
+            OrganizationalUnit {
                 id: "ou-parent".to_string(),
                 name: "研发部".to_string(),
                 parent_id: None,
@@ -117,13 +117,13 @@ fn directory_plan_rejects_duplicate_ou_ids() {
         server_revision: 8,
         batch_revision: 8,
         organizational_units: vec![
-            MvpOrganizationalUnit {
+            OrganizationalUnit {
                 id: "ou-rd".to_string(),
                 name: "研发部".to_string(),
                 parent_id: None,
                 changed_revision: 8,
             },
-            MvpOrganizationalUnit {
+            OrganizationalUnit {
                 id: "ou-rd".to_string(),
                 name: "研发中心".to_string(),
                 parent_id: None,
@@ -150,13 +150,13 @@ fn directory_plan_rejects_cyclic_ou_hierarchy() {
         server_revision: 8,
         batch_revision: 8,
         organizational_units: vec![
-            MvpOrganizationalUnit {
+            OrganizationalUnit {
                 id: "ou-a".to_string(),
                 name: "A".to_string(),
                 parent_id: Some("ou-b".to_string()),
                 changed_revision: 8,
             },
-            MvpOrganizationalUnit {
+            OrganizationalUnit {
                 id: "ou-b".to_string(),
                 name: "B".to_string(),
                 parent_id: Some("ou-a".to_string()),
@@ -183,7 +183,7 @@ fn disabled_users_are_ensured_then_disabled_and_moved_to_quarantine() {
         server_revision: 9,
         batch_revision: 9,
         organizational_units: Vec::new(),
-        users: vec![MvpUser {
+        users: vec![User {
             employee_id: "1002".to_string(),
             username: "lisi".to_string(),
             display_name: "李四".to_string(),
@@ -191,7 +191,7 @@ fn disabled_users_are_ensured_then_disabled_and_moved_to_quarantine() {
             mobile: None,
             telephone: None,
             organizational_unit_id: "ou-rd".to_string(),
-            status: MvpUserStatus::Disabled,
+            status: UserStatus::Disabled,
             changed_revision: 9,
         }],
         groups: Vec::new(),

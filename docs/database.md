@@ -2,11 +2,11 @@
 
 ## 当前事实源
 
-MVP 使用 SeaORM 封装数据库访问，主服务通过 `MvpRepository` 读写当前事实。中心数据库是运行时唯一事实源，不再使用内存业务 Store 承担主链同步状态。
+系统使用 SeaORM 封装数据库访问，主服务通过 `Repository` 读写当前事实。中心数据库是运行时唯一事实源，不再使用内存业务 Store 承担主链同步状态。
 
 当前 schema 仍通过 `CREATE TABLE IF NOT EXISTS` 初始化。正式生产迁移工具、schema 版本和历史归档属于后续任务。
 
-## MVP 表
+## 当前表
 
 `sync_metadata`
 
@@ -24,7 +24,7 @@ MVP 使用 SeaORM 封装数据库访问，主服务通过 `MvpRepository` 读写
 `users`
 
 - `employee_id`：跨域唯一用户标识。
-- `username`：AD 账号名，MVP 中也作为 UPN 本地部分来源。
+- `username`：AD 账号名，也作为 UPN 本地部分来源。
 - `display_name`：显示名。
 - `email`：邮箱。
 - `mobile`：手机号。
@@ -36,7 +36,7 @@ MVP 使用 SeaORM 封装数据库访问，主服务通过 `MvpRepository` 读写
 `groups`
 
 - `id`：中心稳定组标识。
-- `name`：组名，MVP 中映射为 AD 组 CN 和账号名。
+- `name`：组名，映射为 AD 组 CN 和账号名。
 - `member_employee_ids_json`：成员工号数组 JSON。
 - `changed_revision`：该组当前状态最后一次变化所在的目录 revision。
 
@@ -67,9 +67,3 @@ MVP 使用 SeaORM 封装数据库访问，主服务通过 `MvpRepository` 读写
 一次中心改密事务分配一个新的 `credential_revision`，只保留该用户最新的 `user_credentials` 行。Agent 拉取时按 `changed_revision > applied_credential_revision` 返回待设置的当前密码材料。
 
 确认写入只更新 `domains` 中目标通道的一列，并拒绝倒退或超过全局 revision 的确认。
-
-## 旧表边界
-
-旧 `OrmRepository` 及 `state_documents`、`audit_events`、`password_tasks`、`agent_cursors`、`drift_reports`、`registration_tokens`、`agent_credentials` 仍保留在代码中用于过渡编译和历史测试边界，但它们已经不是 MVP 同步主链。
-
-MVP 主链不依赖旧快照、密码任务队列、Agent cursor、drift report 或注册令牌表。

@@ -1,5 +1,5 @@
-use adss_contract::{MvpGroup, MvpOrganizationalUnit, MvpUserStatus};
-use adss_persistence::{DomainRecord, MvpRepository, UserCredentialInput, UserDirectoryPatch};
+use adss_contract::{Group, OrganizationalUnit, UserStatus};
+use adss_persistence::{DomainRecord, Repository, UserCredentialInput, UserDirectoryPatch};
 use sea_orm::{ConnectionTrait, Database};
 use std::{
     path::PathBuf,
@@ -12,7 +12,7 @@ async fn repository_updates_directory_objects_in_one_revision() {
 
     let revision = repository
         .upsert_directory(
-            vec![MvpOrganizationalUnit {
+            vec![OrganizationalUnit {
                 id: "ou-rd".to_string(),
                 name: "研发部".to_string(),
                 parent_id: None,
@@ -26,9 +26,9 @@ async fn repository_updates_directory_objects_in_one_revision() {
                 mobile: None,
                 telephone: None,
                 organizational_unit_id: "ou-rd".to_string(),
-                status: MvpUserStatus::Active,
+                status: UserStatus::Active,
             }],
-            vec![MvpGroup {
+            vec![Group {
                 id: "dev".to_string(),
                 name: "Developers".to_string(),
                 member_employee_ids: vec!["1001".to_string()],
@@ -92,13 +92,13 @@ async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one
     repository
         .upsert_directory(
             vec![
-                MvpOrganizationalUnit {
+                OrganizationalUnit {
                     id: "ou-root".to_string(),
                     name: "Root".to_string(),
                     parent_id: None,
                     changed_revision: 0,
                 },
-                MvpOrganizationalUnit {
+                OrganizationalUnit {
                     id: "ou-child".to_string(),
                     name: "Child".to_string(),
                     parent_id: Some("ou-root".to_string()),
@@ -114,7 +114,7 @@ async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one
         .upsert_directory(
             Vec::new(),
             vec![user_patch("1002", "lisi@example.com")],
-            vec![MvpGroup {
+            vec![Group {
                 id: "ops".to_string(),
                 name: "Operators".to_string(),
                 member_employee_ids: vec!["1002".to_string()],
@@ -235,8 +235,8 @@ async fn repository_preserves_both_channels_after_concurrent_confirmations() {
     seed_directory_revisions(&repository, 7).await;
     seed_credential_revisions(&repository, 3).await;
 
-    let directory_repository = MvpRepository::connect(&database_url).await.unwrap();
-    let credential_repository = MvpRepository::connect(&database_url).await.unwrap();
+    let directory_repository = Repository::connect(&database_url).await.unwrap();
+    let credential_repository = Repository::connect(&database_url).await.unwrap();
     let (directory_result, credential_result) = tokio::join!(
         directory_repository.confirm_directory_revision("domain-a", 7),
         credential_repository.confirm_credential_revision("domain-a", 3)
@@ -263,8 +263,8 @@ async fn repository_same_channel_concurrent_confirmations_do_not_move_backward()
 
     seed_directory_revisions(&repository, 7).await;
 
-    let newer_repository = MvpRepository::connect(&database_url).await.unwrap();
-    let older_repository = MvpRepository::connect(&database_url).await.unwrap();
+    let newer_repository = Repository::connect(&database_url).await.unwrap();
+    let older_repository = Repository::connect(&database_url).await.unwrap();
     let (newer_result, older_result) = tokio::join!(
         newer_repository.confirm_directory_revision("domain-a", 7),
         older_repository.confirm_directory_revision("domain-a", 6)
@@ -356,9 +356,9 @@ async fn repository_rejects_pull_revision_ahead_of_domain_progress() {
 }
 
 #[tokio::test]
-async fn repository_schema_rejects_negative_mvp_revisions() {
+async fn repository_schema_rejects_negative_revisions() {
     let db = Database::connect("sqlite::memory:").await.unwrap();
-    let repository = MvpRepository::from_connection(db.clone());
+    let repository = Repository::from_connection(db.clone());
     repository.initialize_schema().await.unwrap();
 
     assert!(
@@ -443,15 +443,15 @@ async fn repository_stores_only_current_credential() {
     );
 }
 
-async fn sqlite_repository() -> MvpRepository {
-    let repository = MvpRepository::connect("sqlite::memory:").await.unwrap();
+async fn sqlite_repository() -> Repository {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain()).await.unwrap();
     repository
 }
 
-async fn sqlite_file_repository(database_url: &str) -> MvpRepository {
-    let repository = MvpRepository::connect(database_url).await.unwrap();
+async fn sqlite_file_repository(database_url: &str) -> Repository {
+    let repository = Repository::connect(database_url).await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain()).await.unwrap();
     repository
@@ -473,7 +473,7 @@ fn sqlite_file_database_url(name: &str) -> (String, PathBuf) {
     (database_url, database_path)
 }
 
-async fn seed_directory_revisions(repository: &MvpRepository, count: u64) {
+async fn seed_directory_revisions(repository: &Repository, count: u64) {
     for index in 1..=count {
         repository
             .upsert_directory(
@@ -489,7 +489,7 @@ async fn seed_directory_revisions(repository: &MvpRepository, count: u64) {
     }
 }
 
-async fn seed_credential_revisions(repository: &MvpRepository, count: u64) {
+async fn seed_credential_revisions(repository: &Repository, count: u64) {
     for index in 1..=count {
         repository
             .change_user_password(UserCredentialInput {
@@ -526,6 +526,6 @@ fn user_patch(employee_id: &str, email: &str) -> UserDirectoryPatch {
         mobile: None,
         telephone: None,
         organizational_unit_id: "ou-rd".to_string(),
-        status: MvpUserStatus::Active,
+        status: UserStatus::Active,
     }
 }

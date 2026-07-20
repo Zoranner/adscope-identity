@@ -1,8 +1,8 @@
 use adss_contract::{
-    AgentConfirmRequest, AgentSyncRequest, AgentSyncResponse, MvpPasswordChangeRequest,
-    MvpUserStatus, SyncChannel, UserLoginRequest,
+    AgentConfirmRequest, AgentSyncRequest, AgentSyncResponse, PasswordChangeRequest, SyncChannel,
+    UserLoginRequest, UserStatus,
 };
-use adss_persistence::{DomainRecord, MvpRepository, UserCredentialInput, UserDirectoryPatch};
+use adss_persistence::{DomainRecord, Repository, UserCredentialInput, UserDirectoryPatch};
 use adss_server::{AppState, build_router};
 use axum::{
     body::Body,
@@ -18,7 +18,7 @@ const TEST_ENVELOPE_KEY: &str = "test-envelope-key";
 
 struct TestApp {
     app: axum::Router,
-    repository: MvpRepository,
+    repository: Repository,
 }
 
 #[tokio::test]
@@ -118,7 +118,7 @@ async fn password_change_rejects_same_length_wrong_current_password() {
         .clone()
         .oneshot(json_request(
             "/api/users/1001/password",
-            &MvpPasswordChangeRequest {
+            &PasswordChangeRequest {
                 current_password: "BadPass123!".to_string(),
                 new_password: "NewPass123!".to_string(),
             },
@@ -175,7 +175,7 @@ async fn confirm_requires_matching_agent_key_and_does_not_advance_revision() {
 
 #[tokio::test]
 async fn stored_agent_key_hash_is_not_plaintext_agent_key() {
-    let repository = MvpRepository::connect("sqlite::memory:").await.unwrap();
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository
         .seed_domain(DomainRecord {
@@ -229,7 +229,7 @@ async fn password_error_response_does_not_include_submitted_passwords() {
     let response = app
         .oneshot(json_request(
             "/api/users/1001/password",
-            &MvpPasswordChangeRequest {
+            &PasswordChangeRequest {
                 current_password: "BadPass123!".to_string(),
                 new_password: "NewPass123!".to_string(),
             },
@@ -249,7 +249,7 @@ async fn test_app() -> TestApp {
 }
 
 async fn test_app_with_domain_enabled(enabled: bool) -> TestApp {
-    let repository = MvpRepository::connect("sqlite::memory:").await.unwrap();
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain(enabled)).await.unwrap();
     let app = build_router(AppState::new_for_tests(
@@ -260,7 +260,7 @@ async fn test_app_with_domain_enabled(enabled: bool) -> TestApp {
 }
 
 async fn test_app_with_seeded_credential(password: &str) -> TestApp {
-    let repository = MvpRepository::connect("sqlite::memory:").await.unwrap();
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain(true)).await.unwrap();
     repository
@@ -327,7 +327,7 @@ async fn change_password(
         .clone()
         .oneshot(json_request(
             &format!("/api/users/{employee_id}/password"),
-            &MvpPasswordChangeRequest {
+            &PasswordChangeRequest {
                 current_password: current_password.to_string(),
                 new_password: new_password.to_string(),
             },
@@ -496,6 +496,6 @@ fn user_patch(employee_id: &str, email: &str) -> UserDirectoryPatch {
         mobile: None,
         telephone: None,
         organizational_unit_id: "ou-root".to_string(),
-        status: MvpUserStatus::Active,
+        status: UserStatus::Active,
     }
 }
