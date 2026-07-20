@@ -1,192 +1,531 @@
-use adss_contract::{AuditEvent, DesiredState, DomainConfig, OrgUnit};
-use adss_persistence::{
-    AgentCredentialRecord, AgentCursorRecord, DriftReportRecord, OrmRepository, StoreSnapshot,
+use adss_contract::{MvpGroup, MvpOrganizationalUnit, MvpUserStatus};
+use adss_persistence::{DomainRecord, MvpRepository, UserCredentialInput, UserDirectoryPatch};
+use sea_orm::{ConnectionTrait, Database};
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
 };
-use std::collections::BTreeMap;
 
 #[tokio::test]
-async fn orm_repository_persists_and_loads_store_snapshot() {
-    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
-    repository.initialize_schema().await.unwrap();
+async fn repository_updates_directory_objects_in_one_revision() {
+    let repository = sqlite_repository().await;
 
-    let snapshot = StoreSnapshot {
-        desired_state: DesiredState {
-            version: 42,
-            ous: vec![OrgUnit {
-                id: "engineering".to_string(),
-                relative_dn: "OU=Engineering".to_string(),
+    let revision = repository
+        .upsert_directory(
+            vec![MvpOrganizationalUnit {
+                id: "ou-rd".to_string(),
+                name: "研发部".to_string(),
+                parent_id: None,
+                changed_revision: 0,
             }],
-            groups: Vec::new(),
-            users: Vec::new(),
-            memberships: Vec::new(),
-        },
-        domains: vec![DomainConfig::example()],
-    };
+            vec![UserDirectoryPatch {
+                employee_id: "1001".to_string(),
+                username: "zhangsan".to_string(),
+                display_name: "张三".to_string(),
+                email: Some("zhangsan@example.com".to_string()),
+                mobile: None,
+                telephone: None,
+                organizational_unit_id: "ou-rd".to_string(),
+                status: MvpUserStatus::Active,
+            }],
+            vec![MvpGroup {
+                id: "dev".to_string(),
+                name: "Developers".to_string(),
+                member_employee_ids: vec!["1001".to_string()],
+                changed_revision: 0,
+            }],
+        )
+        .await
+        .unwrap();
 
-    repository.save_snapshot(&snapshot).await.unwrap();
-    let loaded = repository.load_snapshot().await.unwrap().unwrap();
+    let batch = repository
+        .list_directory_changed_after("domain-a", 0, false, 100)
+        .await
+        .unwrap();
 
-    assert_eq!(loaded, snapshot);
+    assert_eq!(revision, 1);
+    assert_eq!(batch.server_revision, 1);
+    assert_eq!(batch.batch_revision, 1);
+    assert_eq!(batch.organizational_units[0].changed_revision, 1);
+    assert_eq!(batch.users[0].changed_revision, 1);
+    assert_eq!(batch.groups[0].changed_revision, 1);
+    assert!(!batch.has_more);
 }
 
 #[tokio::test]
-async fn orm_repository_appends_audit_events_in_sequence_order() {
-    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
-    repository.initialize_schema().await.unwrap();
+async fn repository_returns_current_state_after_multiple_updates() {
+    let repository = sqlite_repository().await;
 
     repository
-        .append_audit_event(&AuditEvent {
-            sequence: 1,
-            actor: "agent:agent-a".to_string(),
-            action: "agent_polled".to_string(),
-            target: "domain:domain-a".to_string(),
-            result: "accepted".to_string(),
-            detail: BTreeMap::from([("password_task_count".to_string(), "0".to_string())]),
-        })
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1001", "first@example.com")],
+            Vec::new(),
+        )
         .await
         .unwrap();
     repository
-        .append_audit_event(&AuditEvent {
-            sequence: 2,
-            actor: "user:local".to_string(),
-            action: "password_tasks_created".to_string(),
-            target: "user:E001".to_string(),
-            result: "accepted".to_string(),
-            detail: BTreeMap::from([("created_tasks".to_string(), "2".to_string())]),
-        })
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1001", "latest@example.com")],
+            Vec::new(),
+        )
         .await
         .unwrap();
 
-    let events = repository.list_audit_events().await.unwrap();
+    let batch = repository
+        .list_directory_changed_after("domain-a", 0, false, 100)
+        .await
+        .unwrap();
 
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].sequence, 1);
-    assert_eq!(events[1].action, "password_tasks_created");
-    assert_eq!(events[1].detail["created_tasks"], "2");
+    assert_eq!(batch.users.len(), 1);
+    assert_eq!(batch.users[0].email.as_deref(), Some("latest@example.com"));
+    assert_eq!(batch.users[0].changed_revision, 2);
+    assert_eq!(batch.server_revision, 2);
+    assert_eq!(batch.batch_revision, 2);
 }
 
 #[tokio::test]
-async fn orm_repository_persists_password_tasks_and_filters_by_domain_cursor() {
-    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
-    repository.initialize_schema().await.unwrap();
+async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one() {
+    let repository = sqlite_repository().await;
 
     repository
-        .append_password_task(7, "domain-a", "E001", "kms:v1:ciphertext-a")
+        .upsert_directory(
+            vec![
+                MvpOrganizationalUnit {
+                    id: "ou-root".to_string(),
+                    name: "Root".to_string(),
+                    parent_id: None,
+                    changed_revision: 0,
+                },
+                MvpOrganizationalUnit {
+                    id: "ou-child".to_string(),
+                    name: "Child".to_string(),
+                    parent_id: Some("ou-root".to_string()),
+                    changed_revision: 0,
+                },
+            ],
+            vec![user_patch("1001", "zhangsan@example.com")],
+            Vec::new(),
+        )
         .await
         .unwrap();
     repository
-        .append_password_task(8, "domain-b", "E001", "kms:v1:ciphertext-b")
-        .await
-        .unwrap();
-    repository
-        .append_password_task(9, "domain-a", "E002", "kms:v1:ciphertext-c")
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1002", "lisi@example.com")],
+            vec![MvpGroup {
+                id: "ops".to_string(),
+                name: "Operators".to_string(),
+                member_employee_ids: vec!["1002".to_string()],
+                changed_revision: 0,
+            }],
+        )
         .await
         .unwrap();
 
-    let tasks = repository
-        .list_password_tasks_after("domain-a", 7)
+    let batch = repository
+        .list_directory_changed_after("domain-a", 0, false, 1)
         .await
         .unwrap();
 
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].task_id, 9);
-    assert_eq!(tasks[0].domain_id, "domain-a");
-    assert_eq!(tasks[0].employee_id, "E002");
+    assert_eq!(batch.server_revision, 2);
+    assert_eq!(batch.batch_revision, 2);
+    assert_eq!(batch.organizational_units.len(), 2);
+    assert_eq!(batch.users.len(), 2);
+    assert_eq!(batch.groups.len(), 1);
+    assert!(!batch.has_more);
 }
 
 #[tokio::test]
-async fn orm_repository_upserts_agent_cursor_and_records_drift() {
-    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
+async fn repository_allocates_continuous_revisions_for_repeated_writes() {
+    let repository = sqlite_repository().await;
+
+    let first_directory = repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1001", "first@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    let second_directory = repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1002", "second@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    let first_credential = repository
+        .change_user_password(UserCredentialInput {
+            employee_id: "1001".to_string(),
+            password_ciphertext: "cipher:first".to_string(),
+            password_verifier: "verify:first".to_string(),
+        })
+        .await
+        .unwrap();
+    let second_credential = repository
+        .change_user_password(UserCredentialInput {
+            employee_id: "1002".to_string(),
+            password_ciphertext: "cipher:second".to_string(),
+            password_verifier: "verify:second".to_string(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!((first_directory, second_directory), (1, 2));
+    assert_eq!((first_credential, second_credential), (1, 2));
+}
+
+#[tokio::test]
+async fn repository_updates_domain_revision_only_on_confirmed_channel() {
+    let repository = sqlite_repository().await;
+
+    for index in 1..=7 {
+        repository
+            .upsert_directory(
+                Vec::new(),
+                vec![user_patch(
+                    &format!("directory-{index}"),
+                    &format!("directory-{index}@example.com"),
+                )],
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+    }
+    for index in 1..=3 {
+        repository
+            .change_user_password(UserCredentialInput {
+                employee_id: format!("credential-{index}"),
+                password_ciphertext: format!("cipher:{index}"),
+                password_verifier: format!("verify:{index}"),
+            })
+            .await
+            .unwrap();
+    }
+
+    repository
+        .confirm_directory_revision("domain-a", 7)
+        .await
+        .unwrap();
+    repository
+        .confirm_credential_revision("domain-a", 3)
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .confirm_directory_revision("domain-a", 6)
+            .await
+            .is_err()
+    );
+    let domain = repository.get_domain("domain-a").await.unwrap().unwrap();
+
+    assert_eq!(domain.applied_directory_revision, 7);
+    assert_eq!(domain.applied_credential_revision, 3);
+}
+
+#[tokio::test]
+async fn repository_preserves_both_channels_after_concurrent_confirmations() {
+    let (database_url, database_path) =
+        sqlite_file_database_url("concurrent_channel_confirmations");
+    let repository = sqlite_file_repository(&database_url).await;
+
+    seed_directory_revisions(&repository, 7).await;
+    seed_credential_revisions(&repository, 3).await;
+
+    let directory_repository = MvpRepository::connect(&database_url).await.unwrap();
+    let credential_repository = MvpRepository::connect(&database_url).await.unwrap();
+    let (directory_result, credential_result) = tokio::join!(
+        directory_repository.confirm_directory_revision("domain-a", 7),
+        credential_repository.confirm_credential_revision("domain-a", 3)
+    );
+
+    directory_result.unwrap();
+    credential_result.unwrap();
+    let domain = repository.get_domain("domain-a").await.unwrap().unwrap();
+
+    assert_eq!(domain.applied_directory_revision, 7);
+    assert_eq!(domain.applied_credential_revision, 3);
+
+    drop(repository);
+    drop(directory_repository);
+    drop(credential_repository);
+    let _ = std::fs::remove_file(database_path);
+}
+
+#[tokio::test]
+async fn repository_same_channel_concurrent_confirmations_do_not_move_backward() {
+    let (database_url, database_path) =
+        sqlite_file_database_url("same_channel_concurrent_confirmations");
+    let repository = sqlite_file_repository(&database_url).await;
+
+    seed_directory_revisions(&repository, 7).await;
+
+    let newer_repository = MvpRepository::connect(&database_url).await.unwrap();
+    let older_repository = MvpRepository::connect(&database_url).await.unwrap();
+    let (newer_result, older_result) = tokio::join!(
+        newer_repository.confirm_directory_revision("domain-a", 7),
+        older_repository.confirm_directory_revision("domain-a", 6)
+    );
+
+    newer_result.unwrap();
+    let _ = older_result;
+    assert!(
+        repository
+            .confirm_directory_revision("domain-a", 6)
+            .await
+            .is_err()
+    );
+    let domain = repository.get_domain("domain-a").await.unwrap().unwrap();
+
+    assert_eq!(domain.applied_directory_revision, 7);
+    assert_eq!(domain.applied_credential_revision, 0);
+
+    drop(repository);
+    drop(newer_repository);
+    drop(older_repository);
+    let _ = std::fs::remove_file(database_path);
+}
+
+#[tokio::test]
+async fn repository_rejects_confirm_revision_outside_channel_bounds() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1001", "zhangsan@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .confirm_directory_revision("domain-a", 1)
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .confirm_directory_revision("domain-a", 0)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .confirm_credential_revision("domain-a", 1)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn repository_rejects_pull_revision_ahead_of_domain_progress() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1001", "zhangsan@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .change_user_password(UserCredentialInput {
+            employee_id: "1001".to_string(),
+            password_ciphertext: "cipher:first".to_string(),
+            password_verifier: "verify:first".to_string(),
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .list_directory_changed_after("domain-a", 1, false, 100)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .list_credentials_changed_after("domain-a", 1, false, 100)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn repository_schema_rejects_negative_mvp_revisions() {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let repository = MvpRepository::from_connection(db.clone());
     repository.initialize_schema().await.unwrap();
 
+    assert!(
+        db.execute_unprepared(
+            "UPDATE sync_metadata SET directory_revision = -1 WHERE key = 'current'"
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        db.execute_unprepared(
+            "INSERT INTO domains (
+                id,
+                name,
+                enabled,
+                mirror_root_dn,
+                quarantine_ou_dn,
+                upn_suffix,
+                employee_id_attribute,
+                agent_key_hash,
+                applied_directory_revision,
+                applied_credential_revision
+            ) VALUES (
+                'bad-domain',
+                'Bad Domain',
+                1,
+                'OU=Mirror,DC=bad,DC=example,DC=com',
+                'OU=Quarantine,DC=bad,DC=example,DC=com',
+                'bad.example.com',
+                'employeeID',
+                'hash:agent-key',
+                -1,
+                0
+            )"
+        )
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn repository_stores_only_current_credential() {
+    let repository = sqlite_repository().await;
+
     repository
-        .upsert_agent_cursor(&AgentCursorRecord {
-            agent_id: "agent-a".to_string(),
-            domain_id: "domain-a".to_string(),
-            structure_version: 11,
-            password_task_cursor: 7,
+        .change_user_password(UserCredentialInput {
+            employee_id: "1001".to_string(),
+            password_ciphertext: "cipher:first".to_string(),
+            password_verifier: "verify:first".to_string(),
         })
         .await
         .unwrap();
     repository
-        .upsert_agent_cursor(&AgentCursorRecord {
-            agent_id: "agent-a".to_string(),
-            domain_id: "domain-a".to_string(),
-            structure_version: 12,
-            password_task_cursor: 9,
+        .change_user_password(UserCredentialInput {
+            employee_id: "1001".to_string(),
+            password_ciphertext: "cipher:latest".to_string(),
+            password_verifier: "verify:latest".to_string(),
         })
         .await
         .unwrap();
 
-    let cursor = repository
-        .load_agent_cursor("agent-a")
+    let credentials = repository
+        .list_credentials_changed_after("domain-a", 0, false, 100)
         .await
+        .unwrap();
+
+    assert_eq!(credentials.credentials.len(), 1);
+    assert_eq!(credentials.credentials[0].employee_id, "1001");
+    assert_eq!(
+        credentials.credentials[0].password_ciphertext,
+        "cipher:latest"
+    );
+    assert_eq!(credentials.credentials[0].changed_revision, 2);
+    assert_eq!(
+        repository
+            .get_credential_record("1001")
+            .await
+            .unwrap()
+            .unwrap()
+            .password_ciphertext,
+        "cipher:latest"
+    );
+}
+
+async fn sqlite_repository() -> MvpRepository {
+    let repository = MvpRepository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository.seed_domain(domain()).await.unwrap();
+    repository
+}
+
+async fn sqlite_file_repository(database_url: &str) -> MvpRepository {
+    let repository = MvpRepository::connect(database_url).await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository.seed_domain(domain()).await.unwrap();
+    repository
+}
+
+fn sqlite_file_database_url(name: &str) -> (String, PathBuf) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap()
-        .unwrap();
-    assert_eq!(cursor.structure_version, 12);
-    assert_eq!(cursor.password_task_cursor, 9);
-
-    repository
-        .append_drift_report(&DriftReportRecord {
-            id: 1,
-            domain_id: "domain-a".to_string(),
-            agent_id: "agent-a".to_string(),
-            observed_structure_version: 12,
-            drifted_objects: vec!["employee:E001:mail".to_string()],
-        })
-        .await
-        .unwrap();
-
-    let drift = repository.list_drift_reports("domain-a").await.unwrap();
-    assert_eq!(drift.len(), 1);
-    assert_eq!(drift[0].drifted_objects, vec!["employee:E001:mail"]);
+        .as_nanos();
+    let database_path = std::env::temp_dir().join(format!(
+        "adss-persistence-{name}-{timestamp}-{}.db",
+        std::process::id()
+    ));
+    let database_url = format!(
+        "sqlite://{}?mode=rwc",
+        database_path.to_string_lossy().replace('\\', "/")
+    );
+    (database_url, database_path)
 }
 
-#[tokio::test]
-async fn orm_repository_consumes_registration_token_once() {
-    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
-    repository.initialize_schema().await.unwrap();
-
-    repository
-        .insert_registration_token("register-domain-a", "domain-a")
-        .await
-        .unwrap();
-
-    let domain_id = repository
-        .consume_registration_token("register-domain-a")
-        .await
-        .unwrap();
-    let second_attempt = repository
-        .consume_registration_token("register-domain-a")
-        .await
-        .unwrap();
-
-    assert_eq!(domain_id.as_deref(), Some("domain-a"));
-    assert_eq!(second_attempt, None);
+async fn seed_directory_revisions(repository: &MvpRepository, count: u64) {
+    for index in 1..=count {
+        repository
+            .upsert_directory(
+                Vec::new(),
+                vec![user_patch(
+                    &format!("directory-{index}"),
+                    &format!("directory-{index}@example.com"),
+                )],
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+    }
 }
 
-#[tokio::test]
-async fn orm_repository_persists_agent_credentials() {
-    let repository = OrmRepository::connect("sqlite::memory:").await.unwrap();
-    repository.initialize_schema().await.unwrap();
+async fn seed_credential_revisions(repository: &MvpRepository, count: u64) {
+    for index in 1..=count {
+        repository
+            .change_user_password(UserCredentialInput {
+                employee_id: format!("credential-{index}"),
+                password_ciphertext: format!("cipher:{index}"),
+                password_verifier: format!("verify:{index}"),
+            })
+            .await
+            .unwrap();
+    }
+}
 
-    repository
-        .upsert_agent_credential(&AgentCredentialRecord {
-            agent_id: "agent-a".to_string(),
-            domain_id: "domain-a".to_string(),
-            agent_key: "agent-a-key".to_string(),
-        })
-        .await
-        .unwrap();
+fn domain() -> DomainRecord {
+    DomainRecord {
+        id: "domain-a".to_string(),
+        name: "Domain A".to_string(),
+        enabled: true,
+        mirror_root_dn: "OU=Mirror,DC=a,DC=example,DC=com".to_string(),
+        quarantine_ou_dn: "OU=Quarantine,DC=a,DC=example,DC=com".to_string(),
+        upn_suffix: "a.example.com".to_string(),
+        employee_id_attribute: "employeeID".to_string(),
+        agent_key_hash: "hash:agent-key".to_string(),
+        applied_directory_revision: 0,
+        applied_credential_revision: 0,
+    }
+}
 
-    let credential = repository
-        .load_agent_credential("agent-a")
-        .await
-        .unwrap()
-        .unwrap();
-    let credentials = repository.list_agent_credentials().await.unwrap();
-
-    assert_eq!(credential.domain_id, "domain-a");
-    assert_eq!(credential.agent_key, "agent-a-key");
-    assert_eq!(credentials, vec![credential]);
+fn user_patch(employee_id: &str, email: &str) -> UserDirectoryPatch {
+    UserDirectoryPatch {
+        employee_id: employee_id.to_string(),
+        username: employee_id.to_string(),
+        display_name: employee_id.to_string(),
+        email: Some(email.to_string()),
+        mobile: None,
+        telephone: None,
+        organizational_unit_id: "ou-rd".to_string(),
+        status: MvpUserStatus::Active,
+    }
 }
