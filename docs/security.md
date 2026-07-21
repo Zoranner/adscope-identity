@@ -8,7 +8,7 @@ MVP 规定用户密码只能通过中心服务修改。域内 AD 的普通 Chang
 
 ## Verifier 与 Ciphertext
 
-`user_credentials.password_verifier` 用于中心登录和改密前校验。它不能还原密码，也不下发给 Agent。
+`user_credentials.password_verifier` 用于中心登录和改密前校验。主服务生产配置使用 Argon2id PHC 字符串，它不能还原密码，也不下发给 Agent。
 
 `user_credentials.password_ciphertext` 用于保存中心当前密码材料。服务端在 `/api/agent/sync` 内存中解封后组装 `CredentialEntry.plaintext_password`，Agent 立即用该明文设置 AD 密码。
 
@@ -47,4 +47,3 @@ Agent 访问域控必须使用 LDAPS。域内服务账号应采用最小权限�
 - Agent key 轮换和吊销。
 - 完整审计平台。
 - drift 生命周期管理。
-- 生产级密码哈希。

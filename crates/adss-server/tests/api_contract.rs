@@ -4,6 +4,10 @@ use adss_contract::{
 };
 use adss_persistence::{DomainRecord, Repository, UserCredentialInput, UserDirectoryPatch};
 use adss_server::{AppState, build_router};
+use argon2::{
+    Algorithm, Argon2, Params, PasswordHasher, Version,
+    password_hash::{SaltString, rand_core::OsRng},
+};
 use axum::{
     body::Body,
     http::{Method, Request, Response, StatusCode},
@@ -291,9 +295,34 @@ async fn app_state_from_env_accepts_local_password_envelope_provider() {
     unsafe {
         std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
         std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+        std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
     }
 
     AppState::from_env(repository).unwrap();
+
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_rejects_missing_password_hash_provider() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    unsafe {
+        std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
+        std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("missing password hash provider must not configure AppState"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("ADSS_PASSWORD_HASH_PROVIDER is required")
+    );
 
     clear_server_env();
 }
@@ -323,6 +352,51 @@ async fn app_state_from_env_rejects_missing_command_password_envelope_adapter() 
     );
 
     clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_change() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository.seed_domain(domain(true)).await.unwrap();
+    repository
+        .change_user_password(UserCredentialInput {
+            employee_id: "1001".to_string(),
+            password_ciphertext: seal_password_for_storage("OldPass123!"),
+            password_verifier: argon2id_password_verifier("OldPass123!"),
+        })
+        .await
+        .unwrap();
+
+    let state = {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_server_env();
+        unsafe {
+            std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
+            std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+            std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
+        }
+        let state = AppState::from_env(repository.clone()).unwrap();
+        clear_server_env();
+        state
+    };
+    let app = build_router(state);
+
+    login(&app, "1001", "OldPass123!").await;
+    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    login(&app, "1001", "NewPass123!").await;
+
+    let credential = repository
+        .get_credential_record("1001")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(credential.password_verifier.starts_with("$argon2id$"));
+    assert!(!credential.password_verifier.contains("NewPass123!"));
+    assert_ne!(
+        credential.password_verifier,
+        password_verifier("NewPass123!")
+    );
 }
 
 async fn test_app() -> TestApp {
@@ -525,9 +599,17 @@ fn method_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T
 
 fn password_verifier(password: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:mvp-password-verifier:v1");
+    hasher.update(b"adss:test-password-verifier:v1");
     hasher.update(password.as_bytes());
-    format!("verifier:v1:{}", hex::encode(hasher.finalize()))
+    format!("test-verifier:v1:{}", hex::encode(hasher.finalize()))
+}
+
+fn argon2id_password_verifier(password: &str) -> String {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::default())
+        .hash_password(password.as_bytes(), &salt)
+        .unwrap()
+        .to_string()
 }
 
 fn agent_key_hash(agent_key: &str) -> String {
@@ -573,6 +655,7 @@ fn clear_server_env() {
         std::env::remove_var("ADSS_PASSWORD_ENVELOPE_PROVIDER");
         std::env::remove_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY");
         std::env::remove_var("ADSS_PASSWORD_ENVELOPE_COMMAND");
+        std::env::remove_var("ADSS_PASSWORD_HASH_PROVIDER");
     }
 }
 

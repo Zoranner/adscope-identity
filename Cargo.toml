@@ -14,6 +14,7 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1.0.100"
+argon2 = { version = "0.5.3", features = ["std"] }
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["json"] }
 http-body-util = "0.1.3"

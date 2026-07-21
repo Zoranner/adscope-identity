@@ -6,6 +6,12 @@ use adss_contract::{
 use adss_persistence::{
     CredentialCiphertextBatch, Repository, UserCredentialInput, UserDirectoryPatch,
 };
+use argon2::{
+    Algorithm, Argon2, Params, PasswordHash, Version,
+    password_hash::{
+        PasswordHasher, PasswordVerifier as Argon2PasswordVerifier, SaltString, rand_core::OsRng,
+    },
+};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -27,6 +33,7 @@ const AGENT_KEY_HEADER: &str = "x-adss-agent-key";
 const PASSWORD_ENVELOPE_PROVIDER_ENV: &str = "ADSS_PASSWORD_ENVELOPE_PROVIDER";
 const PASSWORD_ENVELOPE_LOCAL_KEY_ENV: &str = "ADSS_PASSWORD_ENVELOPE_LOCAL_KEY";
 const PASSWORD_ENVELOPE_COMMAND_ENV: &str = "ADSS_PASSWORD_ENVELOPE_COMMAND";
+const PASSWORD_HASH_PROVIDER_ENV: &str = "ADSS_PASSWORD_HASH_PROVIDER";
 const DEFAULT_BATCH_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,22 +64,25 @@ pub struct AppState {
     repository: Repository,
     batch_limit: usize,
     password_envelope: Arc<dyn PasswordEnvelope>,
+    password_hash: Arc<dyn PasswordHashProvider>,
 }
 
 impl AppState {
     pub fn from_env(repository: Repository) -> anyhow::Result<Self> {
-        Ok(Self::with_password_envelope(
+        Ok(Self::with_password_providers(
             repository,
             DEFAULT_BATCH_LIMIT,
             password_envelope_from_env()?,
+            password_hash_from_env()?,
         ))
     }
 
     pub fn new_for_tests(repository: Repository, password_envelope_key: impl Into<String>) -> Self {
-        Self::with_password_envelope(
+        Self::with_password_providers(
             repository,
             DEFAULT_BATCH_LIMIT,
             Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
+            Arc::new(DeterministicPasswordHash),
         )
     }
 
@@ -81,22 +91,25 @@ impl AppState {
         batch_limit: usize,
         password_envelope_key: impl Into<String>,
     ) -> Self {
-        Self::with_password_envelope(
+        Self::with_password_providers(
             repository,
             batch_limit,
             Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
+            Arc::new(DeterministicPasswordHash),
         )
     }
 
-    fn with_password_envelope(
+    fn with_password_providers(
         repository: Repository,
         batch_limit: usize,
         password_envelope: Arc<dyn PasswordEnvelope>,
+        password_hash: Arc<dyn PasswordHashProvider>,
     ) -> Self {
         Self {
             repository,
             batch_limit: batch_limit.max(1),
             password_envelope,
+            password_hash,
         }
     }
 }
@@ -122,7 +135,10 @@ async fn login(
         .map_err(|_| ApiError::Persistence)?
         .ok_or(ApiError::Unauthorized)?;
 
-    if credential.password_verifier != password_verifier(&request.password) {
+    if !state
+        .password_hash
+        .verify(&request.password, &credential.password_verifier)
+    {
         return Err(ApiError::Unauthorized);
     }
 
@@ -173,7 +189,10 @@ async fn change_password(
         .map_err(|_| ApiError::Persistence)?
         .ok_or(ApiError::Unauthorized)?;
 
-    if credential.password_verifier != password_verifier(&request.current_password) {
+    if !state
+        .password_hash
+        .verify(&request.current_password, &credential.password_verifier)
+    {
         return Err(ApiError::Unauthorized);
     }
 
@@ -185,7 +204,10 @@ async fn change_password(
                 .password_envelope
                 .seal(&request.new_password)
                 .map_err(|_| ApiError::Persistence)?,
-            password_verifier: password_verifier(&request.new_password),
+            password_verifier: state
+                .password_hash
+                .hash(&request.new_password)
+                .map_err(|_| ApiError::Persistence)?,
         })
         .await
         .map_err(|_| ApiError::Persistence)?;
@@ -475,13 +497,68 @@ fn password_envelope_from_env() -> anyhow::Result<Arc<dyn PasswordEnvelope>> {
     }
 }
 
-/// MVP stand-in verifier: deterministic and content-sensitive for tests, but not a production
-/// password hash. Replace with a real password hashing scheme before deployment.
-fn password_verifier(password: &str) -> String {
+trait PasswordHashProvider: Send + Sync {
+    fn hash(&self, password: &str) -> anyhow::Result<String>;
+    fn verify(&self, password: &str, verifier: &str) -> bool;
+}
+
+#[derive(Debug)]
+struct Argon2idPasswordHash;
+
+impl PasswordHashProvider for Argon2idPasswordHash {
+    fn hash(&self, password: &str) -> anyhow::Result<String> {
+        let salt = SaltString::generate(&mut OsRng);
+        Ok(argon2id()
+            .hash_password(password.as_bytes(), &salt)?
+            .to_string())
+    }
+
+    fn verify(&self, password: &str, verifier: &str) -> bool {
+        let Ok(parsed_hash) = PasswordHash::new(verifier) else {
+            return false;
+        };
+
+        argon2id()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok()
+    }
+}
+
+#[derive(Debug)]
+struct DeterministicPasswordHash;
+
+impl PasswordHashProvider for DeterministicPasswordHash {
+    fn hash(&self, password: &str) -> anyhow::Result<String> {
+        Ok(deterministic_password_verifier(password))
+    }
+
+    fn verify(&self, password: &str, verifier: &str) -> bool {
+        constant_time_eq(
+            deterministic_password_verifier(password).as_bytes(),
+            verifier.as_bytes(),
+        )
+    }
+}
+
+fn password_hash_from_env() -> anyhow::Result<Arc<dyn PasswordHashProvider>> {
+    let provider = env::var(PASSWORD_HASH_PROVIDER_ENV)
+        .map_err(|_| anyhow::anyhow!("{PASSWORD_HASH_PROVIDER_ENV} is required"))?;
+
+    match provider.as_str() {
+        "argon2id" => Ok(Arc::new(Argon2idPasswordHash)),
+        _ => anyhow::bail!("unsupported password hash provider: {provider}"),
+    }
+}
+
+fn argon2id() -> Argon2<'static> {
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::default())
+}
+
+fn deterministic_password_verifier(password: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:mvp-password-verifier:v1");
+    hasher.update(b"adss:test-password-verifier:v1");
     hasher.update(password.as_bytes());
-    format!("verifier:v1:{}", hex::encode(hasher.finalize()))
+    format!("test-verifier:v1:{}", hex::encode(hasher.finalize()))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

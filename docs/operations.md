@@ -8,6 +8,7 @@
 
 - `ADSS_DATABASE_URL`：SeaORM 数据库连接串，例如 `sqlite://adss.db?mode=rwc`。
 - `ADSS_PASSWORD_ENVELOPE_PROVIDER`：密码 envelope provider，支持 `local` 和 `command`。
+- `ADSS_PASSWORD_HASH_PROVIDER`：密码 verifier provider，当前支持 `argon2id`。
 
 `local` provider 仅用于本地开发和自动化测试：
 
@@ -27,6 +28,7 @@
 $env:ADSS_DATABASE_URL = "sqlite://adss.db?mode=rwc"
 $env:ADSS_PASSWORD_ENVELOPE_PROVIDER = "local"
 $env:ADSS_PASSWORD_ENVELOPE_LOCAL_KEY = "local-dev-only-key"
+$env:ADSS_PASSWORD_HASH_PROVIDER = "argon2id"
 $env:ADSS_BIND_ADDR = "127.0.0.1:8080"
 cargo run -p adss-server
 ```
@@ -37,6 +39,7 @@ cargo run -p adss-server
 $env:ADSS_DATABASE_URL = "postgres://adss:<secret>@db/adss"
 $env:ADSS_PASSWORD_ENVELOPE_PROVIDER = "command"
 $env:ADSS_PASSWORD_ENVELOPE_COMMAND = "C:\Program Files\ADSS\adss-envelope-kms.exe"
+$env:ADSS_PASSWORD_HASH_PROVIDER = "argon2id"
 $env:ADSS_BIND_ADDR = "127.0.0.1:8080"
 cargo run -p adss-server
 ```
@@ -117,7 +120,7 @@ cargo run -p adss-agent
 当前主链已经是 repository-backed MVP：
 
 - 中心写入目录当前事实并推进目录 revision。
-- 中心改密写入当前 verifier 和 ciphertext 并推进凭据 revision。
+- 中心改密写入 Argon2id verifier 和 ciphertext 并推进凭据 revision。
 - 主服务通过 password envelope provider 保存和打开当前密码材料。
 - Agent 定时 sync，分别执行目录和凭据通道。
 - Agent 非 dry-run 时通过 LDAPS 创建和更新 OU、用户、组、成员关系、禁用状态、隔离 OU 移动和密码。
@@ -131,6 +134,7 @@ cargo run -p adss-agent
 
 - 主服务必须放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境必须使用 `command` envelope provider，并由该命令对接 KMS/HSM 或等价密钥服务；不得使用 `local` provider。
+- 生产环境必须使用 `ADSS_PASSWORD_HASH_PROVIDER=argon2id`。
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
 - 受管用户应禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。
 - 需要在 AD 沙箱域验证 OU、用户、组、成员、禁用、隔离移动和 Reset Password 全链路。

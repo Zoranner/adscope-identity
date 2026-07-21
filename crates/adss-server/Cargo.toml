@@ -9,6 +9,7 @@ publish.workspace = true
 adss-contract = { path = "../adss-contract" }
 adss-persistence = { path = "../adss-persistence" }
 anyhow.workspace = true
+argon2.workspace = true
 axum.workspace = true
 hex = "0.4.3"
 serde.workspace = true
