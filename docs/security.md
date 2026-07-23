@@ -20,6 +20,12 @@ MVP 规定用户密码只能通过中心服务修改。域内 AD 的普通 Chang
 
 Agent key 仍是 MVP 共享密钥方案，不等价于 mTLS。部署时应通过 Windows DPAPI、Secret Manager、受限配置文件或等价机制保存 Agent key，禁止进入日志、错误响应、审计详情或配置仓库。
 
+## 普通用户会话
+
+普通用户登录成功后，主服务返回服务端签名的 Bearer token。token 只用于 `/api/me` 自助接口，并从签名内容中确定当前 `employee_id`；普通用户不能通过路径参数选择其他用户。
+
+`ADSS_USER_SESSION_KEY` 是生产密钥材料，必须由 Secret Manager、KMS 派生密钥或等价机制注入，不得进入源码、日志或配置仓库。该 token 当前是 MVP 的服务端签名令牌，不等价于完整 SSO、OIDC 或复杂会话治理。
+
 ## 凭据传输
 
 凭据响应会包含 Agent 可执行的明文密码，因此必须满足：

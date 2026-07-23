@@ -9,6 +9,7 @@
 - `ADSS_DATABASE_URL`：SeaORM 数据库连接串，例如 `sqlite://adss.db?mode=rwc`。
 - `ADSS_PASSWORD_ENVELOPE_PROVIDER`：密码 envelope provider，支持 `local` 和 `command`。
 - `ADSS_PASSWORD_HASH_PROVIDER`：密码 verifier provider，当前支持 `argon2id`。
+- `ADSS_USER_SESSION_KEY`：普通用户自助登录 token 的服务端签名密钥。
 
 `local` provider 仅用于本地开发和自动化测试：
 
@@ -21,6 +22,7 @@
 可选环境变量：
 
 - `ADSS_BIND_ADDR`：监听地址，默认 `127.0.0.1:8080`。
+- `ADSS_USER_SESSION_TTL_SECONDS`：普通用户登录 token 有效秒数，默认 `3600`，必须大于 `0`。
 
 示例：
 
@@ -29,6 +31,7 @@ $env:ADSS_DATABASE_URL = "sqlite://adss.db?mode=rwc"
 $env:ADSS_PASSWORD_ENVELOPE_PROVIDER = "local"
 $env:ADSS_PASSWORD_ENVELOPE_LOCAL_KEY = "local-dev-only-key"
 $env:ADSS_PASSWORD_HASH_PROVIDER = "argon2id"
+$env:ADSS_USER_SESSION_KEY = "local-user-session-key"
 $env:ADSS_BIND_ADDR = "127.0.0.1:8080"
 cargo run -p adss-server
 ```
@@ -40,6 +43,7 @@ $env:ADSS_DATABASE_URL = "postgres://adss:<secret>@db/adss"
 $env:ADSS_PASSWORD_ENVELOPE_PROVIDER = "command"
 $env:ADSS_PASSWORD_ENVELOPE_COMMAND = "C:\Program Files\ADSS\adss-envelope-kms.exe"
 $env:ADSS_PASSWORD_HASH_PROVIDER = "argon2id"
+$env:ADSS_USER_SESSION_KEY = "<from-secret-manager>"
 $env:ADSS_BIND_ADDR = "127.0.0.1:8080"
 cargo run -p adss-server
 ```

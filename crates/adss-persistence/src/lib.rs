@@ -6,6 +6,6 @@ mod revision;
 
 pub use models::{
     CredentialCiphertextBatch, CredentialCiphertextEntry, CredentialRecord, DomainRecord,
-    UserCredentialInput, UserDirectoryPatch,
+    UserContactPatch, UserCredentialInput, UserDirectoryPatch,
 };
 pub use repository::Repository;

@@ -164,6 +164,7 @@ pub struct UserLoginRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserLoginResponse {
     pub employee_id: String,
+    pub access_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod password;
 mod routes;
+mod session;
 mod state;
 
 pub use config::ServerConfig;

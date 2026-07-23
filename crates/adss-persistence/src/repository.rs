@@ -9,7 +9,7 @@ use crate::{
     mapping::{domain_active_model, user_status_from_storage, user_status_to_storage},
     models::{
         CredentialCiphertextBatch, CredentialCiphertextEntry, CredentialRecord, DomainRecord,
-        UserCredentialInput, UserDirectoryPatch,
+        UserContactPatch, UserCredentialInput, UserDirectoryPatch,
     },
     revision::{
         MAX_REVISION_ALLOCATION_ATTEMPTS, METADATA_KEY, SyncRevisionChannel,
@@ -213,6 +213,61 @@ CREATE TABLE IF NOT EXISTS domains (
 
             transaction.commit().await?;
             return i64_to_u64_revision(revision);
+        }
+
+        anyhow::bail!("failed to allocate directory revision after retries")
+    }
+
+    pub async fn get_user(&self, employee_id: &str) -> anyhow::Result<Option<User>> {
+        use entities::user;
+
+        user::Entity::find_by_id(employee_id)
+            .one(&self.db)
+            .await?
+            .map(User::try_from)
+            .transpose()
+    }
+
+    pub async fn update_user_contact(
+        &self,
+        employee_id: &str,
+        contact: UserContactPatch,
+    ) -> anyhow::Result<(User, u64)> {
+        use entities::user;
+
+        for _ in 0..MAX_REVISION_ALLOCATION_ATTEMPTS {
+            let transaction = self.db.begin().await?;
+            let Some(revision) = try_allocate_directory_revision(&transaction).await? else {
+                transaction.rollback().await?;
+                continue;
+            };
+            let Some(existing) = user::Entity::find_by_id(employee_id)
+                .one(&transaction)
+                .await?
+            else {
+                transaction.rollback().await?;
+                anyhow::bail!("unknown user: {employee_id}");
+            };
+
+            user::Entity::delete_by_id(employee_id)
+                .exec(&transaction)
+                .await?;
+            let updated = user::ActiveModel {
+                employee_id: Set(existing.employee_id),
+                username: Set(existing.username),
+                display_name: Set(existing.display_name),
+                email: Set(contact.email),
+                mobile: Set(contact.mobile),
+                telephone: Set(contact.telephone),
+                organizational_unit_id: Set(existing.organizational_unit_id),
+                status: Set(existing.status),
+                changed_revision: Set(revision),
+            }
+            .insert(&transaction)
+            .await?;
+
+            transaction.commit().await?;
+            return Ok((User::try_from(updated)?, i64_to_u64_revision(revision)?));
         }
 
         anyhow::bail!("failed to allocate directory revision after retries")

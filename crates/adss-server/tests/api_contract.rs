@@ -69,11 +69,11 @@ async fn directory_confirm_advances_only_directory_channel() {
     let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
 
     patch_user(&app, "1001", "zhangsan@example.com").await;
-    confirm(&app, SyncChannel::Directory, 1, true).await;
-    let response = agent_sync(&app, 1, 0, false, false).await;
+    confirm(&app, SyncChannel::Directory, 2, true).await;
+    let response = agent_sync(&app, 2, 0, false, false).await;
 
     assert!(response.directory.users.is_empty());
-    assert_eq!(response.directory.server_revision, 1);
+    assert_eq!(response.directory.server_revision, 2);
     assert_eq!(response.credentials.credentials.len(), 1);
     assert_eq!(
         response.credentials.credentials[0].plaintext_password,
@@ -99,8 +99,9 @@ async fn login_and_password_change_returns_plaintext_credential_to_agent_sync() 
     let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
 
     login(&app, "1001", "OldPass123!").await;
+    confirm(&app, SyncChannel::Directory, 1, true).await;
     change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
-    let response = agent_sync(&app, 0, 0, false, false).await;
+    let response = agent_sync(&app, 1, 0, false, false).await;
 
     assert!(response.directory.users.is_empty());
     assert_eq!(response.credentials.server_revision, 2);
@@ -108,6 +109,138 @@ async fn login_and_password_change_returns_plaintext_credential_to_agent_sync() 
     assert_eq!(response.credentials.credentials[0].employee_id, "1001");
     assert_eq!(
         response.credentials.credentials[0].plaintext_password,
+        "NewPass123!"
+    );
+}
+
+#[tokio::test]
+async fn login_returns_user_access_token_for_self_service() {
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
+
+    let token = login_token(&app, "1001", "OldPass123!").await;
+
+    assert!(token.starts_with("adss-user-session:v1:1001:"));
+}
+
+#[tokio::test]
+async fn me_requires_user_access_token_and_returns_own_profile() {
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
+    let unauthenticated = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/me")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("me response");
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    let token = login_token(&app, "1001", "OldPass123!").await;
+
+    let response = app
+        .clone()
+        .oneshot(auth_empty_request(Method::GET, "/api/me", &token))
+        .await
+        .expect("me response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let profile: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(profile["employee_id"], "1001");
+    assert_eq!(profile["username"], "1001");
+    assert_eq!(profile["display_name"], "User 1001");
+    assert_eq!(profile["email"], "old@example.com");
+    assert_eq!(profile["mobile"], "13800000000");
+    assert_eq!(profile["telephone"], "021-10000000");
+    assert_eq!(profile["organizational_unit_id"], "ou-root");
+    assert_eq!(profile["status"], "active");
+}
+
+#[tokio::test]
+async fn user_self_contact_patch_updates_only_contact_fields() {
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
+    let token = login_token(&app, "1001", "OldPass123!").await;
+    confirm(&app, SyncChannel::Directory, 1, true).await;
+    let request = json!({
+        "email": "new@example.com",
+        "mobile": "13900000000",
+        "telephone": "021-20000000",
+        "username": "must-not-change",
+        "display_name": "Must Not Change",
+        "organizational_unit_id": "ou-other",
+        "status": "disabled"
+    });
+
+    let response = app
+        .clone()
+        .oneshot(auth_json_request(
+            Method::PATCH,
+            "/api/me/contact",
+            &token,
+            &request,
+        ))
+        .await
+        .expect("contact response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["directory_revision"], 2);
+    assert_eq!(payload["profile"]["email"], "new@example.com");
+    assert_eq!(payload["profile"]["mobile"], "13900000000");
+    assert_eq!(payload["profile"]["telephone"], "021-20000000");
+    assert_eq!(payload["profile"]["username"], "1001");
+    assert_eq!(payload["profile"]["display_name"], "User 1001");
+    assert_eq!(payload["profile"]["organizational_unit_id"], "ou-root");
+    assert_eq!(payload["profile"]["status"], "active");
+
+    let sync = agent_sync(&app, 1, 0, false, false).await;
+    assert_eq!(sync.directory.users.len(), 1);
+    assert_eq!(sync.directory.users[0].username, "1001");
+    assert_eq!(sync.directory.users[0].display_name, "User 1001");
+    assert_eq!(
+        sync.directory.users[0].email.as_deref(),
+        Some("new@example.com")
+    );
+    assert_eq!(
+        sync.directory.users[0].mobile.as_deref(),
+        Some("13900000000")
+    );
+    assert_eq!(
+        sync.directory.users[0].telephone.as_deref(),
+        Some("021-20000000")
+    );
+    assert_eq!(sync.directory.users[0].organizational_unit_id, "ou-root");
+    assert_eq!(sync.directory.users[0].status, UserStatus::Active);
+}
+
+#[tokio::test]
+async fn user_self_password_change_uses_access_token_identity() {
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
+    let token = login_token(&app, "1001", "OldPass123!").await;
+
+    let response = app
+        .clone()
+        .oneshot(auth_json_request(
+            Method::POST,
+            "/api/me/password",
+            &token,
+            &PasswordChangeRequest {
+                current_password: "OldPass123!".to_string(),
+                new_password: "NewPass123!".to_string(),
+            },
+        ))
+        .await
+        .expect("password response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    login(&app, "1001", "NewPass123!").await;
+    let sync = agent_sync(&app, 0, 0, false, false).await;
+    assert_eq!(sync.credentials.credentials.len(), 1);
+    assert_eq!(
+        sync.credentials.credentials[0].plaintext_password,
         "NewPass123!"
     );
 }
@@ -296,6 +429,7 @@ async fn app_state_from_env_accepts_local_password_envelope_provider() {
         std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
         std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
+        std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
     }
 
     AppState::from_env(repository).unwrap();
@@ -322,6 +456,31 @@ async fn app_state_from_env_rejects_missing_password_hash_provider() {
         error
             .to_string()
             .contains("ADSS_PASSWORD_HASH_PROVIDER is required")
+    );
+
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_rejects_missing_user_session_key() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    unsafe {
+        std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
+        std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+        std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("missing user session key must not configure AppState"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("ADSS_USER_SESSION_KEY is required")
     );
 
     clear_server_env();
@@ -375,6 +534,7 @@ async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_c
             std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
             std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
             std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
+            std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
         }
         let state = AppState::from_env(repository.clone()).unwrap();
         clear_server_env();
@@ -418,6 +578,9 @@ async fn test_app_with_seeded_credential(password: &str) -> TestApp {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain(true)).await.unwrap();
+    seed_user(&repository, "1001", "old@example.com")
+        .await
+        .unwrap();
     repository
         .change_user_password(UserCredentialInput {
             employee_id: "1001".to_string(),
@@ -470,6 +633,25 @@ async fn login(app: &axum::Router, employee_id: &str, password: &str) {
         .expect("login response");
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+async fn login_token(app: &axum::Router, employee_id: &str, password: &str) -> String {
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "/api/auth/login",
+            &UserLoginRequest {
+                employee_id: employee_id.to_string(),
+                password: password.to_string(),
+            },
+        ))
+        .await
+        .expect("login response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    payload["access_token"].as_str().unwrap().to_string()
 }
 
 async fn change_password(
@@ -588,6 +770,30 @@ fn agent_json_request<T: serde::Serialize>(uri: &str, agent_key: &str, value: &T
         .unwrap()
 }
 
+fn auth_empty_request(method: Method, uri: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn auth_json_request<T: serde::Serialize>(
+    method: Method,
+    uri: &str,
+    token: &str,
+    value: &T,
+) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(value).unwrap()))
+        .unwrap()
+}
+
 fn method_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -595,6 +801,30 @@ fn method_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()
+}
+
+async fn seed_user(repository: &Repository, employee_id: &str, email: &str) -> anyhow::Result<u64> {
+    repository
+        .upsert_directory(
+            vec![adss_contract::OrganizationalUnit {
+                id: "ou-root".to_string(),
+                name: "Root".to_string(),
+                parent_id: None,
+                changed_revision: 0,
+            }],
+            vec![UserDirectoryPatch {
+                employee_id: employee_id.to_string(),
+                username: employee_id.to_string(),
+                display_name: format!("User {employee_id}"),
+                email: Some(email.to_string()),
+                mobile: Some("13800000000".to_string()),
+                telephone: Some("021-10000000".to_string()),
+                organizational_unit_id: "ou-root".to_string(),
+                status: UserStatus::Active,
+            }],
+            Vec::new(),
+        )
+        .await
 }
 
 fn password_verifier(password: &str) -> String {
@@ -656,6 +886,8 @@ fn clear_server_env() {
         std::env::remove_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY");
         std::env::remove_var("ADSS_PASSWORD_ENVELOPE_COMMAND");
         std::env::remove_var("ADSS_PASSWORD_HASH_PROVIDER");
+        std::env::remove_var("ADSS_USER_SESSION_KEY");
+        std::env::remove_var("ADSS_USER_SESSION_TTL_SECONDS");
     }
 }
 

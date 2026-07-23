@@ -28,6 +28,13 @@ pub struct UserDirectoryPatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserContactPatch {
+    pub email: Option<String>,
+    pub mobile: Option<String>,
+    pub telephone: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserCredentialInput {
     pub employee_id: String,
     pub password_ciphertext: String,

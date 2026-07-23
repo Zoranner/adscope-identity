@@ -22,14 +22,107 @@ MVP 主服务只暴露中心改密、用户目录字段更新和 Agent 主动同
 行为：
 
 - 使用 `user_credentials.password_verifier` 验证用户提交的密码。
-- 不创建 session 或 token；当前只固定中心改密前的身份校验边界。
+- 成功后返回普通用户自助接口使用的 Bearer token。
 - 验证失败返回 `401 Unauthorized`。
 
 响应：
 
 ```json
 {
-  "employee_id": "1001"
+  "employee_id": "1001",
+  "access_token": "adss-user-session:v1:1001:..."
+}
+```
+
+## 普通用户自助资料
+
+以下接口必须携带请求头：
+
+```text
+Authorization: Bearer <access_token>
+```
+
+`GET /api/me`
+
+行为：
+
+- 根据登录 token 读取当前用户自己的目录资料。
+- 不允许通过请求参数读取其他用户。
+- 缺失、过期或签名错误的 token 返回 `401 Unauthorized`。
+
+响应：
+
+```json
+{
+  "employee_id": "1001",
+  "username": "zhangsan",
+  "display_name": "张三",
+  "email": "zhangsan@example.com",
+  "mobile": "13800000000",
+  "telephone": "021-10000000",
+  "organizational_unit_id": "ou-rd",
+  "status": "active"
+}
+```
+
+`PATCH /api/me/contact`
+
+请求：
+
+```json
+{
+  "email": "zhangsan@example.com",
+  "mobile": "13800000000",
+  "telephone": "021-10000000"
+}
+```
+
+行为：
+
+- 只允许普通用户修改自己的联系方式字段：`email`、`mobile`、`telephone`。
+- `employee_id`、`username`、`display_name`、`organizational_unit_id`、`status` 和组成员不接受用户自助修改。
+- 成功后推进目录 revision，后续由 Agent 同步到各域。
+
+响应：
+
+```json
+{
+  "profile": {
+    "employee_id": "1001",
+    "username": "zhangsan",
+    "display_name": "张三",
+    "email": "zhangsan@example.com",
+    "mobile": "13800000000",
+    "telephone": "021-10000000",
+    "organizational_unit_id": "ou-rd",
+    "status": "active"
+  },
+  "directory_revision": 12
+}
+```
+
+`POST /api/me/password`
+
+请求同中心改密：
+
+```json
+{
+  "current_password": "CurrentPass123!",
+  "new_password": "NewPass123!"
+}
+```
+
+行为：
+
+- 根据登录 token 确定当前用户，不能为其他用户改密。
+- 先校验当前密码，再写入新的 verifier 和 ciphertext，并推进凭据 revision。
+
+响应同中心改密：
+
+```json
+{
+  "employee_id": "1001",
+  "credential_revision": 8
 }
 ```
 

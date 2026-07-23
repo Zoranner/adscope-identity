@@ -1,5 +1,7 @@
 use adss_contract::{Group, OrganizationalUnit, UserStatus};
-use adss_persistence::{DomainRecord, Repository, UserCredentialInput, UserDirectoryPatch};
+use adss_persistence::{
+    DomainRecord, Repository, UserContactPatch, UserCredentialInput, UserDirectoryPatch,
+};
 use sea_orm::{ConnectionTrait, Database};
 use std::{
     path::PathBuf,
@@ -83,6 +85,46 @@ async fn repository_returns_current_state_after_multiple_updates() {
     assert_eq!(batch.users[0].changed_revision, 2);
     assert_eq!(batch.server_revision, 2);
     assert_eq!(batch.batch_revision, 2);
+}
+
+#[tokio::test]
+async fn repository_updates_only_user_contact_fields() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![UserDirectoryPatch {
+                mobile: Some("13800000000".to_string()),
+                telephone: Some("021-10000000".to_string()),
+                ..user_patch("1001", "old@example.com")
+            }],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    let (user, revision) = repository
+        .update_user_contact(
+            "1001",
+            UserContactPatch {
+                email: Some("new@example.com".to_string()),
+                mobile: Some("13900000000".to_string()),
+                telephone: Some("021-20000000".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(revision, 2);
+    assert_eq!(user.employee_id, "1001");
+    assert_eq!(user.username, "1001");
+    assert_eq!(user.display_name, "1001");
+    assert_eq!(user.email.as_deref(), Some("new@example.com"));
+    assert_eq!(user.mobile.as_deref(), Some("13900000000"));
+    assert_eq!(user.telephone.as_deref(), Some("021-20000000"));
+    assert_eq!(user.organizational_unit_id, "ou-rd");
+    assert_eq!(user.status, UserStatus::Active);
+    assert_eq!(user.changed_revision, 2);
 }
 
 #[tokio::test]

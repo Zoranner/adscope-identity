@@ -6,6 +6,7 @@ use crate::password::{
     DeterministicPasswordHash, LocalPasswordEnvelope, PasswordEnvelope, PasswordHashProvider,
     password_envelope_from_env, password_hash_from_env,
 };
+use crate::session::UserSessionIssuer;
 
 const DEFAULT_BATCH_LIMIT: usize = 100;
 
@@ -15,6 +16,7 @@ pub struct AppState {
     pub(crate) batch_limit: usize,
     pub(crate) password_envelope: Arc<dyn PasswordEnvelope>,
     pub(crate) password_hash: Arc<dyn PasswordHashProvider>,
+    pub(crate) user_sessions: UserSessionIssuer,
 }
 
 impl AppState {
@@ -24,6 +26,7 @@ impl AppState {
             DEFAULT_BATCH_LIMIT,
             password_envelope_from_env()?,
             password_hash_from_env()?,
+            UserSessionIssuer::from_env()?,
         ))
     }
 
@@ -33,6 +36,7 @@ impl AppState {
             DEFAULT_BATCH_LIMIT,
             Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
             Arc::new(DeterministicPasswordHash),
+            UserSessionIssuer::for_tests("test-user-session-key"),
         )
     }
 
@@ -46,6 +50,7 @@ impl AppState {
             batch_limit,
             Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
             Arc::new(DeterministicPasswordHash),
+            UserSessionIssuer::for_tests("test-user-session-key"),
         )
     }
 
@@ -54,12 +59,14 @@ impl AppState {
         batch_limit: usize,
         password_envelope: Arc<dyn PasswordEnvelope>,
         password_hash: Arc<dyn PasswordHashProvider>,
+        user_sessions: UserSessionIssuer,
     ) -> Self {
         Self {
             repository,
             batch_limit: batch_limit.max(1),
             password_envelope,
             password_hash,
+            user_sessions,
         }
     }
 }

@@ -1,15 +1,17 @@
 use adss_contract::{
     AgentConfirmRequest, AgentConfirmResponse, AgentSyncRequest, AgentSyncResponse,
     CredentialBatch, CredentialEntry, DomainDirectoryConfig, PasswordChangeRequest,
-    PasswordChangeResponse, SyncChannel, UserLoginRequest, UserLoginResponse, UserStatus,
+    PasswordChangeResponse, SyncChannel, User, UserLoginRequest, UserLoginResponse, UserStatus,
 };
-use adss_persistence::{CredentialCiphertextBatch, UserCredentialInput, UserDirectoryPatch};
+use adss_persistence::{
+    CredentialCiphertextBatch, UserContactPatch, UserCredentialInput, UserDirectoryPatch,
+};
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, header},
     response::IntoResponse,
-    routing::{patch, post},
+    routing::{get, patch, post},
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +25,9 @@ use crate::{
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/auth/login", post(login))
+        .route("/api/me", get(get_me))
+        .route("/api/me/contact", patch(update_me_contact))
+        .route("/api/me/password", post(change_me_password))
         .route("/api/users/{employee_id}", patch(update_user))
         .route("/api/users/{employee_id}/password", post(change_password))
         .route("/api/agent/sync", post(agent_sync))
@@ -50,7 +55,60 @@ async fn login(
 
     Ok(Json(UserLoginResponse {
         employee_id: request.employee_id,
+        access_token: state
+            .user_sessions
+            .issue(&credential.employee_id)
+            .map_err(|_| ApiError::Persistence)?,
     }))
+}
+
+async fn get_me(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<UserProfileResponse>, ApiError> {
+    let employee_id = authorize_user_session(&headers, &state)?;
+    let user = state
+        .repository
+        .get_user(&employee_id)
+        .await
+        .map_err(|_| ApiError::Persistence)?
+        .ok_or(ApiError::Unauthorized)?;
+
+    Ok(Json(UserProfileResponse::from(user)))
+}
+
+async fn update_me_contact(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(request): Json<UserContactPatchRequest>,
+) -> Result<Json<UserContactUpdateResponse>, ApiError> {
+    let employee_id = authorize_user_session(&headers, &state)?;
+    let (user, directory_revision) = state
+        .repository
+        .update_user_contact(
+            &employee_id,
+            UserContactPatch {
+                email: request.email,
+                mobile: request.mobile,
+                telephone: request.telephone,
+            },
+        )
+        .await
+        .map_err(|_| ApiError::Persistence)?;
+
+    Ok(Json(UserContactUpdateResponse {
+        profile: UserProfileResponse::from(user),
+        directory_revision,
+    }))
+}
+
+async fn change_me_password(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(request): Json<PasswordChangeRequest>,
+) -> Result<Json<PasswordChangeResponse>, ApiError> {
+    let employee_id = authorize_user_session(&headers, &state)?;
+    change_password_by_employee_id(&state, employee_id, request).await
 }
 
 async fn update_user(
@@ -87,6 +145,14 @@ async fn change_password(
     State(state): State<AppState>,
     Path(employee_id): Path<String>,
     Json(request): Json<PasswordChangeRequest>,
+) -> Result<Json<PasswordChangeResponse>, ApiError> {
+    change_password_by_employee_id(&state, employee_id, request).await
+}
+
+async fn change_password_by_employee_id(
+    state: &AppState,
+    employee_id: String,
+    request: PasswordChangeRequest,
 ) -> Result<Json<PasswordChangeResponse>, ApiError> {
     let credential = state
         .repository
@@ -243,6 +309,58 @@ fn open_password_for_agent(
     password_envelope: &dyn PasswordEnvelope,
 ) -> Option<String> {
     password_envelope.open(ciphertext).ok()
+}
+
+fn authorize_user_session(headers: &HeaderMap, state: &AppState) -> Result<String, ApiError> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(ApiError::Unauthorized)?;
+    state
+        .user_sessions
+        .verify(token)
+        .ok_or(ApiError::Unauthorized)
+}
+
+#[derive(Debug, Serialize)]
+struct UserProfileResponse {
+    employee_id: String,
+    username: String,
+    display_name: String,
+    email: Option<String>,
+    mobile: Option<String>,
+    telephone: Option<String>,
+    organizational_unit_id: String,
+    status: UserStatus,
+}
+
+impl From<User> for UserProfileResponse {
+    fn from(user: User) -> Self {
+        Self {
+            employee_id: user.employee_id,
+            username: user.username,
+            display_name: user.display_name,
+            email: user.email,
+            mobile: user.mobile,
+            telephone: user.telephone,
+            organizational_unit_id: user.organizational_unit_id,
+            status: user.status,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UserContactPatchRequest {
+    email: Option<String>,
+    mobile: Option<String>,
+    telephone: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct UserContactUpdateResponse {
+    profile: UserProfileResponse,
+    directory_revision: u64,
 }
 
 #[derive(Debug, Deserialize)]
