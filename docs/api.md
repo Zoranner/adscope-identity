@@ -2,7 +2,9 @@
 
 ## 总体边界
 
-MVP 主服务只暴露中心改密、用户目录字段更新和 Agent 主动同步接口。中心数据库是唯一事实源，域内 AD 不向中心反向写入。
+MVP 主服务暴露普通用户登录和自助接口、中心用户目录与改密接口、Agent 主动同步接口。中心数据库是唯一事实源，域内 AD 不向中心反向写入。
+
+普通用户自助接口只允许用户操作自己的资料和密码。管理入口接口当前仍是最小 API 边界，没有完整管理员会话和角色权限体系。
 
 所有 Agent 接口必须携带请求头 `x-adss-agent-key`。服务端根据 `domain_id` 读取 `domains.agent_key_hash`，对请求 key 做摘要后校验；未知域、错误 key 或缺失 key 返回 `401 Unauthorized`，已认证但域被禁用返回 `403 Forbidden`。
 
@@ -67,6 +69,8 @@ Authorization: Bearer <access_token>
 
 `PATCH /api/me/contact`
 
+普通用户只能通过该接口修改联系方式，不应调用 `PATCH /api/users/{employee_id}` 更新完整目录字段。
+
 请求：
 
 ```json
@@ -129,6 +133,8 @@ Authorization: Bearer <access_token>
 ## 更新用户目录字段
 
 `PATCH /api/users/{employee_id}`
+
+该接口用于管理入口或受控运维流程更新中心目录事实，不属于普通用户自助接口。普通用户自助只使用 `/api/me/contact`。
 
 请求字段对应 `UserDirectoryPatch`，用于更新中心当前目录事实：
 

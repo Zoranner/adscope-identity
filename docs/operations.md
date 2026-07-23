@@ -123,6 +123,9 @@ cargo run -p adss-agent
 
 当前主链已经是 repository-backed MVP：
 
+- 普通用户登录后获得服务端签名 Bearer token，可读取自己的资料。
+- 普通用户可自助修改自己的 `email`、`mobile`、`telephone`，该变化推进目录 revision。
+- 普通用户可自助修改自己的密码，该变化推进凭据 revision。
 - 中心写入目录当前事实并推进目录 revision。
 - 中心改密写入 Argon2id verifier 和 ciphertext 并推进凭据 revision。
 - 主服务通过 password envelope provider 保存和打开当前密码材料。
@@ -139,6 +142,7 @@ cargo run -p adss-agent
 - 主服务必须放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境必须使用 `command` envelope provider，并由该命令对接 KMS/HSM 或等价密钥服务；不得使用 `local` provider。
 - 生产环境必须使用 `ADSS_PASSWORD_HASH_PROVIDER=argon2id`。
+- 生产环境必须使用高熵 `ADSS_USER_SESSION_KEY`，并通过 Secret Manager、KMS 派生密钥或等价机制注入。
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
 - 受管用户应禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。
 - 需要在 AD 沙箱域验证 OU、用户、组、成员、禁用、隔离移动和 Reset Password 全链路。

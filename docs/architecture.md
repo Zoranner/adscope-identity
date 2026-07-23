@@ -7,6 +7,7 @@
 MVP 只保留最小可用主链：
 
 - 中心维护当前目录事实和当前凭据事实。
+- 普通用户通过中心服务登录，查看自己的资料，修改自己的联系方式和密码。
 - 每个域一个 Agent 主动拉取。
 - 目录和凭据按独立通道同步。
 - Agent 成功执行整批后确认 revision。
@@ -15,7 +16,7 @@ MVP 只保留最小可用主链：
 ## 拓扑
 
 ```text
-用户 / 管理入口
+普通用户自助入口 / 管理入口
   |
   v
 中心主服务 API
@@ -38,15 +39,19 @@ MVP 只保留最小可用主链：
 
 `users` 保存用户目录事实。`employee_id` 是跨域唯一标识，`username`、显示名、邮箱、手机、电话、目标 OU 和状态都属于目录通道。`disabled` 用户仍是受管用户，Agent 先确保用户存在，再禁用并移动到 `quarantine_ou_dn`。
 
+普通用户自助接口只能更新 `email`、`mobile`、`telephone`。这三个字段变化会推进目录 revision，并通过目录通道同步到各域。`employee_id`、`username`、显示名、目标 OU、状态和组成员仍由管理入口或上游权威流程维护。
+
 `groups` 保存组当前状态。成员集合直接保存在组记录中，不单独建成员实体。MVP 中组名固定映射为 AD 组 CN 和账号名。
 
 `user_credentials` 保存当前凭据事实。每个用户只保留当前 verifier 和 ciphertext，不保留旧密码历史，也不创建按域复制的密码任务。
 
 `domains` 保存域配置、Agent key hash 和该域已确认的目录/凭据 revision。
 
+普通用户会话不写入数据库。主服务登录成功后签发服务端签名的短期 Bearer token，`/api/me` 系列接口从 token 中确定当前 `employee_id`。
+
 ## Revision 模型
 
-目录通道使用 `directory_revision`。任意 OU、用户、组或组成员变化都会在同一个中心事务中分配新的目录 revision，并写入受影响对象的 `changed_revision`。
+目录通道使用 `directory_revision`。任意 OU、用户、组或组成员变化都会在同一个中心事务中分配新的目录 revision，并写入受影响对象的 `changed_revision`。普通用户自助联系方式更新也属于用户目录事实变化。
 
 凭据通道使用 `credential_revision`。每次中心改密分配新的凭据 revision，并写入该用户当前凭据的 `changed_revision`。
 
@@ -80,6 +85,7 @@ Agent 每轮执行：
 MVP 不包含：
 
 - Agent 注册流程。
+- 完整管理员权限体系和复杂用户会话治理。
 - 任务队列和任务领取。
 - 旧 poll/report cursor 模型。
 - drift 上报与生命周期。

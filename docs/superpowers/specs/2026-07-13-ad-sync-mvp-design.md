@@ -273,9 +273,11 @@ Agent 只能操作 `mirror_root_dn`、`quarantine_ou_dn` 和能够确认归属�
 
 ### 中心登录与改密
 
-普通用户通过中心最小登录接口提交工号和当前密码。中心使用 `password_verifier` 验证身份，登录成功后只允许用户修改自己的密码。
+普通用户通过中心最小登录接口提交工号和当前密码。中心使用 `password_verifier` 验证身份，登录成功后返回服务端签名的 Bearer token，用于 `/api/me` 自助接口。
 
-改密成功后，中心生成新的 verifier 和加密密码材料，并推进 credential revision。
+普通用户可查看自己的资料，可修改自己的 `email`、`mobile`、`telephone`，该变化推进 directory revision。普通用户不得自助修改 `employee_id`、`username`、显示名、组织归属、启用状态、组成员或域配置。
+
+普通用户改密成功后，中心生成新的 verifier 和加密密码材料，并推进 credential revision。
 
 管理员代设密码、角色平台、审批、到期提醒和复杂会话治理不进入 MVP。
 
@@ -343,7 +345,7 @@ MVP 不包含：
 - disabled 用户在各域被禁用并移入隔离 OU，恢复 active 后移回正常 OU。
 - 用户名、邮箱、手机、电话、OU、组和成员集合修改能同步到至少两个独立测试域。
 - 中心改密后，两个域使用 LDAPS Reset Password 得到相同新密码。
-- 普通用户能登录中心并修改自己的密码，不能通过域内普通方式改密。
+- 普通用户能登录中心，查看自己的资料，修改自己的联系方式和密码，不能通过域内普通方式改密。
 - 密码明文不进入数据库、磁盘、缓存、日志、trace 或错误响应。
 - 中心和 Agent 重启后从持久化 revision 继续，不丢状态、不跳 revision。
 - 全链路不依赖 dry-run；真实 LDAPS 同步和失败重试通过验证。

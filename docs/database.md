@@ -26,9 +26,9 @@
 - `employee_id`：跨域唯一用户标识。
 - `username`：AD 账号名，也作为 UPN 本地部分来源。
 - `display_name`：显示名。
-- `email`：邮箱。
-- `mobile`：手机号。
-- `telephone`：办公电话。
+- `email`：邮箱，允许普通用户自助修改。
+- `mobile`：手机号，允许普通用户自助修改。
+- `telephone`：办公电话，允许普通用户自助修改。
 - `organizational_unit_id`：用户目标 OU。
 - `status`：`active` 或 `disabled`。
 - `changed_revision`：该用户当前目录状态最后一次变化所在的目录 revision。
@@ -63,6 +63,8 @@
 ## Revision 规则
 
 一次中心目录写事务分配一个新的 `directory_revision`，本次涉及的 OU、用户和组共享该 revision。Agent 拉取时按对象 `changed_revision > applied_directory_revision` 返回当前完整对象状态。
+
+一次普通用户联系方式更新只修改该用户的 `email`、`mobile`、`telephone`，保留 `employee_id`、`username`、`display_name`、`organizational_unit_id` 和 `status`，并分配一个新的 `directory_revision`。
 
 一次中心改密事务分配一个新的 `credential_revision`，只保留该用户最新的 `user_credentials` 行。Agent 拉取时按 `changed_revision > applied_credential_revision` 返回待设置的当前密码材料。
 

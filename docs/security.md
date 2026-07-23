@@ -24,6 +24,10 @@ Agent key 仍是 MVP 共享密钥方案，不等价于 mTLS。部署时应通过
 
 普通用户登录成功后，主服务返回服务端签名的 Bearer token。token 只用于 `/api/me` 自助接口，并从签名内容中确定当前 `employee_id`；普通用户不能通过路径参数选择其他用户。
 
+`/api/me/contact` 只允许普通用户修改自己的 `email`、`mobile` 和 `telephone`。`employee_id`、`username`、显示名、组织归属、启用状态和组成员不接受普通用户自助修改。
+
+`/api/me/password` 根据 token 中的 `employee_id` 修改当前用户自己的密码；请求仍必须提供当前密码，服务端用 `password_verifier` 校验后才写入新的 verifier 和 ciphertext。
+
 `ADSS_USER_SESSION_KEY` 是生产密钥材料，必须由 Secret Manager、KMS 派生密钥或等价机制注入，不得进入源码、日志或配置仓库。该 token 当前是 MVP 的服务端签名令牌，不等价于完整 SSO、OIDC 或复杂会话治理。
 
 ## 凭据传输
