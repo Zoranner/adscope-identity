@@ -59,11 +59,8 @@ impl AgentProcessConfig {
             None
         } else {
             let url = required_env("ADSS_LDAP_URL")?;
-            if !url
-                .get(..8)
-                .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ldaps://"))
-            {
-                anyhow::bail!("ADSS_LDAP_URL must use ldaps://");
+            if !has_ldap_scheme(&url) {
+                anyhow::bail!("ADSS_LDAP_URL must use ldap:// or ldaps://");
             }
             Some(LdapDirectoryConfig {
                 url,
@@ -85,6 +82,14 @@ impl AgentProcessConfig {
             ldap,
         ))
     }
+}
+
+fn has_ldap_scheme(url: &str) -> bool {
+    url.get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ldap://"))
+        || url
+            .get(..8)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ldaps://"))
 }
 
 fn required_env(name: &'static str) -> anyhow::Result<String> {

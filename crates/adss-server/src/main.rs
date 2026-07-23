@@ -1,9 +1,10 @@
 use adss_persistence::Repository;
-use adss_server::{AppState, ServerConfig, build_router};
+use adss_server::{AppState, ServerConfig, build_router, load_env_file};
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    load_env_file(".env")?;
     let config = ServerConfig::from_env();
     let database_url = config
         .database_url

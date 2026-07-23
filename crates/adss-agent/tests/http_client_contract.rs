@@ -189,7 +189,7 @@ fn agent_process_config_requires_ldap_settings_without_dry_run() {
 }
 
 #[test]
-fn agent_process_config_rejects_non_ldaps_url_without_dry_run() {
+fn agent_process_config_accepts_ldap_url_without_dry_run() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_agent_env();
     unsafe {
@@ -205,12 +205,37 @@ fn agent_process_config_rejects_non_ldaps_url_without_dry_run() {
         std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
     }
 
+    let config = AgentProcessConfig::from_env().unwrap();
+    let ldap = config.ldap.expect("LDAP settings should be parsed");
+
+    assert_eq!(ldap.url, "ldap://dc-a.example.com:389");
+
+    clear_agent_env();
+}
+
+#[test]
+fn agent_process_config_rejects_non_ldap_url_without_dry_run() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_agent_env();
+    unsafe {
+        std::env::set_var("ADSS_DOMAIN_ID", "domain-a");
+        std::env::set_var("ADSS_AGENT_KEY", "agent-a-key");
+        std::env::set_var("ADSS_AGENT_STATE_PATH", "agent-state.json");
+        std::env::set_var("ADSS_AGENT_DRY_RUN", "0");
+        std::env::set_var("ADSS_LDAP_URL", "http://dc-a.example.com");
+        std::env::set_var(
+            "ADSS_LDAP_BIND_DN",
+            "CN=adss-agent,OU=Svc,DC=example,DC=com",
+        );
+        std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
+    }
+
     let error = AgentProcessConfig::from_env().unwrap_err();
 
     assert!(
         error
             .to_string()
-            .contains("ADSS_LDAP_URL must use ldaps://")
+            .contains("ADSS_LDAP_URL must use ldap:// or ldaps://")
     );
 
     clear_agent_env();

@@ -1,11 +1,12 @@
 use adss_agent::{
     AgentProcessConfig, AgentRuntime, ConfiguredDirectoryClient, FileLocalStateStore,
-    HttpControlPlaneClient,
+    HttpControlPlaneClient, load_env_file,
 };
 use tokio::time::{Duration, sleep};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    load_env_file(".env")?;
     let config = AgentProcessConfig::from_env()?;
 
     let control_plane =
