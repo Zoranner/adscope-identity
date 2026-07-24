@@ -17,6 +17,8 @@ pub struct LdapDirectoryConfig {
     pub accept_invalid_certs: bool,
 }
 
+const DEFAULT_STATE_PATH: &str = "adss-agent-state.json";
+
 impl AgentProcessConfig {
     pub fn new(
         server_url: impl Into<String>,
@@ -43,7 +45,6 @@ impl AgentProcessConfig {
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
         let domain_id = std::env::var("ADSS_DOMAIN_ID")?;
         let agent_key = std::env::var("ADSS_AGENT_KEY")?;
-        let state_path = std::env::var("ADSS_AGENT_STATE_PATH")?;
         let interval_seconds = std::env::var("ADSS_AGENT_INTERVAL_SECONDS")
             .ok()
             .map(|value| value.parse::<u64>())
@@ -76,7 +77,7 @@ impl AgentProcessConfig {
             server_url,
             domain_id,
             agent_key,
-            state_path,
+            DEFAULT_STATE_PATH,
             interval_seconds,
             dry_run,
             ldap,

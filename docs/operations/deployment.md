@@ -75,7 +75,7 @@ Agent 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ld
 }
 ```
 
-文件无法解析时，Agent 可以以 `0/0` 进度和 rebuild flags 重新拉取，并在 confirm 被中心接受后覆盖 state。
+Agent 在运行目录下自动维护 `adss-agent-state.json`。文件无法解析时，Agent 可以以 `0/0` 进度和 rebuild flags 重新拉取，并在 confirm 被中心接受后覆盖 state。
 
 ## 部署要求
 
