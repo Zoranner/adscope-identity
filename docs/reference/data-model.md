@@ -54,12 +54,13 @@
 
 ### `groups`
 
-保存组事实和成员集合。
+保存组事实、目标 OU 和成员集合。
 
 | 字段 | 含义 |
 | --- | --- |
 | `id` | 中心稳定组标识。 |
 | `name` | 组名，映射为 AD 组 CN 和账号名。 |
+| `organizational_unit_id` | 组目标 OU。 |
 | `member_employee_ids` | 成员工号数组 JSON。 |
 | `changed_revision` | 该组当前状态最后一次变化所在的目录 revision。 |
 

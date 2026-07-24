@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
+    organizational_unit_id TEXT NOT NULL,
     member_employee_ids TEXT NOT NULL,
     changed_revision BIGINT NOT NULL CHECK (changed_revision >= 0)
 )
@@ -252,6 +253,7 @@ CREATE TABLE IF NOT EXISTS domains (
                 group::ActiveModel {
                     id: Set(group.id.clone()),
                     name: Set(group.name.clone()),
+                    organizational_unit_id: Set(group.organizational_unit_id.clone()),
                     member_employee_ids: Set(serde_json::to_string(&group.member_employee_ids)?),
                     changed_revision: Set(revision),
                 }

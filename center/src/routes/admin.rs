@@ -325,6 +325,7 @@ async fn create_group(
         Group {
             id: request.id,
             name: request.name,
+            organizational_unit_id: request.organizational_unit_id,
             member_employee_ids: Vec::new(),
             changed_revision: 0,
         },
@@ -366,6 +367,7 @@ async fn update_group(
         Group {
             id: existing.id,
             name: request.name,
+            organizational_unit_id: request.organizational_unit_id,
             member_employee_ids: existing.member_employee_ids,
             changed_revision: 0,
         },
@@ -391,6 +393,7 @@ async fn replace_group_members(
         Group {
             id: existing.id,
             name: existing.name,
+            organizational_unit_id: existing.organizational_unit_id,
             member_employee_ids: request.member_employee_ids,
             changed_revision: 0,
         },
@@ -741,11 +744,13 @@ struct PasswordResetRequest {
 struct GroupCreateRequest {
     id: String,
     name: String,
+    organizational_unit_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct GroupPatchRequest {
     name: String,
+    organizational_unit_id: String,
 }
 
 #[derive(Debug, Deserialize)]

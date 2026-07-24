@@ -34,6 +34,7 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
         groups: vec![Group {
             id: "dev".to_string(),
             name: "Developers".to_string(),
+            organizational_unit_id: "ou-rd".to_string(),
             member_employee_ids: vec!["1001".to_string()],
             changed_revision: 7,
         }],
@@ -77,6 +78,11 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
         plan.operations[3].target,
         Some(DirectoryOperationTarget::Group(batch.groups[0].clone()))
     );
+    if let Some(DirectoryOperationTarget::Group(group)) = &plan.operations[3].target {
+        assert_eq!(group.organizational_unit_id, "ou-rd");
+    } else {
+        panic!("expected group target");
+    }
     assert_eq!(
         plan.operations[4].target,
         Some(DirectoryOperationTarget::GroupMembers {

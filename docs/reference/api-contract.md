@@ -250,13 +250,14 @@ Authorization: Bearer <management_token>
 ```json
 {
   "id": "group-rd",
-  "name": "研发部"
+  "name": "研发部",
+  "organizational_unit_id": "ou-rd"
 }
 ```
 
 `GET /api/admin/groups/{group_id}` 查询组详情和成员。
 
-`PATCH /api/admin/groups/{group_id}` 更新组名。
+`PATCH /api/admin/groups/{group_id}` 更新组名和目标 OU。
 
 `PUT /api/admin/groups/{group_id}/members` 用完整集合替换组成员：
 

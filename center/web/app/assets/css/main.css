@@ -95,7 +95,7 @@ button:disabled {
 
 .layout {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   min-height: calc(100vh - 75px);
 }
 
@@ -108,6 +108,10 @@ button:disabled {
 .nav-list {
   display: grid;
   gap: 8px;
+}
+
+.top-nav {
+  margin-bottom: 20px;
 }
 
 .nav-button,
@@ -138,6 +142,12 @@ button:disabled {
   background: #245d70;
 }
 
+.compact-button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 13px;
+}
+
 .icon-button {
   width: 36px;
   padding: 0;
@@ -157,6 +167,74 @@ button:disabled {
 .danger-button {
   color: #ffffff;
   background: #9c3b35;
+}
+
+.secondary-button.active {
+  color: #ffffff;
+  border-color: #245d70;
+  background: #245d70;
+}
+
+.ou-sidebar {
+  display: grid;
+  gap: 10px;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-section-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ou-tree {
+  display: grid;
+  gap: 4px;
+}
+
+.ou-tree-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #39485b;
+  background: transparent;
+  text-align: left;
+}
+
+.ou-tree-button:hover,
+.ou-tree-button.active {
+  color: #ffffff;
+  background: #245d70;
+}
+
+.ou-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ou-tree-count {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.sidebar-empty {
+  padding: 18px 8px;
+  color: #5f6f82;
+  text-align: center;
 }
 
 .content {
@@ -197,6 +275,53 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   gap: 18px;
   align-items: start;
+}
+
+.directory-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 430px);
+  gap: 18px;
+  align-items: start;
+}
+
+.directory-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.directory-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #d8e0ea;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.directory-heading h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.directory-heading p {
+  margin: 5px 0 0;
+  color: #5f6f82;
+  font-size: 13px;
+}
+
+.entity-panels,
+.editor-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.form-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .panel {
@@ -250,6 +375,7 @@ tr:last-child td {
 
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -333,7 +459,7 @@ tr:last-child td {
   }
 
   .nav-list {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .nav-button {
@@ -342,6 +468,14 @@ tr:last-child td {
 
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .directory-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .directory-heading {
+    flex-direction: column;
   }
 }
 
@@ -357,7 +491,7 @@ tr:last-child td {
   }
 
   .nav-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .content {

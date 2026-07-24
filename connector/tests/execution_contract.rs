@@ -291,6 +291,7 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
         groups: vec![Group {
             id: "dev".to_string(),
             name: "Developers".to_string(),
+            organizational_unit_id: "ou-rd".to_string(),
             member_employee_ids: vec!["1001".to_string()],
             changed_revision: batch_revision,
         }],

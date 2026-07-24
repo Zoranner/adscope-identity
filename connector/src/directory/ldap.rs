@@ -138,7 +138,15 @@ impl LdapDirectoryClient {
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
         validate_ldap_attribute_name(&context.domain.managed_group_id_attribute)?;
-        if let Some(dn) = find_group_dn(ldap, context, &group.id).await? {
+        if let Some(mut dn) = find_group_dn(ldap, context, &group.id).await? {
+            let target_parent_dn = context.organizational_unit_dn(&group.organizational_unit_id)?;
+            if !dn_is_under_parent(&dn, target_parent_dn) {
+                let rdn = dn_rdn(&dn)?;
+                ldap.modifydn(&dn, rdn, true, Some(target_parent_dn))
+                    .await?
+                    .success()?;
+                dn = format!("{rdn},{target_parent_dn}");
+            }
             ldap.modify(
                 &dn,
                 vec![
@@ -157,7 +165,7 @@ impl LdapDirectoryClient {
         let dn = format!(
             "CN={},{}",
             escape_ldap_dn_value(&group.name),
-            context.domain.mirror_root_dn
+            context.organizational_unit_dn(&group.organizational_unit_id)?
         );
         ldap.add(
             &dn,

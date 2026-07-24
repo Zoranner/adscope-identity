@@ -35,6 +35,7 @@ pub struct User {
 pub struct Group {
     pub id: String,
     pub name: String,
+    pub organizational_unit_id: String,
     pub member_employee_ids: Vec<String>,
     pub changed_revision: u64,
 }

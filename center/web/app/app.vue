@@ -12,7 +12,8 @@ import {
   Workflow,
 } from 'lucide-vue-next'
 
-type ViewKey = 'domains' | 'ous' | 'users' | 'groups' | 'sync'
+type ViewKey = 'directory' | 'domains' | 'sync'
+type DirectoryFormKey = 'ou' | 'user' | 'group'
 type UserStatus = 'active' | 'disabled'
 
 interface Domain {
@@ -49,6 +50,7 @@ interface UserRecord {
 interface GroupRecord {
   id: string
   name: string
+  organizational_unit_id: string
   member_employee_ids: string[]
   changed_revision: number
 }
@@ -96,19 +98,26 @@ interface UserForm {
 interface GroupForm {
   id: string
   name: string
+  organizational_unit_id: string
   member_employee_ids: string
 }
 
+interface OuTreeItem {
+  ou: OrganizationalUnit
+  depth: number
+  userCount: number
+  groupCount: number
+}
+
 const views: Array<{ key: ViewKey; label: string; icon: typeof Building2 }> = [
+  { key: 'directory', label: '目录', icon: FolderTree },
   { key: 'domains', label: '域', icon: Building2 },
-  { key: 'ous', label: 'OU', icon: FolderTree },
-  { key: 'users', label: '用户', icon: Users },
-  { key: 'groups', label: '组', icon: ShieldCheck },
   { key: 'sync', label: '同步', icon: Workflow },
 ]
 const defaultView = views[0]!
 
-const activeView = ref<ViewKey>('domains')
+const activeView = ref<ViewKey>('directory')
+const activeDirectoryForm = ref<DirectoryFormKey>('ou')
 const managementToken = ref('')
 const statusMessage = ref('')
 const isError = ref(false)
@@ -122,6 +131,7 @@ const syncDomains = ref<SyncDomain[]>([])
 
 const selectedDomainId = ref<string | null>(null)
 const selectedOuId = ref<string | null>(null)
+const editingOuId = ref<string | null>(null)
 const selectedUserId = ref<string | null>(null)
 const selectedGroupId = ref<string | null>(null)
 
@@ -132,6 +142,20 @@ const groupForm = reactive<GroupForm>(blankGroupForm())
 
 const currentView = computed(() => views.find((view) => view.key === activeView.value) ?? defaultView)
 const tokenReady = computed(() => managementToken.value.trim().length > 0)
+const selectedOu = computed(
+  () => organizationalUnits.value.find((ou) => ou.id === selectedOuId.value) ?? null,
+)
+const selectedOuUsers = computed(() =>
+  selectedOuId.value
+    ? users.value.filter((user) => user.organizational_unit_id === selectedOuId.value)
+    : [],
+)
+const selectedOuGroups = computed(() =>
+  selectedOuId.value
+    ? groups.value.filter((group) => group.organizational_unit_id === selectedOuId.value)
+    : [],
+)
+const ouTreeItems = computed<OuTreeItem[]>(() => flattenOus())
 const activeDirectoryLag = computed(() =>
   syncDomains.value.reduce((sum, domain) => sum + domain.directory_lag, 0),
 )
@@ -187,6 +211,7 @@ function blankGroupForm(): GroupForm {
   return {
     id: '',
     name: '',
+    organizational_unit_id: '',
     member_employee_ids: '',
   }
 }
@@ -209,6 +234,92 @@ function splitMembers(value: string): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function sortOus(ous: OrganizationalUnit[]): OrganizationalUnit[] {
+  return [...ous].sort((left, right) => {
+    const byName = left.name.localeCompare(right.name, 'zh-Hans-CN')
+    return byName === 0 ? left.id.localeCompare(right.id) : byName
+  })
+}
+
+function flattenOus(): OuTreeItem[] {
+  const byParent = new Map<string | null, OrganizationalUnit[]>()
+  for (const ou of organizationalUnits.value) {
+    const siblings = byParent.get(ou.parent_id) ?? []
+    siblings.push(ou)
+    byParent.set(ou.parent_id, siblings)
+  }
+
+  for (const [parentId, siblings] of byParent.entries()) {
+    byParent.set(parentId, sortOus(siblings))
+  }
+
+  const visited = new Set<string>()
+  const items: OuTreeItem[] = []
+  const pushChildren = (parentId: string | null, depth: number) => {
+    for (const ou of byParent.get(parentId) ?? []) {
+      if (visited.has(ou.id)) {
+        continue
+      }
+      visited.add(ou.id)
+      items.push({
+        ou,
+        depth,
+        userCount: countUsersInOu(ou.id),
+        groupCount: countGroupsInOu(ou.id),
+      })
+      pushChildren(ou.id, depth + 1)
+    }
+  }
+
+  pushChildren(null, 0)
+  for (const ou of sortOus(organizationalUnits.value)) {
+    if (!visited.has(ou.id)) {
+      visited.add(ou.id)
+      items.push({
+        ou,
+        depth: 0,
+        userCount: countUsersInOu(ou.id),
+        groupCount: countGroupsInOu(ou.id),
+      })
+      pushChildren(ou.id, 1)
+    }
+  }
+
+  return items
+}
+
+function countUsersInOu(ouId: string): number {
+  return users.value.filter((user) => user.organizational_unit_id === ouId).length
+}
+
+function countGroupsInOu(ouId: string): number {
+  return groups.value.filter((group) => group.organizational_unit_id === ouId).length
+}
+
+function ouName(ouId: string | null | undefined): string {
+  if (!ouId) {
+    return '-'
+  }
+  return organizationalUnits.value.find((ou) => ou.id === ouId)?.name ?? ouId
+}
+
+function reconcileSelectedOu() {
+  if (organizationalUnits.value.length === 0) {
+    selectedOuId.value = null
+    editingOuId.value = null
+    assignForm(ouForm, blankOuForm())
+    return
+  }
+
+  const current = organizationalUnits.value.find((ou) => ou.id === selectedOuId.value)
+  if (current) {
+    selectOu(current, false)
+    return
+  }
+
+  selectOu(sortOus(organizationalUnits.value)[0]!, false)
 }
 
 function rememberToken() {
@@ -280,6 +391,7 @@ async function loadOus() {
     '/api/admin/ous/tree',
   )
   organizationalUnits.value = response.organizational_units
+  reconcileSelectedOu()
 }
 
 async function loadUsers() {
@@ -348,18 +460,32 @@ async function saveDomain() {
   }, selectedDomainId.value ? '域配置已更新' : '域配置已创建')
 }
 
-function selectOu(ou: OrganizationalUnit) {
+function selectOu(ou: OrganizationalUnit, activate = true) {
+  if (activate) {
+    activeView.value = 'directory'
+    activeDirectoryForm.value = 'ou'
+  }
   selectedOuId.value = ou.id
+  editingOuId.value = ou.id
   assignForm(ouForm, {
     id: ou.id,
     name: ou.name,
     parent_id: ou.parent_id ?? '',
   })
+  if (activate) {
+    selectedUserId.value = null
+    selectedGroupId.value = null
+  }
 }
 
-function newOu() {
-  selectedOuId.value = null
-  assignForm(ouForm, blankOuForm())
+function newOu(parentId = selectedOuId.value) {
+  activeView.value = 'directory'
+  activeDirectoryForm.value = 'ou'
+  editingOuId.value = null
+  assignForm(ouForm, {
+    ...blankOuForm(),
+    parent_id: parentId ?? '',
+  })
 }
 
 async function saveOu() {
@@ -368,8 +494,8 @@ async function saveOu() {
       name: ouForm.name,
       parent_id: optionalParentId(ouForm.parent_id),
     }
-    if (selectedOuId.value) {
-      await adminFetch(`/api/admin/ous/${encodeURIComponent(selectedOuId.value)}`, {
+    if (editingOuId.value) {
+      await adminFetch(`/api/admin/ous/${encodeURIComponent(editingOuId.value)}`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       })
@@ -381,14 +507,18 @@ async function saveOu() {
           ...payload,
         }),
       })
+      selectedOuId.value = ouForm.id
     }
     await loadOus()
     await loadSyncDomains()
-  }, selectedOuId.value ? 'OU 已更新' : 'OU 已创建')
+  }, editingOuId.value ? 'OU 已更新' : 'OU 已创建')
 }
 
 function selectUser(user: UserRecord) {
+  activeView.value = 'directory'
+  activeDirectoryForm.value = 'user'
   selectedUserId.value = user.employee_id
+  selectedOuId.value = user.organizational_unit_id
   assignForm(userForm, {
     employee_id: user.employee_id,
     username: user.username,
@@ -404,8 +534,17 @@ function selectUser(user: UserRecord) {
 }
 
 function newUser() {
+  if (!selectedOuId.value) {
+    setStatus('请先选择 OU', true)
+    return
+  }
+  activeView.value = 'directory'
+  activeDirectoryForm.value = 'user'
   selectedUserId.value = null
-  assignForm(userForm, blankUserForm())
+  assignForm(userForm, {
+    ...blankUserForm(),
+    organizational_unit_id: selectedOuId.value,
+  })
 }
 
 async function saveUser() {
@@ -436,6 +575,7 @@ async function saveUser() {
     }
     await loadUsers()
     await loadSyncDomains()
+    selectedOuId.value = userForm.organizational_unit_id
   }, selectedUserId.value ? '用户已更新' : '用户已创建')
 }
 
@@ -474,25 +614,42 @@ async function resetUserPassword() {
 }
 
 function selectGroup(group: GroupRecord) {
+  activeView.value = 'directory'
+  activeDirectoryForm.value = 'group'
   selectedGroupId.value = group.id
+  selectedOuId.value = group.organizational_unit_id
   assignForm(groupForm, {
     id: group.id,
     name: group.name,
+    organizational_unit_id: group.organizational_unit_id,
     member_employee_ids: group.member_employee_ids.join(', '),
   })
 }
 
 function newGroup() {
+  if (!selectedOuId.value) {
+    setStatus('请先选择 OU', true)
+    return
+  }
+  activeView.value = 'directory'
+  activeDirectoryForm.value = 'group'
   selectedGroupId.value = null
-  assignForm(groupForm, blankGroupForm())
+  assignForm(groupForm, {
+    ...blankGroupForm(),
+    organizational_unit_id: selectedOuId.value,
+  })
 }
 
 async function saveGroup() {
   await runAction(async () => {
+    const payload = {
+      name: groupForm.name,
+      organizational_unit_id: groupForm.organizational_unit_id,
+    }
     if (selectedGroupId.value) {
       await adminFetch(`/api/admin/groups/${encodeURIComponent(selectedGroupId.value)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: groupForm.name }),
+        body: JSON.stringify(payload),
       })
       await adminFetch(`/api/admin/groups/${encodeURIComponent(selectedGroupId.value)}/members`, {
         method: 'PUT',
@@ -505,7 +662,7 @@ async function saveGroup() {
         method: 'POST',
         body: JSON.stringify({
           id: groupForm.id,
-          name: groupForm.name,
+          ...payload,
         }),
       })
       if (groupForm.member_employee_ids.trim().length > 0) {
@@ -519,6 +676,7 @@ async function saveGroup() {
     }
     await loadGroups()
     await loadSyncDomains()
+    selectedOuId.value = groupForm.organizational_unit_id
   }, selectedGroupId.value ? '组已更新' : '组已创建')
 }
 </script>
@@ -552,7 +710,7 @@ async function saveGroup() {
 
     <div class="layout">
       <aside class="sidebar">
-        <nav class="nav-list">
+        <nav class="nav-list top-nav">
           <button
             v-for="view in views"
             :key="view.key"
@@ -564,6 +722,28 @@ async function saveGroup() {
             {{ view.label }}
           </button>
         </nav>
+
+        <div class="ou-sidebar">
+          <div class="sidebar-section-header">
+            <h3>OU 树</h3>
+            <button class="secondary-button compact-button" @click="newOu(null)">新建</button>
+          </div>
+          <div v-if="ouTreeItems.length" class="ou-tree">
+            <button
+              v-for="item in ouTreeItems"
+              :key="item.ou.id"
+              class="ou-tree-button"
+              :class="{ active: selectedOuId === item.ou.id }"
+              :style="{ paddingLeft: `${12 + item.depth * 16}px` }"
+              @click="selectOu(item.ou)"
+            >
+              <FolderTree :size="16" />
+              <span class="ou-tree-name">{{ item.ou.name }}</span>
+              <span class="ou-tree-count">{{ item.userCount }} / {{ item.groupCount }}</span>
+            </button>
+          </div>
+          <div v-else class="sidebar-empty">暂无 OU</div>
+        </div>
       </aside>
 
       <main class="content">
@@ -580,7 +760,293 @@ async function saveGroup() {
 
         <p class="status-line" :class="{ error: isError }">{{ statusMessage }}</p>
 
-        <section v-if="activeView === 'domains'" class="workspace-grid">
+        <section v-if="activeView === 'directory'" class="directory-workspace">
+          <div v-if="selectedOu" class="directory-main">
+            <div class="directory-heading">
+              <div>
+                <h3>{{ selectedOu.name }}</h3>
+                <p>{{ selectedOu.id }} / 父级 {{ ouName(selectedOu.parent_id) }}</p>
+              </div>
+              <div class="row-actions">
+                <button class="secondary-button" @click="newOu(selectedOu.id)">新建子 OU</button>
+                <button class="secondary-button" @click="selectOu(selectedOu)">编辑 OU</button>
+                <button class="primary-button" @click="newUser">
+                  <Users :size="17" />
+                  新建用户
+                </button>
+                <button class="primary-button" @click="newGroup">
+                  <ShieldCheck :size="17" />
+                  新建组
+                </button>
+              </div>
+            </div>
+
+            <div class="entity-panels">
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>用户</h3>
+                  <span class="badge">{{ selectedOuUsers.length }}</span>
+                </div>
+                <div class="table-wrap">
+                  <table v-if="selectedOuUsers.length">
+                    <thead>
+                      <tr>
+                        <th>工号</th>
+                        <th>姓名</th>
+                        <th>联系方式</th>
+                        <th>状态</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="user in selectedOuUsers" :key="user.employee_id">
+                        <td>{{ user.employee_id }} / {{ user.username }}</td>
+                        <td>{{ user.display_name }}</td>
+                        <td>{{ user.email ?? user.mobile ?? user.telephone ?? '-' }}</td>
+                        <td>
+                          <span class="badge" :class="{ warn: user.status === 'disabled' }">
+                            {{ user.status === 'active' ? '启用' : '禁用' }}
+                          </span>
+                        </td>
+                        <td>
+                          <button class="secondary-button" @click="selectUser(user)">编辑</button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div v-else class="empty-state">该 OU 下暂无用户</div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-header">
+                  <h3>安全组</h3>
+                  <span class="badge">{{ selectedOuGroups.length }}</span>
+                </div>
+                <div class="table-wrap">
+                  <table v-if="selectedOuGroups.length">
+                    <thead>
+                      <tr>
+                        <th>组</th>
+                        <th>成员数</th>
+                        <th>Revision</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="group in selectedOuGroups" :key="group.id">
+                        <td>{{ group.name }} / {{ group.id }}</td>
+                        <td>{{ group.member_employee_ids.length }}</td>
+                        <td>{{ group.changed_revision }}</td>
+                        <td>
+                          <button class="secondary-button" @click="selectGroup(group)">编辑</button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div v-else class="empty-state">该 OU 下暂无安全组</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="panel empty-state">
+            <FolderTree :size="24" />
+            <p>先创建 OU，再维护用户和安全组。</p>
+            <button class="primary-button" @click="newOu(null)">新建 OU</button>
+          </div>
+
+          <aside class="editor-panel">
+            <div class="form-switch">
+              <button
+                class="secondary-button"
+                :class="{ active: activeDirectoryForm === 'ou' }"
+                @click="activeDirectoryForm = 'ou'"
+              >
+                OU
+              </button>
+              <button
+                class="secondary-button"
+                :class="{ active: activeDirectoryForm === 'user' }"
+                @click="newUser"
+              >
+                用户
+              </button>
+              <button
+                class="secondary-button"
+                :class="{ active: activeDirectoryForm === 'group' }"
+                @click="newGroup"
+              >
+                组
+              </button>
+            </div>
+
+            <form v-if="activeDirectoryForm === 'ou'" class="panel form" @submit.prevent="saveOu">
+              <div class="panel-header">
+                <h3>{{ editingOuId ? '编辑 OU' : '创建 OU' }}</h3>
+              </div>
+              <div class="field">
+                <label>OU 标识</label>
+                <input v-model="ouForm.id" :disabled="!!editingOuId" required />
+              </div>
+              <div class="field">
+                <label>名称</label>
+                <input v-model="ouForm.name" required />
+              </div>
+              <div class="field">
+                <label>父 OU</label>
+                <select v-model="ouForm.parent_id">
+                  <option value="">根 OU</option>
+                  <option
+                    v-for="item in ouTreeItems"
+                    :key="item.ou.id"
+                    :disabled="editingOuId === item.ou.id"
+                    :value="item.ou.id"
+                  >
+                    {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-actions">
+                <button class="primary-button" :disabled="loading || !tokenReady">
+                  <Save :size="17" />
+                  保存
+                </button>
+                <button type="button" class="secondary-button" @click="newOu(selectedOuId)">
+                  清空
+                </button>
+              </div>
+            </form>
+
+            <form v-else-if="activeDirectoryForm === 'user'" class="panel form" @submit.prevent="saveUser">
+              <div class="panel-header">
+                <h3>{{ selectedUserId ? '编辑用户' : '创建用户' }}</h3>
+              </div>
+              <div class="form-row">
+                <div class="field">
+                  <label>工号</label>
+                  <input v-model="userForm.employee_id" :disabled="!!selectedUserId" required />
+                </div>
+                <div class="field">
+                  <label>登录名</label>
+                  <input v-model="userForm.username" required />
+                </div>
+              </div>
+              <div class="field">
+                <label>显示名</label>
+                <input v-model="userForm.display_name" required />
+              </div>
+              <div class="field">
+                <label>所属 OU</label>
+                <select v-model="userForm.organizational_unit_id" required>
+                  <option v-for="item in ouTreeItems" :key="item.ou.id" :value="item.ou.id">
+                    {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-row">
+                <div class="field">
+                  <label>邮箱</label>
+                  <input v-model="userForm.email" type="email" />
+                </div>
+                <div class="field">
+                  <label>手机</label>
+                  <input v-model="userForm.mobile" />
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="field">
+                  <label>电话</label>
+                  <input v-model="userForm.telephone" />
+                </div>
+                <div class="field">
+                  <label>状态</label>
+                  <select v-model="userForm.status">
+                    <option value="active">启用</option>
+                    <option value="disabled">禁用</option>
+                  </select>
+                </div>
+              </div>
+              <div v-if="!selectedUserId" class="field">
+                <label>初始密码</label>
+                <input v-model="userForm.initial_password" type="password" required />
+              </div>
+              <div v-else class="field">
+                <label>重置密码</label>
+                <input v-model="userForm.reset_password" type="password" />
+              </div>
+              <div class="form-actions">
+                <button class="primary-button" :disabled="loading || !tokenReady">
+                  <Save :size="17" />
+                  保存
+                </button>
+                <button
+                  v-if="selectedUserId"
+                  type="button"
+                  class="secondary-button"
+                  :disabled="loading || !tokenReady"
+                  @click="setUserEnabled(true)"
+                >
+                  启用
+                </button>
+                <button
+                  v-if="selectedUserId"
+                  type="button"
+                  class="danger-button"
+                  :disabled="loading || !tokenReady"
+                  @click="setUserEnabled(false)"
+                >
+                  禁用
+                </button>
+                <button
+                  v-if="selectedUserId"
+                  type="button"
+                  class="secondary-button"
+                  :disabled="loading || !tokenReady || !userForm.reset_password"
+                  @click="resetUserPassword"
+                >
+                  重置密码
+                </button>
+                <button type="button" class="secondary-button" @click="newUser">清空</button>
+              </div>
+            </form>
+
+            <form v-else class="panel form" @submit.prevent="saveGroup">
+              <div class="panel-header">
+                <h3>{{ selectedGroupId ? '编辑组' : '创建组' }}</h3>
+              </div>
+              <div class="field">
+                <label>组标识</label>
+                <input v-model="groupForm.id" :disabled="!!selectedGroupId" required />
+              </div>
+              <div class="field">
+                <label>组名称</label>
+                <input v-model="groupForm.name" required />
+              </div>
+              <div class="field">
+                <label>所属 OU</label>
+                <select v-model="groupForm.organizational_unit_id" required>
+                  <option v-for="item in ouTreeItems" :key="item.ou.id" :value="item.ou.id">
+                    {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label>成员工号</label>
+                <textarea v-model="groupForm.member_employee_ids" placeholder="用英文逗号分隔"></textarea>
+              </div>
+              <div class="form-actions">
+                <button class="primary-button" :disabled="loading || !tokenReady">
+                  <Save :size="17" />
+                  保存
+                </button>
+                <button type="button" class="secondary-button" @click="newGroup">清空</button>
+              </div>
+            </form>
+          </aside>
+        </section>
+
+        <section v-else-if="activeView === 'domains'" class="workspace-grid">
           <div class="panel">
             <div class="panel-header">
               <h3>域列表</h3>
@@ -670,241 +1136,6 @@ async function saveGroup() {
                 保存
               </button>
               <button type="button" class="secondary-button" @click="newDomain">清空</button>
-            </div>
-          </form>
-        </section>
-
-        <section v-else-if="activeView === 'ous'" class="workspace-grid">
-          <div class="panel">
-            <div class="panel-header">
-              <h3>OU 树</h3>
-              <button class="secondary-button" @click="newOu">新建</button>
-            </div>
-            <div class="table-wrap">
-              <table v-if="organizationalUnits.length">
-                <thead>
-                  <tr>
-                    <th>OU</th>
-                    <th>父级</th>
-                    <th>Revision</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="ou in organizationalUnits" :key="ou.id">
-                    <td>{{ ou.name }} / {{ ou.id }}</td>
-                    <td>{{ ou.parent_id ?? '-' }}</td>
-                    <td>{{ ou.changed_revision }}</td>
-                    <td><button class="secondary-button" @click="selectOu(ou)">编辑</button></td>
-                  </tr>
-                </tbody>
-              </table>
-              <div v-else class="empty-state">暂无 OU</div>
-            </div>
-          </div>
-
-          <form class="panel form" @submit.prevent="saveOu">
-            <div class="panel-header">
-              <h3>{{ selectedOuId ? '编辑 OU' : '创建 OU' }}</h3>
-            </div>
-            <div class="field">
-              <label>OU 标识</label>
-              <input v-model="ouForm.id" :disabled="!!selectedOuId" required />
-            </div>
-            <div class="field">
-              <label>名称</label>
-              <input v-model="ouForm.name" required />
-            </div>
-            <div class="field">
-              <label>父 OU 标识</label>
-              <input v-model="ouForm.parent_id" placeholder="根 OU 留空" />
-            </div>
-            <div class="form-actions">
-              <button class="primary-button" :disabled="loading || !tokenReady">
-                <Save :size="17" />
-                保存
-              </button>
-              <button type="button" class="secondary-button" @click="newOu">清空</button>
-            </div>
-          </form>
-        </section>
-
-        <section v-else-if="activeView === 'users'" class="workspace-grid">
-          <div class="panel">
-            <div class="panel-header">
-              <h3>用户列表</h3>
-              <button class="secondary-button" @click="newUser">新建</button>
-            </div>
-            <div class="table-wrap">
-              <table v-if="users.length">
-                <thead>
-                  <tr>
-                    <th>工号</th>
-                    <th>姓名</th>
-                    <th>OU</th>
-                    <th>状态</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="user in users" :key="user.employee_id">
-                    <td>{{ user.employee_id }} / {{ user.username }}</td>
-                    <td>{{ user.display_name }}</td>
-                    <td>{{ user.organizational_unit_id }}</td>
-                    <td>
-                      <span class="badge" :class="{ warn: user.status === 'disabled' }">
-                        {{ user.status === 'active' ? '启用' : '禁用' }}
-                      </span>
-                    </td>
-                    <td><button class="secondary-button" @click="selectUser(user)">编辑</button></td>
-                  </tr>
-                </tbody>
-              </table>
-              <div v-else class="empty-state">暂无用户</div>
-            </div>
-          </div>
-
-          <form class="panel form" @submit.prevent="saveUser">
-            <div class="panel-header">
-              <h3>{{ selectedUserId ? '编辑用户' : '创建用户' }}</h3>
-            </div>
-            <div class="form-row">
-              <div class="field">
-                <label>工号</label>
-                <input v-model="userForm.employee_id" :disabled="!!selectedUserId" required />
-              </div>
-              <div class="field">
-                <label>登录名</label>
-                <input v-model="userForm.username" required />
-              </div>
-            </div>
-            <div class="field">
-              <label>显示名</label>
-              <input v-model="userForm.display_name" required />
-            </div>
-            <div class="form-row">
-              <div class="field">
-                <label>邮箱</label>
-                <input v-model="userForm.email" type="email" />
-              </div>
-              <div class="field">
-                <label>手机</label>
-                <input v-model="userForm.mobile" />
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="field">
-                <label>电话</label>
-                <input v-model="userForm.telephone" />
-              </div>
-              <div class="field">
-                <label>OU 标识</label>
-                <input v-model="userForm.organizational_unit_id" required />
-              </div>
-            </div>
-            <div class="field">
-              <label>状态</label>
-              <select v-model="userForm.status">
-                <option value="active">启用</option>
-                <option value="disabled">禁用</option>
-              </select>
-            </div>
-            <div v-if="!selectedUserId" class="field">
-              <label>初始密码</label>
-              <input v-model="userForm.initial_password" type="password" required />
-            </div>
-            <div v-else class="field">
-              <label>重置密码</label>
-              <input v-model="userForm.reset_password" type="password" />
-            </div>
-            <div class="form-actions">
-              <button class="primary-button" :disabled="loading || !tokenReady">
-                <Save :size="17" />
-                保存
-              </button>
-              <button
-                v-if="selectedUserId"
-                type="button"
-                class="secondary-button"
-                :disabled="loading || !tokenReady"
-                @click="setUserEnabled(true)"
-              >
-                启用
-              </button>
-              <button
-                v-if="selectedUserId"
-                type="button"
-                class="danger-button"
-                :disabled="loading || !tokenReady"
-                @click="setUserEnabled(false)"
-              >
-                禁用
-              </button>
-              <button
-                v-if="selectedUserId"
-                type="button"
-                class="secondary-button"
-                :disabled="loading || !tokenReady || !userForm.reset_password"
-                @click="resetUserPassword"
-              >
-                重置密码
-              </button>
-              <button type="button" class="secondary-button" @click="newUser">清空</button>
-            </div>
-          </form>
-        </section>
-
-        <section v-else-if="activeView === 'groups'" class="workspace-grid">
-          <div class="panel">
-            <div class="panel-header">
-              <h3>安全组</h3>
-              <button class="secondary-button" @click="newGroup">新建</button>
-            </div>
-            <div class="table-wrap">
-              <table v-if="groups.length">
-                <thead>
-                  <tr>
-                    <th>组</th>
-                    <th>成员数</th>
-                    <th>Revision</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="group in groups" :key="group.id">
-                    <td>{{ group.name }} / {{ group.id }}</td>
-                    <td>{{ group.member_employee_ids.length }}</td>
-                    <td>{{ group.changed_revision }}</td>
-                    <td><button class="secondary-button" @click="selectGroup(group)">编辑</button></td>
-                  </tr>
-                </tbody>
-              </table>
-              <div v-else class="empty-state">暂无安全组</div>
-            </div>
-          </div>
-
-          <form class="panel form" @submit.prevent="saveGroup">
-            <div class="panel-header">
-              <h3>{{ selectedGroupId ? '编辑组' : '创建组' }}</h3>
-            </div>
-            <div class="field">
-              <label>组标识</label>
-              <input v-model="groupForm.id" :disabled="!!selectedGroupId" required />
-            </div>
-            <div class="field">
-              <label>组名称</label>
-              <input v-model="groupForm.name" required />
-            </div>
-            <div class="field">
-              <label>成员工号</label>
-              <textarea v-model="groupForm.member_employee_ids" placeholder="用英文逗号分隔"></textarea>
-            </div>
-            <div class="form-actions">
-              <button class="primary-button" :disabled="loading || !tokenReady">
-                <Save :size="17" />
-                保存
-              </button>
-              <button type="button" class="secondary-button" @click="newGroup">清空</button>
             </div>
           </form>
         </section>

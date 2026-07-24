@@ -33,6 +33,7 @@ async fn repository_updates_directory_objects_in_one_revision() {
             vec![Group {
                 id: "dev".to_string(),
                 name: "Developers".to_string(),
+                organizational_unit_id: "ou-rd".to_string(),
                 member_employee_ids: vec!["1001".to_string()],
                 changed_revision: 0,
             }],
@@ -50,6 +51,7 @@ async fn repository_updates_directory_objects_in_one_revision() {
     assert_eq!(batch.batch_revision, 1);
     assert_eq!(batch.organizational_units[0].changed_revision, 1);
     assert_eq!(batch.users[0].changed_revision, 1);
+    assert_eq!(batch.groups[0].organizational_unit_id, "ou-rd");
     assert_eq!(batch.groups[0].changed_revision, 1);
     assert!(!batch.has_more);
 }
@@ -255,6 +257,7 @@ async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one
             vec![Group {
                 id: "ops".to_string(),
                 name: "Operators".to_string(),
+                organizational_unit_id: "ou-root".to_string(),
                 member_employee_ids: vec!["1002".to_string()],
                 changed_revision: 0,
             }],
@@ -584,7 +587,7 @@ async fn repository_stores_only_current_credential() {
 }
 
 #[tokio::test]
-async fn repository_schema_uses_member_employee_ids_column_name() {
+async fn repository_schema_uses_group_ou_and_member_employee_ids_column_names() {
     let db = Database::connect("sqlite::memory:").await.unwrap();
     let repository = Repository::from_connection(db.clone());
     repository.initialize_schema().await.unwrap();
@@ -593,11 +596,13 @@ async fn repository_schema_uses_member_employee_ids_column_name() {
         "INSERT INTO groups (
             id,
             name,
+            organizational_unit_id,
             member_employee_ids,
             changed_revision
         ) VALUES (
             'schema-check',
             'Schema Check',
+            'ou-root',
             '[\"1001\"]',
             0
         )",
@@ -610,11 +615,13 @@ async fn repository_schema_uses_member_employee_ids_column_name() {
             "INSERT INTO groups (
                 id,
                 name,
+                organizational_unit_id,
                 member_employee_ids_json,
                 changed_revision
             ) VALUES (
                 'old-schema-check',
                 'Old Schema Check',
+                'ou-root',
                 '[\"1001\"]',
                 0
             )"

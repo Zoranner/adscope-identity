@@ -348,10 +348,12 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
         "/api/admin/groups",
         &json!({
             "id": "group-rd",
-            "name": "研发组"
+            "name": "研发组",
+            "organizational_unit_id": "ou-rd"
         }),
     )
     .await;
+    assert_eq!(created_group["group"]["organizational_unit_id"], "ou-rd");
     assert_eq!(
         created_group["group"]["member_employee_ids"]
             .as_array()
@@ -371,11 +373,16 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
         &app,
         Method::PATCH,
         "/api/admin/groups/group-rd",
-        &json!({ "name": "研发组 Updated" }),
+        &json!({
+            "name": "研发组 Updated",
+            "organizational_unit_id": "ou-root"
+        }),
     )
     .await;
     assert_eq!(renamed_group["group"]["name"], "研发组 Updated");
+    assert_eq!(renamed_group["group"]["organizational_unit_id"], "ou-root");
     let group = admin_empty(&app, Method::GET, "/api/admin/groups/group-rd").await;
+    assert_eq!(group["organizational_unit_id"], "ou-root");
     assert_eq!(group["member_employee_ids"][0], "1001");
     let groups = admin_empty(&app, Method::GET, "/api/admin/groups").await;
     assert_eq!(groups["groups"].as_array().unwrap().len(), 1);
