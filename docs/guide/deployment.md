@@ -20,7 +20,7 @@ cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
 
 ## 主服务
 
-主服务是中心 API 和同步控制面。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY` 和密码校验哈希方式。
+主服务是中心 API 和同步控制面。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_PASSWORD_HASH_PROVIDER`、`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN`。
 
 `ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
@@ -62,7 +62,7 @@ Agent 在运行目录下自动维护 `adss-agent-state.json`。文件无法解�
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境配置本机高熵密码加密密钥。
-- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、Agent key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入。
+- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、Agent key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
 - 受管用户禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。

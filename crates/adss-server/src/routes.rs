@@ -1,14 +1,14 @@
+mod admin;
+
 use adss_contract::{
     AgentConfirmRequest, AgentConfirmResponse, AgentSyncRequest, AgentSyncResponse,
     CredentialBatch, CredentialEntry, DomainDirectoryConfig, PasswordChangeRequest,
     PasswordChangeResponse, SyncChannel, User, UserLoginRequest, UserLoginResponse, UserStatus,
 };
-use adss_persistence::{
-    CredentialCiphertextBatch, UserContactPatch, UserCredentialInput, UserDirectoryPatch,
-};
+use adss_persistence::{CredentialCiphertextBatch, UserContactPatch, UserCredentialInput};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, header},
     response::IntoResponse,
     routing::{get, patch, post},
@@ -28,8 +28,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/me", get(get_me))
         .route("/api/me/contact", patch(update_me_contact))
         .route("/api/me/password", post(change_me_password))
-        .route("/api/users/{employee_id}", patch(update_user))
-        .route("/api/users/{employee_id}/password", post(change_password))
+        .merge(admin::routes())
         .route("/api/agent/sync", post(agent_sync))
         .route("/api/agent/confirm", post(agent_confirm))
         .with_state(state)
@@ -108,44 +107,6 @@ async fn change_me_password(
     Json(request): Json<PasswordChangeRequest>,
 ) -> Result<Json<PasswordChangeResponse>, ApiError> {
     let employee_id = authorize_user_session(&headers, &state)?;
-    change_password_by_employee_id(&state, employee_id, request).await
-}
-
-async fn update_user(
-    State(state): State<AppState>,
-    Path(employee_id): Path<String>,
-    Json(request): Json<UpdateUserDirectoryRequest>,
-) -> Result<Json<DirectoryUpdateResponse>, ApiError> {
-    let revision = state
-        .repository
-        .upsert_directory(
-            Vec::new(),
-            vec![UserDirectoryPatch {
-                employee_id: employee_id.clone(),
-                username: request.username,
-                display_name: request.display_name,
-                email: request.email,
-                mobile: request.mobile,
-                telephone: request.telephone,
-                organizational_unit_id: request.organizational_unit_id,
-                status: request.status,
-            }],
-            Vec::new(),
-        )
-        .await
-        .map_err(|_| ApiError::Persistence)?;
-
-    Ok(Json(DirectoryUpdateResponse {
-        employee_id,
-        directory_revision: revision,
-    }))
-}
-
-async fn change_password(
-    State(state): State<AppState>,
-    Path(employee_id): Path<String>,
-    Json(request): Json<PasswordChangeRequest>,
-) -> Result<Json<PasswordChangeResponse>, ApiError> {
     change_password_by_employee_id(&state, employee_id, request).await
 }
 
@@ -363,22 +324,5 @@ struct UserContactPatchRequest {
 #[derive(Debug, Serialize)]
 struct UserContactUpdateResponse {
     profile: UserProfileResponse,
-    directory_revision: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateUserDirectoryRequest {
-    username: String,
-    display_name: String,
-    email: Option<String>,
-    mobile: Option<String>,
-    telephone: Option<String>,
-    organizational_unit_id: String,
-    status: UserStatus,
-}
-
-#[derive(Debug, Serialize)]
-struct DirectoryUpdateResponse {
-    employee_id: String,
     directory_revision: u64,
 }

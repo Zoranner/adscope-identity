@@ -8,7 +8,7 @@
 
 ## 密钥和配置
 
-主服务必须配置高熵 `ADSS_PASSWORD_ENCRYPTION_KEY` 和 `ADSS_USER_SESSION_KEY`。这些密钥通过受限 `.env`、系统环境变量、Windows DPAPI、Secret Manager 或等价机制注入，不进入源码、日志或配置仓库。
+主服务必须配置高熵 `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN`。这些密钥通过受限 `.env`、系统环境变量、Windows DPAPI、Secret Manager 或等价机制注入，不进入源码、日志或配置仓库。
 
 Agent key 和 LDAP bind password 按域独立保存。Agent key 只能在生成或轮换时返回一次明文，运行时不得写入日志、错误响应或配置仓库。
 

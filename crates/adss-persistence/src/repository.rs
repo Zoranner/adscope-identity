@@ -8,8 +8,8 @@ use crate::{
     entities,
     mapping::{domain_active_model, user_status_from_storage, user_status_to_storage},
     models::{
-        CredentialCiphertextBatch, CredentialCiphertextEntry, CredentialRecord, DomainRecord,
-        UserContactPatch, UserCredentialInput, UserDirectoryPatch,
+        CredentialCiphertextBatch, CredentialCiphertextEntry, CredentialRecord, DomainPatch,
+        DomainRecord, UserContactPatch, UserCredentialInput, UserDirectoryPatch, UserListFilter,
     },
     revision::{
         MAX_REVISION_ALLOCATION_ATTEMPTS, METADATA_KEY, SyncRevisionChannel,
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
-    member_employee_ids_json TEXT NOT NULL,
+    member_employee_ids TEXT NOT NULL,
     changed_revision BIGINT NOT NULL CHECK (changed_revision >= 0)
 )
 "#,
@@ -122,16 +122,76 @@ CREATE TABLE IF NOT EXISTS domains (
         Ok(())
     }
 
-    pub async fn seed_domain(&self, domain: DomainRecord) -> anyhow::Result<()> {
+    pub async fn list_domains(&self) -> anyhow::Result<Vec<DomainRecord>> {
+        use entities::domain;
+
+        domain::Entity::find()
+            .order_by_asc(domain::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(DomainRecord::try_from)
+            .collect()
+    }
+
+    pub async fn upsert_domain(&self, domain: DomainRecord) -> anyhow::Result<DomainRecord> {
         use entities::domain;
 
         let transaction = self.db.begin().await?;
         domain::Entity::delete_by_id(domain.id.as_str())
             .exec(&transaction)
             .await?;
-        domain_active_model(domain)?.insert(&transaction).await?;
+        let domain = domain_active_model(domain)?.insert(&transaction).await?;
         transaction.commit().await?;
-        Ok(())
+        DomainRecord::try_from(domain)
+    }
+
+    pub async fn update_domain(
+        &self,
+        domain_id: &str,
+        patch: DomainPatch,
+    ) -> anyhow::Result<DomainRecord> {
+        let mut domain = self.require_domain(domain_id).await?;
+
+        if let Some(name) = patch.name {
+            domain.name = name;
+        }
+        if let Some(enabled) = patch.enabled {
+            domain.enabled = enabled;
+        }
+        if let Some(mirror_root_dn) = patch.mirror_root_dn {
+            domain.mirror_root_dn = mirror_root_dn;
+        }
+        if let Some(quarantine_ou_dn) = patch.quarantine_ou_dn {
+            domain.quarantine_ou_dn = quarantine_ou_dn;
+        }
+        if let Some(upn_suffix) = patch.upn_suffix {
+            domain.upn_suffix = upn_suffix;
+        }
+        if let Some(employee_id_attribute) = patch.employee_id_attribute {
+            domain.employee_id_attribute = employee_id_attribute;
+        }
+        if let Some(managed_group_id_attribute) = patch.managed_group_id_attribute {
+            domain.managed_group_id_attribute = managed_group_id_attribute;
+        }
+
+        self.upsert_domain(domain.clone()).await?;
+        Ok(domain)
+    }
+
+    pub async fn rotate_domain_agent_key_hash(
+        &self,
+        domain_id: &str,
+        agent_key_hash: String,
+    ) -> anyhow::Result<DomainRecord> {
+        let mut domain = self.require_domain(domain_id).await?;
+        domain.agent_key_hash = agent_key_hash;
+        self.upsert_domain(domain.clone()).await?;
+        Ok(domain)
+    }
+
+    pub async fn seed_domain(&self, domain: DomainRecord) -> anyhow::Result<()> {
+        self.upsert_domain(domain).await.map(|_| ())
     }
 
     pub async fn get_domain(&self, domain_id: &str) -> anyhow::Result<Option<DomainRecord>> {
@@ -203,9 +263,7 @@ CREATE TABLE IF NOT EXISTS domains (
                 group::ActiveModel {
                     id: Set(group.id.clone()),
                     name: Set(group.name.clone()),
-                    member_employee_ids_json: Set(serde_json::to_string(
-                        &group.member_employee_ids,
-                    )?),
+                    member_employee_ids: Set(serde_json::to_string(&group.member_employee_ids)?),
                     changed_revision: Set(revision),
                 }
                 .insert(&transaction)
@@ -217,6 +275,57 @@ CREATE TABLE IF NOT EXISTS domains (
         }
 
         anyhow::bail!("failed to allocate directory revision after retries")
+    }
+
+    pub async fn list_organizational_units(&self) -> anyhow::Result<Vec<OrganizationalUnit>> {
+        use entities::organizational_unit;
+
+        organizational_unit::Entity::find()
+            .order_by_asc(organizational_unit::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(OrganizationalUnit::try_from)
+            .collect()
+    }
+
+    pub async fn get_organizational_unit(
+        &self,
+        ou_id: &str,
+    ) -> anyhow::Result<Option<OrganizationalUnit>> {
+        use entities::organizational_unit;
+
+        organizational_unit::Entity::find_by_id(ou_id)
+            .one(&self.db)
+            .await?
+            .map(OrganizationalUnit::try_from)
+            .transpose()
+    }
+
+    pub async fn list_users(&self, filter: UserListFilter) -> anyhow::Result<Vec<User>> {
+        use entities::user;
+
+        let mut query = user::Entity::find();
+        if let Some(employee_id) = filter.employee_id {
+            query = query.filter(user::Column::EmployeeId.eq(employee_id));
+        }
+        if let Some(username) = filter.username {
+            query = query.filter(user::Column::Username.eq(username));
+        }
+        if let Some(organizational_unit_id) = filter.organizational_unit_id {
+            query = query.filter(user::Column::OrganizationalUnitId.eq(organizational_unit_id));
+        }
+        if let Some(status) = filter.status {
+            query = query.filter(user::Column::Status.eq(user_status_to_storage(status)));
+        }
+
+        query
+            .order_by_asc(user::Column::EmployeeId)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(User::try_from)
+            .collect()
     }
 
     pub async fn get_user(&self, employee_id: &str) -> anyhow::Result<Option<User>> {
@@ -341,6 +450,28 @@ CREATE TABLE IF NOT EXISTS domains (
             groups,
             has_more: false,
         })
+    }
+
+    pub async fn list_groups(&self) -> anyhow::Result<Vec<Group>> {
+        use entities::group;
+
+        group::Entity::find()
+            .order_by_asc(group::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(Group::try_from)
+            .collect()
+    }
+
+    pub async fn get_group(&self, group_id: &str) -> anyhow::Result<Option<Group>> {
+        use entities::group;
+
+        group::Entity::find_by_id(group_id)
+            .one(&self.db)
+            .await?
+            .map(Group::try_from)
+            .transpose()
     }
 
     pub async fn change_user_password(&self, input: UserCredentialInput) -> anyhow::Result<u64> {
@@ -517,11 +648,11 @@ CREATE TABLE IF NOT EXISTS domains (
         Ok(())
     }
 
-    async fn current_directory_revision(&self) -> anyhow::Result<u64> {
+    pub async fn current_directory_revision(&self) -> anyhow::Result<u64> {
         i64_to_u64_revision(load_metadata(&self.db).await?.directory_revision)
     }
 
-    async fn current_credential_revision(&self) -> anyhow::Result<u64> {
+    pub async fn current_credential_revision(&self) -> anyhow::Result<u64> {
         i64_to_u64_revision(load_metadata(&self.db).await?.credential_revision)
     }
 

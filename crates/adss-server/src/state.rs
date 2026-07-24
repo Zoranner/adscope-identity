@@ -17,6 +17,7 @@ pub struct AppState {
     pub(crate) password_encryption: Arc<dyn PasswordEncryption>,
     pub(crate) password_hash: Arc<dyn PasswordHashProvider>,
     pub(crate) user_sessions: UserSessionIssuer,
+    pub(crate) management_token: String,
 }
 
 impl AppState {
@@ -27,6 +28,7 @@ impl AppState {
             password_encryption_from_env()?,
             password_hash_from_env()?,
             UserSessionIssuer::from_env()?,
+            management_token_from_env()?,
         ))
     }
 
@@ -40,6 +42,7 @@ impl AppState {
             Arc::new(BuiltInPasswordEncryption::new(password_encryption_key)),
             Arc::new(DeterministicPasswordHash),
             UserSessionIssuer::for_tests("test-user-session-key"),
+            "test-management-token".to_string(),
         )
     }
 
@@ -54,6 +57,7 @@ impl AppState {
             Arc::new(BuiltInPasswordEncryption::new(password_encryption_key)),
             Arc::new(DeterministicPasswordHash),
             UserSessionIssuer::for_tests("test-user-session-key"),
+            "test-management-token".to_string(),
         )
     }
 
@@ -63,6 +67,7 @@ impl AppState {
         password_encryption: Arc<dyn PasswordEncryption>,
         password_hash: Arc<dyn PasswordHashProvider>,
         user_sessions: UserSessionIssuer,
+        management_token: String,
     ) -> Self {
         Self {
             repository,
@@ -70,6 +75,16 @@ impl AppState {
             password_encryption,
             password_hash,
             user_sessions,
+            management_token,
         }
     }
+}
+
+fn management_token_from_env() -> anyhow::Result<String> {
+    let token = std::env::var("ADSS_MANAGEMENT_TOKEN")
+        .map_err(|_| anyhow::anyhow!("ADSS_MANAGEMENT_TOKEN is required"))?;
+    if token.trim().is_empty() {
+        anyhow::bail!("ADSS_MANAGEMENT_TOKEN must not be empty");
+    }
+    Ok(token)
 }

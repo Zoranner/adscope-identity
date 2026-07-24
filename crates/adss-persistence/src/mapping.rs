@@ -98,7 +98,7 @@ impl TryFrom<entities::group::Model> for Group {
         Ok(Self {
             id: model.id,
             name: model.name,
-            member_employee_ids: serde_json::from_str(&model.member_employee_ids_json)?,
+            member_employee_ids: serde_json::from_str(&model.member_employee_ids)?,
             changed_revision: i64_to_u64_revision(model.changed_revision)?,
         })
     }

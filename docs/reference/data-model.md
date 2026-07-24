@@ -60,7 +60,7 @@
 | --- | --- |
 | `id` | 中心稳定组标识。 |
 | `name` | 组名，映射为 AD 组 CN 和账号名。 |
-| `member_employee_ids_json` | 成员工号数组 JSON。 |
+| `member_employee_ids` | 成员工号数组 JSON。 |
 | `changed_revision` | 该组当前状态最后一次变化所在的目录 revision。 |
 
 组成员集合直接保存在组记录中。除非需要独立查询或独立一致性边界，否则不增加单独成员表。

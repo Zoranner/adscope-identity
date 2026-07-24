@@ -583,6 +583,47 @@ async fn repository_stores_only_current_credential() {
     );
 }
 
+#[tokio::test]
+async fn repository_schema_uses_member_employee_ids_column_name() {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let repository = Repository::from_connection(db.clone());
+    repository.initialize_schema().await.unwrap();
+
+    db.execute_unprepared(
+        "INSERT INTO groups (
+            id,
+            name,
+            member_employee_ids,
+            changed_revision
+        ) VALUES (
+            'schema-check',
+            'Schema Check',
+            '[\"1001\"]',
+            0
+        )",
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        db.execute_unprepared(
+            "INSERT INTO groups (
+                id,
+                name,
+                member_employee_ids_json,
+                changed_revision
+            ) VALUES (
+                'old-schema-check',
+                'Old Schema Check',
+                '[\"1001\"]',
+                0
+            )"
+        )
+        .await
+        .is_err()
+    );
+}
+
 async fn sqlite_repository() -> Repository {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();

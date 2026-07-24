@@ -16,6 +16,17 @@ pub struct DomainRecord {
     pub applied_credential_revision: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DomainPatch {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub mirror_root_dn: Option<String>,
+    pub quarantine_ou_dn: Option<String>,
+    pub upn_suffix: Option<String>,
+    pub employee_id_attribute: Option<String>,
+    pub managed_group_id_attribute: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserDirectoryPatch {
     pub employee_id: String,
@@ -26,6 +37,14 @@ pub struct UserDirectoryPatch {
     pub telephone: Option<String>,
     pub organizational_unit_id: String,
     pub status: UserStatus,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserListFilter {
+    pub employee_id: Option<String>,
+    pub username: Option<String>,
+    pub organizational_unit_id: Option<String>,
+    pub status: Option<UserStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

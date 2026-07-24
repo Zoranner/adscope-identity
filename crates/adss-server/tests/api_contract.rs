@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 const AGENT_KEY: &str = "test-agent-key";
+const MANAGEMENT_TOKEN: &str = "test-management-token";
 const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -69,6 +70,265 @@ async fn user_directory_update_returns_changed_user_with_ou_context() {
 }
 
 #[tokio::test]
+async fn admin_routes_require_management_token_not_user_token() {
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
+    let user_token = login_token(&app, "1001", "OldPass123!").await;
+
+    let missing = app
+        .clone()
+        .oneshot(method_json_request(
+            Method::POST,
+            "/api/admin/users",
+            &json!({
+                "employee_id": "1002",
+                "username": "lisi",
+                "display_name": "李四",
+                "email": null,
+                "mobile": null,
+                "telephone": null,
+                "organizational_unit_id": "ou-root",
+                "status": "active",
+                "initial_password": "InitialPass123!"
+            }),
+        ))
+        .await
+        .expect("admin response");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user_token_response = app
+        .clone()
+        .oneshot(auth_json_request(
+            Method::POST,
+            "/api/admin/users",
+            &user_token,
+            &json!({
+                "employee_id": "1002",
+                "username": "lisi",
+                "display_name": "李四",
+                "email": null,
+                "mobile": null,
+                "telephone": null,
+                "organizational_unit_id": "ou-root",
+                "status": "active",
+                "initial_password": "InitialPass123!"
+            }),
+        ))
+        .await
+        .expect("admin response");
+    assert_eq!(user_token_response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
+    let TestApp { app, repository } = test_app().await;
+
+    let created_domain = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/domains",
+        &json!({
+            "id": "domain-b",
+            "name": "Domain B",
+            "enabled": true,
+            "mirror_root_dn": "OU=Mirror,DC=b,DC=example,DC=com",
+            "quarantine_ou_dn": "OU=Quarantine,DC=b,DC=example,DC=com",
+            "upn_suffix": "b.example.com",
+            "employee_id_attribute": "employeeID",
+            "managed_group_id_attribute": "adminDescription",
+            "agent_key": "domain-b-agent-key"
+        }),
+    )
+    .await;
+    assert_eq!(created_domain["id"], "domain-b");
+    assert!(created_domain.get("agent_key").is_none());
+    assert!(created_domain.get("agent_key_hash").is_none());
+
+    let domains = admin_empty(&app, Method::GET, "/api/admin/domains").await;
+    assert_eq!(domains["domains"].as_array().unwrap().len(), 2);
+
+    let patched_domain = admin_json(
+        &app,
+        Method::PATCH,
+        "/api/admin/domains/domain-b",
+        &json!({
+            "name": "Domain B Updated",
+            "enabled": false,
+            "mirror_root_dn": "OU=Mirror2,DC=b,DC=example,DC=com",
+            "quarantine_ou_dn": "OU=Quarantine2,DC=b,DC=example,DC=com",
+            "upn_suffix": "b2.example.com",
+            "employee_id_attribute": "employeeNumber",
+            "managed_group_id_attribute": "extensionAttribute10",
+            "agent_key_hash": "must-not-be-accepted"
+        }),
+    )
+    .await;
+    assert_eq!(patched_domain["name"], "Domain B Updated");
+    let stored_domain = repository.get_domain("domain-b").await.unwrap().unwrap();
+    assert_eq!(
+        stored_domain.agent_key_hash,
+        agent_key_hash("domain-b-agent-key")
+    );
+
+    let rotated_key =
+        admin_empty(&app, Method::POST, "/api/admin/domains/domain-b/agent-key").await;
+    assert_eq!(rotated_key["domain_id"], "domain-b");
+    assert!(
+        rotated_key["agent_key"]
+            .as_str()
+            .unwrap()
+            .starts_with("adss-agent-key-")
+    );
+
+    let root_ou = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/ous",
+        &json!({
+            "id": "ou-root",
+            "name": "Root",
+            "parent_id": null
+        }),
+    )
+    .await;
+    assert_eq!(root_ou["directory_revision"], 1);
+    let child_ou = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/ous",
+        &json!({
+            "id": "ou-child",
+            "name": "Child",
+            "parent_id": "ou-root"
+        }),
+    )
+    .await;
+    assert_eq!(child_ou["directory_revision"], 2);
+    let renamed_ou = admin_json(
+        &app,
+        Method::PATCH,
+        "/api/admin/ous/ou-child",
+        &json!({
+            "name": "Child Updated",
+            "parent_id": "ou-root"
+        }),
+    )
+    .await;
+    assert_eq!(renamed_ou["organizational_unit"]["name"], "Child Updated");
+    let ou_tree = admin_empty(&app, Method::GET, "/api/admin/ous/tree").await;
+    assert_eq!(ou_tree["organizational_units"].as_array().unwrap().len(), 2);
+
+    let created_user = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "employee_id": "1001",
+            "username": "zhangsan",
+            "display_name": "张三",
+            "email": "zhangsan@example.com",
+            "mobile": "13800000000",
+            "telephone": "021-10000000",
+            "organizational_unit_id": "ou-child",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(created_user["directory_revision"], 4);
+    assert_eq!(created_user["credential_revision"], 1);
+    assert!(created_user.get("initial_password").is_none());
+
+    let users = admin_empty(
+        &app,
+        Method::GET,
+        "/api/admin/users?organizational_unit_id=ou-child&status=active",
+    )
+    .await;
+    assert_eq!(users["users"].as_array().unwrap().len(), 1);
+    assert_eq!(users["users"][0]["employee_id"], "1001");
+
+    let patched_user = admin_json(
+        &app,
+        Method::PATCH,
+        "/api/admin/users/1001",
+        &json!({
+            "username": "zhangsan",
+            "display_name": "张三 Updated",
+            "email": "zhangsan.updated@example.com",
+            "mobile": "13900000000",
+            "telephone": "021-20000000",
+            "organizational_unit_id": "ou-root",
+            "status": "active"
+        }),
+    )
+    .await;
+    assert_eq!(patched_user["user"]["display_name"], "张三 Updated");
+    admin_empty(&app, Method::POST, "/api/admin/users/1001/disable").await;
+    let disabled = admin_empty(&app, Method::GET, "/api/admin/users/1001").await;
+    assert_eq!(disabled["status"], "disabled");
+    admin_empty(&app, Method::POST, "/api/admin/users/1001/enable").await;
+    let reset = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users/1001/password-reset",
+        &json!({ "new_password": "ResetPass123!" }),
+    )
+    .await;
+    assert_eq!(reset["credential_revision"], 2);
+    login(&app, "1001", "ResetPass123!").await;
+
+    let created_group = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/groups",
+        &json!({
+            "id": "group-rd",
+            "name": "研发组"
+        }),
+    )
+    .await;
+    assert_eq!(
+        created_group["group"]["member_employee_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    let members = admin_json(
+        &app,
+        Method::PUT,
+        "/api/admin/groups/group-rd/members",
+        &json!({ "member_employee_ids": ["1001"] }),
+    )
+    .await;
+    assert_eq!(members["group"]["member_employee_ids"][0], "1001");
+    let renamed_group = admin_json(
+        &app,
+        Method::PATCH,
+        "/api/admin/groups/group-rd",
+        &json!({ "name": "研发组 Updated" }),
+    )
+    .await;
+    assert_eq!(renamed_group["group"]["name"], "研发组 Updated");
+    let group = admin_empty(&app, Method::GET, "/api/admin/groups/group-rd").await;
+    assert_eq!(group["member_employee_ids"][0], "1001");
+    let groups = admin_empty(&app, Method::GET, "/api/admin/groups").await;
+    assert_eq!(groups["groups"].as_array().unwrap().len(), 1);
+
+    let status = admin_empty(&app, Method::GET, "/api/admin/sync/domains").await;
+    let domain_a = status["domains"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|domain| domain["domain_id"] == "domain-a")
+        .unwrap();
+    assert_eq!(domain_a["applied_directory_revision"], 0);
+    assert_eq!(domain_a["applied_credential_revision"], 0);
+    assert_eq!(domain_a["directory_lag"], 10);
+    assert_eq!(domain_a["credential_lag"], 2);
+}
+
+#[tokio::test]
 async fn directory_confirm_advances_only_directory_channel() {
     let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
 
@@ -104,7 +364,7 @@ async fn login_and_password_change_returns_plaintext_credential_to_agent_sync() 
 
     login(&app, "1001", "OldPass123!").await;
     confirm(&app, SyncChannel::Directory, 1, true).await;
-    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    change_password_with_current_password(&app, "1001", "OldPass123!", "NewPass123!").await;
     let response = agent_sync(&app, 1, 0, false, false).await;
 
     assert!(response.directory.users.is_empty());
@@ -273,8 +533,10 @@ async fn password_change_rejects_same_length_wrong_current_password() {
 
     let response = app
         .clone()
-        .oneshot(json_request(
-            "/api/users/1001/password",
+        .oneshot(auth_json_request(
+            Method::POST,
+            "/api/me/password",
+            &login_token(&app, "1001", "OldPass123!").await,
             &PasswordChangeRequest {
                 current_password: "BadPass123!".to_string(),
                 new_password: "NewPass123!".to_string(),
@@ -352,7 +614,7 @@ async fn stored_agent_key_hash_is_not_plaintext_agent_key() {
 async fn password_change_stores_ciphertext_without_plaintext_password() {
     let TestApp { app, repository } = test_app_with_seeded_credential("OldPass123!").await;
 
-    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    change_password_with_current_password(&app, "1001", "OldPass123!", "NewPass123!").await;
     let credential = repository
         .get_credential_record("1001")
         .await
@@ -367,7 +629,7 @@ async fn password_change_stores_ciphertext_without_plaintext_password() {
 async fn built_in_password_encryption_uses_randomized_ciphertext() {
     let TestApp { app, repository } = test_app_with_seeded_credential("OldPass123!").await;
 
-    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    change_password_with_current_password(&app, "1001", "OldPass123!", "NewPass123!").await;
     let first_ciphertext = repository
         .get_credential_record("1001")
         .await
@@ -375,8 +637,8 @@ async fn built_in_password_encryption_uses_randomized_ciphertext() {
         .unwrap()
         .password_ciphertext;
 
-    change_password(&app, "1001", "NewPass123!", "OldPass123!").await;
-    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    change_password_with_current_password(&app, "1001", "NewPass123!", "OldPass123!").await;
+    change_password_with_current_password(&app, "1001", "OldPass123!", "NewPass123!").await;
     let second_ciphertext = repository
         .get_credential_record("1001")
         .await
@@ -414,8 +676,11 @@ async fn disabled_domain_with_correct_key_returns_forbidden() {
 async fn password_error_response_does_not_include_submitted_passwords() {
     let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
     let response = app
-        .oneshot(json_request(
-            "/api/users/1001/password",
+        .clone()
+        .oneshot(auth_json_request(
+            Method::POST,
+            "/api/me/password",
+            &login_token(&app, "1001", "OldPass123!").await,
             &PasswordChangeRequest {
                 current_password: "BadPass123!".to_string(),
                 new_password: "NewPass123!".to_string(),
@@ -460,6 +725,7 @@ async fn app_state_from_env_accepts_password_encryption_key() {
         std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
         std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
+        std::env::set_var("ADSS_MANAGEMENT_TOKEN", MANAGEMENT_TOKEN);
     }
 
     AppState::from_env(repository).unwrap();
@@ -515,6 +781,31 @@ async fn app_state_from_env_rejects_missing_user_session_key() {
 }
 
 #[tokio::test]
+async fn app_state_from_env_rejects_missing_management_token() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    unsafe {
+        std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+        std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
+        std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("missing management token must not configure AppState"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("ADSS_MANAGEMENT_TOKEN is required")
+    );
+
+    clear_server_env();
+}
+
+#[tokio::test]
 async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_change() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
@@ -535,6 +826,7 @@ async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_c
             std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
             std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
             std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
+            std::env::set_var("ADSS_MANAGEMENT_TOKEN", MANAGEMENT_TOKEN);
         }
         let state = AppState::from_env(repository.clone()).unwrap();
         clear_server_env();
@@ -543,7 +835,7 @@ async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_c
     let app = build_router(state);
 
     login(&app, "1001", "OldPass123!").await;
-    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    change_password_with_current_password(&app, "1001", "OldPass123!", "NewPass123!").await;
     login(&app, "1001", "NewPass123!").await;
 
     let credential = repository
@@ -608,9 +900,9 @@ async fn patch_user(app: &axum::Router, employee_id: &str, email: &str) {
     });
     let response = app
         .clone()
-        .oneshot(method_json_request(
+        .oneshot(admin_json_request(
             Method::PATCH,
-            &format!("/api/users/{employee_id}"),
+            &format!("/api/admin/users/{employee_id}"),
             &request,
         ))
         .await
@@ -654,16 +946,65 @@ async fn login_token(app: &axum::Router, employee_id: &str, password: &str) -> S
     payload["access_token"].as_str().unwrap().to_string()
 }
 
-async fn change_password(
+async fn admin_json(
+    app: &axum::Router,
+    method: Method,
+    uri: &str,
+    value: &serde_json::Value,
+) -> serde_json::Value {
+    let response = app
+        .clone()
+        .oneshot(admin_json_request(method, uri, value))
+        .await
+        .expect("admin response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+async fn admin_empty(app: &axum::Router, method: Method, uri: &str) -> serde_json::Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {MANAGEMENT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("admin response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn admin_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {MANAGEMENT_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(value).unwrap()))
+        .unwrap()
+}
+
+async fn change_password_with_current_password(
     app: &axum::Router,
     employee_id: &str,
     current_password: &str,
     new_password: &str,
 ) {
+    let token = login_token(app, employee_id, current_password).await;
     let response = app
         .clone()
-        .oneshot(json_request(
-            &format!("/api/users/{employee_id}/password"),
+        .oneshot(auth_json_request(
+            Method::POST,
+            "/api/me/password",
+            &token,
             &PasswordChangeRequest {
                 current_password: current_password.to_string(),
                 new_password: new_password.to_string(),
@@ -869,6 +1210,7 @@ fn clear_server_env() {
         std::env::remove_var("ADSS_PASSWORD_HASH_PROVIDER");
         std::env::remove_var("ADSS_USER_SESSION_KEY");
         std::env::remove_var("ADSS_USER_SESSION_TTL_SECONDS");
+        std::env::remove_var("ADSS_MANAGEMENT_TOKEN");
     }
 }
 

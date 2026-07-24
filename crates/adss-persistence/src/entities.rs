@@ -68,7 +68,7 @@ pub(crate) mod group {
         #[sea_orm(primary_key, auto_increment = false)]
         pub id: String,
         pub name: String,
-        pub member_employee_ids_json: String,
+        pub member_employee_ids: String,
         pub changed_revision: i64,
     }
 

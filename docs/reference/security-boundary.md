@@ -42,7 +42,7 @@ Agent key 轮换必须记录操作人、目标域、生成时间和失效规则�
 
 `/api/me/password` 必须根据 token 中的 `employee_id` 修改当前用户自己的密码。请求必须提供当前密码，服务端用 `password_verifier` 校验后才写入新的 verifier 和 ciphertext。
 
-`ADSS_USER_SESSION_KEY` 是生产密钥材料，必须通过受限 `.env`、系统环境变量、Secret Manager、Windows DPAPI 或等价机制注入，不得进入源码、日志或配置仓库。
+`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN` 是生产密钥材料，必须通过受限 `.env`、系统环境变量、Secret Manager、Windows DPAPI 或等价机制注入，不得进入源码、日志或配置仓库。
 
 ## 管理入口
 
