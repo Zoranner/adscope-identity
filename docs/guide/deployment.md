@@ -24,6 +24,17 @@ cp connector/.env.example <connector-runtime-dir>/.env
 
 `ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
+管理 Web 使用 Nuxt 静态构建，由主服务统一托管。构建命令在 `center/web` 下执行：
+
+```text
+bun install
+bun run build
+```
+
+构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `ADSS_WEB_ROOT` 指定静态文件目录。
+
+主服务会优先匹配 `/api/*`，非 API 请求由 Web 静态文件处理。未知 `/api/*` 返回 API 404，不会回退到前端页面。
+
 ## 域配置初始化
 
 域配置变更属于受控运维动作，应通过受保护管理入口维护。测试或部署初始化可以通过受控初始化脚本预置域记录，并写入 Connector key 摘要。
@@ -64,6 +75,7 @@ Connector 在运行目录下自动维护 `adss-connector-state.json`。文件无
 - 生产环境配置本机高熵密码加密密钥。
 - `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、Connector key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
+- 管理 Web 静态文件由主服务托管，不单独开放 Nuxt 开发服务。
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
 - 受管用户禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。
 - AD 沙箱域验证 OU、用户、组、成员、禁用、隔离移动和 Reset Password 全链路，并覆盖实际采用的 `ldap://` 或 `ldaps://` 连接方式。

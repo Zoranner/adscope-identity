@@ -10,6 +10,7 @@
 - 同步 OU、用户、用户状态、组和组成员关系。
 - 支持普通用户登录、查看本人资料、维护联系方式和修改本人密码。
 - 支持管理员维护域、OU、用户、组、密码重置和同步状态。
+- 中心端内置管理 Web，静态文件由 `adss-center` 统一托管。
 - Connector 按域主动拉取当前期望状态，并以 revision 确认执行进度。
 - 目录和凭据分通道同步，互不阻塞。
 
@@ -19,7 +20,7 @@
 - [运行部署](docs/guide/deployment.md)
 - [安全要求](docs/guide/security.md)
 
-主服务和 Connector 是两个独立部署单元，各自在自己的运行目录读取 `.env`。示例文件分别位于 [center/.env.example](center/.env.example) 和 [connector/.env.example](connector/.env.example)。
+主服务和 Connector 是两个独立部署单元，各自在自己的运行目录读取 `.env`。示例文件分别位于 [center/.env.example](center/.env.example) 和 [connector/.env.example](connector/.env.example)。管理 Web 位于 [center/web](center/web)，构建后的静态文件由主服务托管。
 
 真实域控连接支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；密码下发和管理面仍必须通过主服务 TLS。
 

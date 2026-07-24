@@ -9,7 +9,7 @@ use adss_store::{CredentialCiphertextBatch, UserContactPatch, UserCredentialInpu
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderMap, header},
+    http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
     routing::{get, patch, post},
 };
@@ -20,18 +20,37 @@ use crate::{
     error::ApiError,
     password::PasswordEncryption,
     state::AppState,
+    web,
 };
 
 pub fn build_router(state: AppState) -> Router {
+    build_router_with_web_root(state, web::default_web_root())
+}
+
+pub fn build_router_with_web_root(
+    state: AppState,
+    web_root: impl Into<std::path::PathBuf>,
+) -> Router {
     Router::new()
-        .route("/api/auth/login", post(login))
-        .route("/api/me", get(get_me))
-        .route("/api/me/contact", patch(update_me_contact))
-        .route("/api/me/password", post(change_me_password))
-        .merge(admin::routes())
-        .route("/api/connector/sync", post(connector_sync))
-        .route("/api/connector/confirm", post(connector_confirm))
+        .nest("/api", api_routes())
+        .fallback_service(web::static_service(web_root))
         .with_state(state)
+}
+
+fn api_routes() -> Router<AppState> {
+    Router::new()
+        .route("/auth/login", post(login))
+        .route("/me", get(get_me))
+        .route("/me/contact", patch(update_me_contact))
+        .route("/me/password", post(change_me_password))
+        .merge(admin::routes())
+        .route("/connector/sync", post(connector_sync))
+        .route("/connector/confirm", post(connector_confirm))
+        .fallback(api_not_found)
+}
+
+async fn api_not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
 }
 
 async fn login(

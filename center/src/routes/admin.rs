@@ -18,32 +18,32 @@ use crate::{
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/api/admin/domains", get(list_domains).post(create_domain))
-        .route("/api/admin/domains/{domain_id}", patch(update_domain))
-        .route("/api/admin/ous/tree", get(list_organizational_units))
-        .route("/api/admin/ous", post(create_organizational_unit))
-        .route("/api/admin/ous/{ou_id}", patch(update_organizational_unit))
-        .route("/api/admin/users", get(list_users).post(create_user))
+        .route("/admin/domains", get(list_domains).post(create_domain))
+        .route("/admin/domains/{domain_id}", patch(update_domain))
+        .route("/admin/ous/tree", get(list_organizational_units))
+        .route("/admin/ous", post(create_organizational_unit))
+        .route("/admin/ous/{ou_id}", patch(update_organizational_unit))
+        .route("/admin/users", get(list_users).post(create_user))
         .route(
-            "/api/admin/users/{employee_id}",
+            "/admin/users/{employee_id}",
             get(get_user).patch(update_user),
         )
-        .route("/api/admin/users/{employee_id}/disable", post(disable_user))
-        .route("/api/admin/users/{employee_id}/enable", post(enable_user))
+        .route("/admin/users/{employee_id}/disable", post(disable_user))
+        .route("/admin/users/{employee_id}/enable", post(enable_user))
         .route(
-            "/api/admin/users/{employee_id}/password-reset",
+            "/admin/users/{employee_id}/password-reset",
             post(reset_user_password),
         )
-        .route("/api/admin/groups", get(list_groups).post(create_group))
+        .route("/admin/groups", get(list_groups).post(create_group))
         .route(
-            "/api/admin/groups/{group_id}",
+            "/admin/groups/{group_id}",
             get(get_group).patch(update_group),
         )
         .route(
-            "/api/admin/groups/{group_id}/members",
+            "/admin/groups/{group_id}/members",
             put(replace_group_members),
         )
-        .route("/api/admin/sync/domains", get(list_sync_domains))
+        .route("/admin/sync/domains", get(list_sync_domains))
 }
 
 async fn list_domains(

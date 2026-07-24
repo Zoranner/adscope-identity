@@ -1,5 +1,9 @@
 target/
 crates/*/Cargo.lock
+node_modules/
+.nuxt/
+.output/
+center/web/dist/
 /.idea/
 /.vscode/
 *.log

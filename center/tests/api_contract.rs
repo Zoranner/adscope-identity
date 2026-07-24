@@ -1,4 +1,4 @@
-use adss_center::{AppState, build_router};
+use adss_center::{AppState, build_router, build_router_with_web_root};
 use adss_protocol::{
     ConnectorConfirmRequest, ConnectorSyncRequest, ConnectorSyncResponse, PasswordChangeRequest,
     SyncChannel, UserLoginRequest, UserStatus,
@@ -135,6 +135,62 @@ async fn admin_routes_do_not_expose_connector_key_rotation() {
         .expect("connector key response");
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn web_static_routes_do_not_capture_unknown_api_paths() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository.seed_domain(domain(true)).await.unwrap();
+    let web_root = test_web_root();
+    std::fs::create_dir_all(web_root.join("_nuxt")).unwrap();
+    std::fs::write(web_root.join("index.html"), "<main>ADSS Web Shell</main>").unwrap();
+    std::fs::write(web_root.join("_nuxt").join("app.js"), "console.log('adss')").unwrap();
+    let app = build_router_with_web_root(
+        AppState::new_for_tests(repository, TEST_ENCRYPTION_KEY),
+        web_root.clone(),
+    );
+
+    let index = app
+        .clone()
+        .oneshot(empty_request(Method::GET, "/"))
+        .await
+        .expect("index response");
+    assert_eq!(index.status(), StatusCode::OK);
+    assert_body_contains(index, "ADSS Web Shell").await;
+
+    let frontend_route = app
+        .clone()
+        .oneshot(empty_request(Method::GET, "/admin/domains"))
+        .await
+        .expect("frontend route response");
+    assert_eq!(frontend_route.status(), StatusCode::OK);
+    assert_body_contains(frontend_route, "ADSS Web Shell").await;
+
+    let asset = app
+        .clone()
+        .oneshot(empty_request(Method::GET, "/_nuxt/app.js"))
+        .await
+        .expect("asset response");
+    assert_eq!(asset.status(), StatusCode::OK);
+    assert_body_contains(asset, "console.log('adss')").await;
+
+    let api_get = app
+        .clone()
+        .oneshot(empty_request(Method::GET, "/api/not-found"))
+        .await
+        .expect("api response");
+    assert_eq!(api_get.status(), StatusCode::NOT_FOUND);
+    assert_body_not_contains(api_get, "ADSS Web Shell").await;
+
+    let api_post = app
+        .oneshot(empty_request(Method::POST, "/api/not-found"))
+        .await
+        .expect("api response");
+    assert_eq!(api_post.status(), StatusCode::NOT_FOUND);
+    assert_body_not_contains(api_post, "ADSS Web Shell").await;
+
+    std::fs::remove_dir_all(web_root).unwrap();
 }
 
 #[tokio::test]
@@ -1134,6 +1190,14 @@ fn auth_empty_request(method: Method, uri: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn empty_request(method: Method, uri: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap()
+}
+
 fn auth_json_request<T: serde::Serialize>(
     method: Method,
     uri: &str,
@@ -1156,6 +1220,32 @@ fn method_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()
+}
+
+async fn assert_body_contains(response: Response<Body>, expected: &str) {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        body.contains(expected),
+        "body did not contain {expected}: {body}"
+    );
+}
+
+async fn assert_body_not_contains(response: Response<Body>, unexpected: &str) {
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        !body.contains(unexpected),
+        "body contained {unexpected}: {body}"
+    );
+}
+
+fn test_web_root() -> std::path::PathBuf {
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("adss-web-test-{suffix}"))
 }
 
 async fn seed_user(repository: &Repository, employee_id: &str, email: &str) -> anyhow::Result<u64> {
