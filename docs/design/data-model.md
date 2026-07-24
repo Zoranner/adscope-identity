@@ -91,6 +91,7 @@
 | `quarantine_ou_dn` | 禁用用户隔离 OU DN。 |
 | `upn_suffix` | 该域 UPN 后缀。 |
 | `employee_id_attribute` | AD 中保存工号的属性名。 |
+| `managed_group_id_attribute` | AD 受管组对象中保存中心组标识的属性名，默认 `adminDescription`。 |
 | `agent_key_hash` | Agent key 摘要，不保存明文 key。 |
 | `applied_directory_revision` | 该域已确认应用的目录 revision。 |
 | `applied_credential_revision` | 该域已确认应用的凭据 revision。 |

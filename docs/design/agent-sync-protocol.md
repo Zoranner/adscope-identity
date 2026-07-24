@@ -56,7 +56,8 @@ Agent 请求使用 `x-adss-agent-key` 认证，只能访问请求 `domain_id` �
     "mirror_root_dn": "OU=Mirror,DC=a,DC=example,DC=com",
     "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
     "upn_suffix": "a.example.com",
-    "employee_id_attribute": "employeeID"
+    "employee_id_attribute": "employeeID",
+    "managed_group_id_attribute": "adminDescription"
   }
 }
 ```
@@ -79,6 +80,14 @@ Agent 将目录批次转为固定执行顺序：
 - disabled 用户禁用并移动到隔离 OU。
 
 目录批次必须整体执行成功后才能确认。OU 环、重复 OU ID、缺失父 OU、用户目标 OU 不存在等非法批次应失败确认，不推进本地 revision。
+
+## AD 字段边界
+
+Agent 按中心下发的域配置写入 AD，不在本地 `.env` 配置字段映射。
+
+用户工号写入 `employee_id_attribute` 指定的属性，默认 `employeeID`。受管安全组写入 `managed_group_id_attribute` 指定的属性，默认 `adminDescription`，属性值格式为 `adss:group:{group.id}`。Agent 通过该属性在受管范围内查找已有组对象。
+
+标准 AD 字段保持固定映射：用户账号名写入 `sAMAccountName` 和 UPN 本地部分，显示名写入 `displayName`，邮箱写入 `mail`，手机号写入 `mobile`，办公电话写入 `telephoneNumber`，密码写入 `unicodePwd`。组名写入 `cn` 和 `sAMAccountName`，组成员写入 `member`。
 
 ## 凭据执行
 

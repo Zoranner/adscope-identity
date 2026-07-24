@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS domains (
     quarantine_ou_dn TEXT NOT NULL,
     upn_suffix TEXT NOT NULL,
     employee_id_attribute TEXT NOT NULL,
+    managed_group_id_attribute TEXT NOT NULL,
     agent_key_hash TEXT NOT NULL,
     applied_directory_revision BIGINT NOT NULL CHECK (applied_directory_revision >= 0),
     applied_credential_revision BIGINT NOT NULL CHECK (applied_credential_revision >= 0)

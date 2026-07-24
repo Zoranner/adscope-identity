@@ -46,6 +46,7 @@ pub struct DomainDirectoryConfig {
     pub quarantine_ou_dn: String,
     pub upn_suffix: String,
     pub employee_id_attribute: String,
+    pub managed_group_id_attribute: String,
 }
 
 impl DomainDirectoryConfig {
@@ -56,6 +57,7 @@ impl DomainDirectoryConfig {
             quarantine_ou_dn: "OU=Quarantine,DC=example,DC=com".to_string(),
             upn_suffix: "example.com".to_string(),
             employee_id_attribute: "employeeID".to_string(),
+            managed_group_id_attribute: "adminDescription".to_string(),
         }
     }
 }

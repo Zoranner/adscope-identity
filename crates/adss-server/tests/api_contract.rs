@@ -750,6 +750,7 @@ fn domain(enabled: bool) -> DomainRecord {
         quarantine_ou_dn: "OU=Quarantine,DC=a,DC=example,DC=com".to_string(),
         upn_suffix: "a.example.com".to_string(),
         employee_id_attribute: "employeeID".to_string(),
+        managed_group_id_attribute: "adminDescription".to_string(),
         agent_key_hash: agent_key_hash(AGENT_KEY),
         applied_directory_revision: 0,
         applied_credential_revision: 0,

@@ -238,6 +238,7 @@ async fn agent_sync(
                 quarantine_ou_dn: domain.quarantine_ou_dn,
                 upn_suffix: domain.upn_suffix,
                 employee_id_attribute: domain.employee_id_attribute,
+                managed_group_id_attribute: domain.managed_group_id_attribute,
             },
         }),
     ))

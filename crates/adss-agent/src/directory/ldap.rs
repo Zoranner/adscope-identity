@@ -137,12 +137,16 @@ impl LdapDirectoryClient {
         group: &Group,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
+        validate_ldap_attribute_name(&context.domain.managed_group_id_attribute)?;
         if let Some(dn) = find_group_dn(ldap, context, &group.id).await? {
             ldap.modify(
                 &dn,
                 vec![
                     replace_string("sAMAccountName", &group.name),
-                    replace_string("description", &group_marker(&group.id)),
+                    replace_string(
+                        &context.domain.managed_group_id_attribute,
+                        &managed_group_marker(&group.id),
+                    ),
                 ],
             )
             .await?
@@ -162,7 +166,10 @@ impl LdapDirectoryClient {
                 ldap_attr("cn", &[&group.name]),
                 ldap_attr("sAMAccountName", &[&group.name]),
                 ldap_attr("groupType", &["-2147483646"]),
-                ldap_attr("description", &[&group_marker(&group.id)]),
+                ldap_attr(
+                    &context.domain.managed_group_id_attribute,
+                    &[&managed_group_marker(&group.id)],
+                ),
             ],
         )
         .await?
@@ -345,9 +352,11 @@ async fn find_group_dn(
     context: &DirectoryExecutionContext,
     group_id: &str,
 ) -> anyhow::Result<Option<String>> {
+    validate_ldap_attribute_name(&context.domain.managed_group_id_attribute)?;
     let filter = format!(
-        "(&(objectClass=group)(description={}))",
-        escape_ldap_filter_value(&group_marker(group_id))
+        "(&(objectClass=group)({}={}))",
+        context.domain.managed_group_id_attribute,
+        escape_ldap_filter_value(&managed_group_marker(group_id))
     );
     search_managed_dn(ldap, context, &filter).await
 }
@@ -395,8 +404,8 @@ fn managed_search_bases(context: &DirectoryExecutionContext) -> Vec<String> {
     }
 }
 
-fn group_marker(group_id: &str) -> String {
-    format!("adss:group_id:{group_id}")
+fn managed_group_marker(group_id: &str) -> String {
+    format!("adss:group:{group_id}")
 }
 
 fn user_attrs(

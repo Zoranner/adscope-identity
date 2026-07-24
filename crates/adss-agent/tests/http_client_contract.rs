@@ -25,7 +25,7 @@ fn http_control_plane_client_builds_endpoints_from_trailing_slash_base_url() {
 #[tokio::test]
 async fn http_control_plane_client_posts_sync_request_with_agent_key() {
     let server = OneShotHttpServer::start(
-        r#"{"directory":{"server_revision":0,"batch_revision":0,"organizational_units":[],"users":[],"groups":[],"has_more":false},"credentials":{"server_revision":0,"batch_revision":0,"credentials":[],"has_more":false},"directory_config":{"domain_id":"domain-a","mirror_root_dn":"OU=Mirror,DC=example,DC=com","quarantine_ou_dn":"OU=Quarantine,DC=example,DC=com","upn_suffix":"example.com","employee_id_attribute":"employeeID"}}"#,
+        r#"{"directory":{"server_revision":0,"batch_revision":0,"organizational_units":[],"users":[],"groups":[],"has_more":false},"credentials":{"server_revision":0,"batch_revision":0,"credentials":[],"has_more":false},"directory_config":{"domain_id":"domain-a","mirror_root_dn":"OU=Mirror,DC=example,DC=com","quarantine_ou_dn":"OU=Quarantine,DC=example,DC=com","upn_suffix":"example.com","employee_id_attribute":"employeeID","managed_group_id_attribute":"adminDescription"}}"#,
     )
     .await;
     let client = HttpControlPlaneClient::new(server.base_url(), "agent-a-key");

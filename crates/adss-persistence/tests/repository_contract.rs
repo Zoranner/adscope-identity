@@ -516,6 +516,7 @@ async fn repository_schema_rejects_negative_revisions() {
                 quarantine_ou_dn,
                 upn_suffix,
                 employee_id_attribute,
+                managed_group_id_attribute,
                 agent_key_hash,
                 applied_directory_revision,
                 applied_credential_revision
@@ -527,6 +528,7 @@ async fn repository_schema_rejects_negative_revisions() {
                 'OU=Quarantine,DC=bad,DC=example,DC=com',
                 'bad.example.com',
                 'employeeID',
+                'adminDescription',
                 'hash:agent-key',
                 -1,
                 0
@@ -649,6 +651,7 @@ fn domain() -> DomainRecord {
         quarantine_ou_dn: "OU=Quarantine,DC=a,DC=example,DC=com".to_string(),
         upn_suffix: "a.example.com".to_string(),
         employee_id_attribute: "employeeID".to_string(),
+        managed_group_id_attribute: "adminDescription".to_string(),
         agent_key_hash: "hash:agent-key".to_string(),
         applied_directory_revision: 0,
         applied_credential_revision: 0,

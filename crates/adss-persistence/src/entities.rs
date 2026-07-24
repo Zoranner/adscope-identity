@@ -111,6 +111,7 @@ pub(crate) mod domain {
         pub quarantine_ou_dn: String,
         pub upn_suffix: String,
         pub employee_id_attribute: String,
+        pub managed_group_id_attribute: String,
         pub agent_key_hash: String,
         pub applied_directory_revision: i64,
         pub applied_credential_revision: i64,

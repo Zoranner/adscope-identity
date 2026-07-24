@@ -180,11 +180,12 @@ Authorization: Bearer <management_token>
   "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
   "upn_suffix": "a.example.com",
   "employee_id_attribute": "employeeID",
+  "managed_group_id_attribute": "adminDescription",
   "agent_key": "generated-or-imported-agent-key"
 }
 ```
 
-`PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀和工号属性。`agent_key_hash` 不能通过普通 PATCH 更新。
+`PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性。`agent_key_hash` 不能通过普通 PATCH 更新。
 
 `POST /api/admin/domains/{domain_id}/agent-key` 替换 Agent key，并只在本次响应返回明文 key：
 
@@ -351,7 +352,8 @@ x-adss-agent-key: <agent-key>
     "mirror_root_dn": "OU=Mirror,DC=a,DC=example,DC=com",
     "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
     "upn_suffix": "a.example.com",
-    "employee_id_attribute": "employeeID"
+    "employee_id_attribute": "employeeID",
+    "managed_group_id_attribute": "adminDescription"
   }
 }
 ```
