@@ -8,7 +8,6 @@ use axum::{
     http::{HeaderMap, header},
     routing::{get, patch, post, put},
 };
-use chacha20poly1305::aead::{OsRng, rand_core::RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -21,10 +20,6 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/admin/domains", get(list_domains).post(create_domain))
         .route("/api/admin/domains/{domain_id}", patch(update_domain))
-        .route(
-            "/api/admin/domains/{domain_id}/agent-key",
-            post(rotate_domain_agent_key),
-        )
         .route("/api/admin/ous/tree", get(list_organizational_units))
         .route("/api/admin/ous", post(create_organizational_unit))
         .route("/api/admin/ous/{ou_id}", patch(update_organizational_unit))
@@ -120,25 +115,6 @@ async fn update_domain(
         .map_err(|_| ApiError::Persistence)?;
 
     Ok(Json(DomainResponse::from(domain)))
-}
-
-async fn rotate_domain_agent_key(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-    Path(domain_id): Path<String>,
-) -> Result<Json<AgentKeyRotationResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
-    let agent_key = generate_agent_key();
-    state
-        .repository
-        .rotate_domain_agent_key_hash(&domain_id, agent_key_hash(&agent_key))
-        .await
-        .map_err(|_| ApiError::Persistence)?;
-
-    Ok(Json(AgentKeyRotationResponse {
-        domain_id,
-        agent_key,
-    }))
 }
 
 async fn list_organizational_units(
@@ -595,12 +571,6 @@ fn authorize_management(headers: &HeaderMap, state: &AppState) -> Result<(), Api
     }
 }
 
-fn generate_agent_key() -> String {
-    let mut bytes = [0_u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    format!("adss-agent-key-{}", hex::encode(bytes))
-}
-
 #[derive(Debug, Serialize)]
 struct DomainResponse {
     id: String,
@@ -659,12 +629,6 @@ struct DomainPatchRequest {
     upn_suffix: String,
     employee_id_attribute: String,
     managed_group_id_attribute: String,
-}
-
-#[derive(Debug, Serialize)]
-struct AgentKeyRotationResponse {
-    domain_id: String,
-    agent_key: String,
 }
 
 #[derive(Debug, Deserialize)]

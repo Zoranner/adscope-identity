@@ -11,7 +11,7 @@ API 按调用身份分组：
 
 中心数据库是 API 写入的唯一事实源。普通用户、管理员和 Agent 都不直接写 AD；AD 写入只由域内 Agent 通过同步协议执行。
 
-管理入口必须和普通用户自助入口区分身份边界。本文档不定义管理员账号模型、角色模型或操作记录平台；这些只有在有明确组织权限和合规要求时才单独建模。
+管理入口必须和普通用户自助入口区分身份边界。系统使用受保护管理凭证区分管理调用，不引入管理员账号、角色或审批流程。
 
 ## 通用约定
 
@@ -26,7 +26,7 @@ API 按调用身份分组：
 | `409 Conflict` | 请求与唯一约束、revision 或状态规则冲突。 |
 | `500 Internal Server Error` | 服务端持久化、密码加密或外部依赖错误。 |
 
-密码明文、密码密文和 Agent key 明文不得出现在普通查询响应、错误响应或日志中。Agent key 生成或替换时只在本次响应返回明文。
+密码明文、密码密文和 Agent key 明文不得出现在普通查询响应、错误响应或日志中。
 
 ## 普通用户接口
 
@@ -187,15 +187,6 @@ Authorization: Bearer <management_token>
 
 `PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性。`agent_key_hash` 不能通过普通 PATCH 更新。
 
-`POST /api/admin/domains/{domain_id}/agent-key` 替换 Agent key，并只在本次响应返回明文 key：
-
-```json
-{
-  "domain_id": "domain-a",
-  "agent_key": "new-agent-key"
-}
-```
-
 ### OU 管理
 
 `GET /api/admin/ous/tree` 查询中心 OU 树。
@@ -248,7 +239,7 @@ Authorization: Bearer <management_token>
 }
 ```
 
-管理员重置密码不要求用户当前密码，必须保留可追溯记录。
+管理员重置密码不要求用户当前密码，调用方必须通过受保护管理入口访问。
 
 ### 组管理
 

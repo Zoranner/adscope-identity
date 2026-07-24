@@ -179,17 +179,6 @@ CREATE TABLE IF NOT EXISTS domains (
         Ok(domain)
     }
 
-    pub async fn rotate_domain_agent_key_hash(
-        &self,
-        domain_id: &str,
-        agent_key_hash: String,
-    ) -> anyhow::Result<DomainRecord> {
-        let mut domain = self.require_domain(domain_id).await?;
-        domain.agent_key_hash = agent_key_hash;
-        self.upsert_domain(domain.clone()).await?;
-        Ok(domain)
-    }
-
     pub async fn seed_domain(&self, domain: DomainRecord) -> anyhow::Result<()> {
         self.upsert_domain(domain).await.map(|_| ())
     }

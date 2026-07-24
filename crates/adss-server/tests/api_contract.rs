@@ -119,6 +119,25 @@ async fn admin_routes_require_management_token_not_user_token() {
 }
 
 #[tokio::test]
+async fn admin_routes_do_not_expose_agent_key_rotation() {
+    let TestApp { app, .. } = test_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/domains/domain-a/agent-key")
+                .header("authorization", format!("Bearer {MANAGEMENT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("agent key response");
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
     let TestApp { app, repository } = test_app().await;
 
@@ -167,16 +186,6 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
     assert_eq!(
         stored_domain.agent_key_hash,
         agent_key_hash("domain-b-agent-key")
-    );
-
-    let rotated_key =
-        admin_empty(&app, Method::POST, "/api/admin/domains/domain-b/agent-key").await;
-    assert_eq!(rotated_key["domain_id"], "domain-b");
-    assert!(
-        rotated_key["agent_key"]
-            .as_str()
-            .unwrap()
-            .starts_with("adss-agent-key-")
     );
 
     let root_ou = admin_json(
