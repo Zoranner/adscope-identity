@@ -70,7 +70,7 @@ AD 侧必须写入对应工号属性。默认属性为 `employeeID`；如果组�
 用户密码的权威事实保存在中心服务。中心服务保存两个材料：
 
 - `password_verifier`：用于中心登录和改密校验，不能还原明文。
-- `password_ciphertext`：用于向 Agent 下发当前应设置的密码，由 envelope provider 保护。
+- `password_ciphertext`：用于向 Agent 下发当前应设置的密码，由密码加密方式保护。
 
 Agent 从中心服务获取密码材料后，通过域控连接执行 Reset Password。域控连接支持 `ldap://` 或 `ldaps://`，Agent 不把明文密码写入本地 state、日志或配置。
 

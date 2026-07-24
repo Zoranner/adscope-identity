@@ -76,7 +76,7 @@
 | `password_verifier` | 中心登录和改密校验使用的 verifier。 |
 | `changed_revision` | 该用户当前凭据最后一次变化所在的凭据 revision。 |
 
-`password_verifier` 不能还原密码。`password_ciphertext` 只能由主服务通过 password envelope provider 解封，并只在响应 Agent 凭据同步时短暂进入内存。
+`password_verifier` 不能还原密码。`password_ciphertext` 只能由主服务通过密码加密方式解封，并只在响应 Agent 凭据同步时短暂进入内存。
 
 ### `domains`
 

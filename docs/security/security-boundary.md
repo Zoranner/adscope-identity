@@ -10,9 +10,11 @@
 
 `user_credentials.password_verifier` 用于中心登录和改密前校验。生产配置使用 Argon2id PHC 字符串；verifier 不能还原密码，也不下发给 Agent。
 
-`user_credentials.password_ciphertext` 用于保存中心当前密码材料。主服务通过 password envelope provider 处理密文，只有在响应 `/api/agent/sync` 时才在内存中解封，并组装 `CredentialEntry.plaintext_password`。
+`user_credentials.password_ciphertext` 用于保存中心当前密码材料。主服务通过密码加密方式处理密文，只有在响应 `/api/agent/sync` 时才在内存中解封，并组装 `CredentialEntry.plaintext_password`。
 
-`local` envelope provider 只允许本地开发和自动化测试。生产必须使用 `command` provider 对接 KMS/HSM 或等价密钥服务，由外部密钥系统承担密钥托管、轮换和访问记录能力。
+没有外部密钥系统时，生产环境使用 `local` 密码加密方式，并通过本机受保护配置提供高熵 `ADSS_PASSWORD_ENVELOPE_LOCAL_KEY`。该密钥必须和数据库备份分离保存，不能进入源码、日志或配置仓库；轮换密钥时需要先用旧密钥解封现有 `password_ciphertext`，再用新密钥重新加密。
+
+`command` 密码加密方式是可选扩展，只在已经具备 KMS/HSM 或等价外部密钥适配器时使用。
 
 ## 凭据传输
 
@@ -42,7 +44,7 @@ Agent key 轮换必须记录操作人、目标域、生成时间和失效规则�
 
 `/api/me/password` 必须根据 token 中的 `employee_id` 修改当前用户自己的密码。请求必须提供当前密码，服务端用 `password_verifier` 校验后才写入新的 verifier 和 ciphertext。
 
-`ADSS_USER_SESSION_KEY` 是生产密钥材料，必须由 Secret Manager、KMS 派生密钥或等价机制注入，不得进入源码、日志或配置仓库。
+`ADSS_USER_SESSION_KEY` 是生产密钥材料，必须通过受限 `.env`、系统环境变量、Secret Manager、Windows DPAPI 或等价机制注入，不得进入源码、日志或配置仓库。
 
 ## 管理入口
 

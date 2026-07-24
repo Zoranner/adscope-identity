@@ -3,6 +3,10 @@ use std::{
     process::{Command, Stdio},
 };
 
+use chacha20poly1305::{
+    XChaCha20Poly1305,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+};
 use sha2::{Digest, Sha256};
 
 use super::PasswordEnvelope;
@@ -26,9 +30,15 @@ impl PasswordEnvelope for LocalPasswordEnvelope {
             anyhow::bail!("local password envelope key must not be empty");
         }
 
+        let cipher = XChaCha20Poly1305::new_from_slice(&local_envelope_key(&self.key))?;
+        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+        let ciphertext = cipher
+            .encrypt(&nonce, plaintext.as_bytes())
+            .map_err(|_| anyhow::anyhow!("local password envelope seal failed"))?;
         Ok(format!(
-            "local-envelope:v1:{}",
-            hex::encode(xor_with_password_stream(plaintext.as_bytes(), &self.key))
+            "local-envelope:v2:{}:{}",
+            hex::encode(nonce),
+            hex::encode(ciphertext)
         ))
     }
 
@@ -37,14 +47,27 @@ impl PasswordEnvelope for LocalPasswordEnvelope {
             anyhow::bail!("local password envelope key must not be empty");
         }
 
-        let encoded = ciphertext
-            .strip_prefix("local-envelope:v1:")
+        if let Some(encoded) = ciphertext.strip_prefix("local-envelope:v1:") {
+            let ciphertext = hex::decode(encoded)?;
+            return Ok(String::from_utf8(xor_with_password_stream(
+                &ciphertext,
+                &self.key,
+            ))?);
+        }
+
+        let payload = ciphertext
+            .strip_prefix("local-envelope:v2:")
             .ok_or_else(|| anyhow::anyhow!("unsupported password envelope"))?;
-        let ciphertext = hex::decode(encoded)?;
-        Ok(String::from_utf8(xor_with_password_stream(
-            &ciphertext,
-            &self.key,
-        ))?)
+        let (nonce, ciphertext) = payload
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("invalid local password envelope"))?;
+        let nonce = hex::decode(nonce)?;
+        let ciphertext = hex::decode(ciphertext)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&local_envelope_key(&self.key))?;
+        let plaintext = cipher
+            .decrypt(nonce.as_slice().into(), ciphertext.as_ref())
+            .map_err(|_| anyhow::anyhow!("local password envelope open failed"))?;
+        Ok(String::from_utf8(plaintext)?)
     }
 }
 
@@ -93,6 +116,13 @@ impl PasswordEnvelope for CommandPasswordEnvelope {
     fn open(&self, ciphertext: &str) -> anyhow::Result<String> {
         self.run("open", ciphertext)
     }
+}
+
+fn local_envelope_key(password_envelope_key: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"adss:local-password-envelope:v2");
+    hasher.update(password_envelope_key);
+    hasher.finalize().into()
 }
 
 fn xor_with_password_stream(input: &[u8], password_envelope_key: &[u8]) -> Vec<u8> {

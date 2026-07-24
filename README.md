@@ -46,6 +46,6 @@ cargo run -p adss-agent
 ```text
 crates/adss-contract     同步契约、目录计划和共享数据结构
 crates/adss-persistence  数据库访问和事实源读写
-crates/adss-server       中心服务 API、认证、密码 envelope 和同步控制面
+crates/adss-server       中心服务 API、认证、密码加密和同步控制面
 crates/adss-agent        域内 Agent、HTTP 客户端、本地 state 和域控写入
 ```

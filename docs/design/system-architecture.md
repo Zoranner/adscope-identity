@@ -39,7 +39,7 @@
 | --- | --- |
 | `adss-contract` | 定义同步对象、请求响应、目录执行计划和共享错误边界。 |
 | `adss-persistence` | 封装数据库模型、事实源读写和 revision 更新规则。 |
-| `adss-server` | 提供中心 API、用户会话、Agent 鉴权、密码 envelope 和同步控制面。 |
+| `adss-server` | 提供中心 API、用户会话、Agent 鉴权、密码加密和同步控制面。 |
 | `adss-agent` | 管理 Agent 配置、本地 state、HTTP 拉取确认和域控写入。 |
 
 crate 拆分只服务明确边界：共享契约、持久化、中心服务和域内执行。没有独立生命周期或复用价值的逻辑不单独拆 crate。

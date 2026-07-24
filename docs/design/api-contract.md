@@ -24,7 +24,7 @@ API 按调用身份分组：
 | `403 Forbidden` | 已认证但无权访问目标资源。 |
 | `404 Not Found` | 目标对象不存在。 |
 | `409 Conflict` | 请求与唯一约束、revision 或状态规则冲突。 |
-| `500 Internal Server Error` | 服务端持久化、密码 envelope 或外部依赖错误。 |
+| `500 Internal Server Error` | 服务端持久化、密码加密或外部依赖错误。 |
 
 密码明文、密码密文和 Agent key 明文不得出现在普通查询响应、错误响应或日志中。Agent key 生成或替换时只在本次响应返回明文。
 

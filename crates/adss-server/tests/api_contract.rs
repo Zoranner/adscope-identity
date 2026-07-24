@@ -356,6 +356,40 @@ async fn password_change_stores_ciphertext_without_plaintext_password() {
         .unwrap();
 
     assert!(!credential.password_ciphertext.contains("NewPass123!"));
+    assert!(
+        credential
+            .password_ciphertext
+            .starts_with("local-envelope:v2:")
+    );
+}
+
+#[tokio::test]
+async fn local_password_envelope_uses_randomized_ciphertext() {
+    let TestApp { app, repository } = test_app_with_seeded_credential("OldPass123!").await;
+
+    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    let first_ciphertext = repository
+        .get_credential_record("1001")
+        .await
+        .unwrap()
+        .unwrap()
+        .password_ciphertext;
+
+    change_password(&app, "1001", "NewPass123!", "OldPass123!").await;
+    change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
+    let second_ciphertext = repository
+        .get_credential_record("1001")
+        .await
+        .unwrap()
+        .unwrap()
+        .password_ciphertext;
+
+    assert_ne!(first_ciphertext, second_ciphertext);
+    let sync = agent_sync(&app, 0, 0, false, false).await;
+    assert_eq!(
+        sync.credentials.credentials[0].plaintext_password,
+        "NewPass123!"
+    );
 }
 
 #[tokio::test]
