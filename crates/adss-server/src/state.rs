@@ -3,8 +3,8 @@ use std::sync::Arc;
 use adss_persistence::Repository;
 
 use crate::password::{
-    DeterministicPasswordHash, LocalPasswordEnvelope, PasswordEnvelope, PasswordHashProvider,
-    password_envelope_from_env, password_hash_from_env,
+    BuiltInPasswordEncryption, DeterministicPasswordHash, PasswordEncryption, PasswordHashProvider,
+    password_encryption_from_env, password_hash_from_env,
 };
 use crate::session::UserSessionIssuer;
 
@@ -14,7 +14,7 @@ const DEFAULT_BATCH_LIMIT: usize = 100;
 pub struct AppState {
     pub(crate) repository: Repository,
     pub(crate) batch_limit: usize,
-    pub(crate) password_envelope: Arc<dyn PasswordEnvelope>,
+    pub(crate) password_encryption: Arc<dyn PasswordEncryption>,
     pub(crate) password_hash: Arc<dyn PasswordHashProvider>,
     pub(crate) user_sessions: UserSessionIssuer,
 }
@@ -24,17 +24,20 @@ impl AppState {
         Ok(Self::with_password_providers(
             repository,
             DEFAULT_BATCH_LIMIT,
-            password_envelope_from_env()?,
+            password_encryption_from_env()?,
             password_hash_from_env()?,
             UserSessionIssuer::from_env()?,
         ))
     }
 
-    pub fn new_for_tests(repository: Repository, password_envelope_key: impl Into<String>) -> Self {
+    pub fn new_for_tests(
+        repository: Repository,
+        password_encryption_key: impl Into<String>,
+    ) -> Self {
         Self::with_password_providers(
             repository,
             DEFAULT_BATCH_LIMIT,
-            Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
+            Arc::new(BuiltInPasswordEncryption::new(password_encryption_key)),
             Arc::new(DeterministicPasswordHash),
             UserSessionIssuer::for_tests("test-user-session-key"),
         )
@@ -43,12 +46,12 @@ impl AppState {
     pub fn with_batch_limit_for_tests(
         repository: Repository,
         batch_limit: usize,
-        password_envelope_key: impl Into<String>,
+        password_encryption_key: impl Into<String>,
     ) -> Self {
         Self::with_password_providers(
             repository,
             batch_limit,
-            Arc::new(LocalPasswordEnvelope::new(password_envelope_key)),
+            Arc::new(BuiltInPasswordEncryption::new(password_encryption_key)),
             Arc::new(DeterministicPasswordHash),
             UserSessionIssuer::for_tests("test-user-session-key"),
         )
@@ -57,14 +60,14 @@ impl AppState {
     fn with_password_providers(
         repository: Repository,
         batch_limit: usize,
-        password_envelope: Arc<dyn PasswordEnvelope>,
+        password_encryption: Arc<dyn PasswordEncryption>,
         password_hash: Arc<dyn PasswordHashProvider>,
         user_sessions: UserSessionIssuer,
     ) -> Self {
         Self {
             repository,
             batch_limit: batch_limit.max(1),
-            password_envelope,
+            password_encryption,
             password_hash,
             user_sessions,
         }

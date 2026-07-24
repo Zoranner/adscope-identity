@@ -12,13 +12,17 @@ use axum::{
     body::Body,
     http::{Method, Request, Response, StatusCode},
 };
+use chacha20poly1305::{
+    XChaCha20Poly1305,
+    aead::{Aead, AeadCore, KeyInit},
+};
 use http_body_util::BodyExt;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 const AGENT_KEY: &str = "test-agent-key";
-const TEST_ENVELOPE_KEY: &str = "test-envelope-key";
+const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct TestApp {
@@ -337,7 +341,7 @@ async fn stored_agent_key_hash_is_not_plaintext_agent_key() {
         })
         .await
         .unwrap();
-    let app = build_router(AppState::new_for_tests(repository, TEST_ENVELOPE_KEY));
+    let app = build_router(AppState::new_for_tests(repository, TEST_ENCRYPTION_KEY));
 
     let response = request_with_agent_key(&app, AGENT_KEY).await;
 
@@ -356,15 +360,11 @@ async fn password_change_stores_ciphertext_without_plaintext_password() {
         .unwrap();
 
     assert!(!credential.password_ciphertext.contains("NewPass123!"));
-    assert!(
-        credential
-            .password_ciphertext
-            .starts_with("local-envelope:v2:")
-    );
+    assert!(credential.password_ciphertext.starts_with("pw:v1:"));
 }
 
 #[tokio::test]
-async fn local_password_envelope_uses_randomized_ciphertext() {
+async fn built_in_password_encryption_uses_randomized_ciphertext() {
     let TestApp { app, repository } = test_app_with_seeded_credential("OldPass123!").await;
 
     change_password(&app, "1001", "OldPass123!", "NewPass123!").await;
@@ -432,36 +432,32 @@ async fn password_error_response_does_not_include_submitted_passwords() {
 }
 
 #[tokio::test]
-async fn app_state_from_env_rejects_legacy_dev_password_envelope_key() {
+async fn app_state_from_env_requires_password_encryption_key() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
-    unsafe {
-        std::env::set_var("ADSS_DEV_PASSWORD_ENCRYPTION_KEY", "legacy-dev-key");
-    }
 
     let error = match AppState::from_env(repository) {
-        Ok(_) => panic!("legacy dev envelope key must not configure AppState"),
+        Ok(_) => panic!("missing password encryption key must not configure AppState"),
         Err(error) => error,
     };
 
     assert!(
         error
             .to_string()
-            .contains("ADSS_PASSWORD_ENVELOPE_PROVIDER is required")
+            .contains("ADSS_PASSWORD_ENCRYPTION_KEY is required")
     );
 
     clear_server_env();
 }
 
 #[tokio::test]
-async fn app_state_from_env_accepts_local_password_envelope_provider() {
+async fn app_state_from_env_accepts_password_encryption_key() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
     unsafe {
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+        std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
         std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
     }
@@ -477,8 +473,7 @@ async fn app_state_from_env_rejects_missing_password_hash_provider() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
     unsafe {
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+        std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
     }
 
     let error = match AppState::from_env(repository) {
@@ -501,8 +496,7 @@ async fn app_state_from_env_rejects_missing_user_session_key() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
     unsafe {
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+        std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
     }
 
@@ -515,33 +509,6 @@ async fn app_state_from_env_rejects_missing_user_session_key() {
         error
             .to_string()
             .contains("ADSS_USER_SESSION_KEY is required")
-    );
-
-    clear_server_env();
-}
-
-#[tokio::test]
-async fn app_state_from_env_rejects_missing_command_password_envelope_adapter() {
-    let repository = Repository::connect("sqlite::memory:").await.unwrap();
-    let _guard = ENV_LOCK.lock().unwrap();
-    clear_server_env();
-    unsafe {
-        std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "command");
-        std::env::set_var(
-            "ADSS_PASSWORD_ENVELOPE_COMMAND",
-            r"C:\definitely-missing\adss-envelope-kms.exe",
-        );
-    }
-
-    let error = match AppState::from_env(repository) {
-        Ok(_) => panic!("missing command envelope adapter must not configure AppState"),
-        Err(error) => error,
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("ADSS_PASSWORD_ENVELOPE_COMMAND must point to a file")
     );
 
     clear_server_env();
@@ -565,8 +532,7 @@ async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_c
         let _guard = ENV_LOCK.lock().unwrap();
         clear_server_env();
         unsafe {
-            std::env::set_var("ADSS_PASSWORD_ENVELOPE_PROVIDER", "local");
-            std::env::set_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY", TEST_ENVELOPE_KEY);
+            std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
             std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
             std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
         }
@@ -603,7 +569,7 @@ async fn test_app_with_domain_enabled(enabled: bool) -> TestApp {
     repository.seed_domain(domain(enabled)).await.unwrap();
     let app = build_router(AppState::new_for_tests(
         repository.clone(),
-        TEST_ENVELOPE_KEY,
+        TEST_ENCRYPTION_KEY,
     ));
     TestApp { app, repository }
 }
@@ -625,7 +591,7 @@ async fn test_app_with_seeded_credential(password: &str) -> TestApp {
         .unwrap();
     let app = build_router(AppState::new_for_tests(
         repository.clone(),
-        TEST_ENVELOPE_KEY,
+        TEST_ENCRYPTION_KEY,
     ));
     TestApp { app, repository }
 }
@@ -883,42 +849,22 @@ fn agent_key_hash(agent_key: &str) -> String {
 }
 
 fn seal_password_for_storage(password: &str) -> String {
-    format!(
-        "local-envelope:v1:{}",
-        hex::encode(xor_with_password_stream(password.as_bytes()))
-    )
+    let cipher = XChaCha20Poly1305::new_from_slice(&test_password_encryption_key()).unwrap();
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ciphertext = cipher.encrypt(&nonce, password.as_bytes()).unwrap();
+    format!("pw:v1:{}:{}", hex::encode(nonce), hex::encode(ciphertext))
 }
 
-fn xor_with_password_stream(input: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(input.len());
-    let mut counter = 0_u64;
-
-    while output.len() < input.len() {
-        let mut hasher = Sha256::new();
-        hasher.update(b"adss:local-password-envelope:v1");
-        hasher.update(TEST_ENVELOPE_KEY.as_bytes());
-        hasher.update(counter.to_be_bytes());
-        let block = hasher.finalize();
-
-        for byte in block {
-            if output.len() == input.len() {
-                break;
-            }
-            output.push(input[output.len()] ^ byte);
-        }
-
-        counter += 1;
-    }
-
-    output
+fn test_password_encryption_key() -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"adss:password-encryption:v1");
+    hasher.update(TEST_ENCRYPTION_KEY.as_bytes());
+    hasher.finalize().into()
 }
 
 fn clear_server_env() {
     unsafe {
-        std::env::remove_var("ADSS_DEV_PASSWORD_ENCRYPTION_KEY");
-        std::env::remove_var("ADSS_PASSWORD_ENVELOPE_PROVIDER");
-        std::env::remove_var("ADSS_PASSWORD_ENVELOPE_LOCAL_KEY");
-        std::env::remove_var("ADSS_PASSWORD_ENVELOPE_COMMAND");
+        std::env::remove_var("ADSS_PASSWORD_ENCRYPTION_KEY");
         std::env::remove_var("ADSS_PASSWORD_HASH_PROVIDER");
         std::env::remove_var("ADSS_USER_SESSION_KEY");
         std::env::remove_var("ADSS_USER_SESSION_TTL_SECONDS");

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{agent_key_from_headers, authorize_domain_agent},
     error::ApiError,
-    password::PasswordEnvelope,
+    password::PasswordEncryption,
     state::AppState,
 };
 
@@ -173,7 +173,7 @@ async fn change_password_by_employee_id(
         .change_user_password(UserCredentialInput {
             employee_id: employee_id.clone(),
             password_ciphertext: state
-                .password_envelope
+                .password_encryption
                 .seal(&request.new_password)
                 .map_err(|_| ApiError::Persistence)?,
             password_verifier: state
@@ -222,8 +222,10 @@ async fn agent_sync(
         )
         .await
         .map_err(|_| ApiError::Persistence)?;
-    let credentials =
-        open_credential_batch_for_agent(credential_ciphertexts, state.password_envelope.as_ref())?;
+    let credentials = open_credential_batch_for_agent(
+        credential_ciphertexts,
+        state.password_encryption.as_ref(),
+    )?;
 
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
@@ -277,7 +279,7 @@ async fn agent_confirm(
 
 fn open_credential_batch_for_agent(
     batch: CredentialCiphertextBatch,
-    password_envelope: &dyn PasswordEnvelope,
+    password_encryption: &dyn PasswordEncryption,
 ) -> Result<CredentialBatch, ApiError> {
     let credentials = batch
         .credentials
@@ -287,7 +289,7 @@ fn open_credential_batch_for_agent(
                 employee_id: credential.employee_id,
                 plaintext_password: open_password_for_agent(
                     &credential.password_ciphertext,
-                    password_envelope,
+                    password_encryption,
                 )
                 .ok_or(ApiError::Persistence)?,
                 status: credential.status,
@@ -306,9 +308,9 @@ fn open_credential_batch_for_agent(
 
 fn open_password_for_agent(
     ciphertext: &str,
-    password_envelope: &dyn PasswordEnvelope,
+    password_encryption: &dyn PasswordEncryption,
 ) -> Option<String> {
-    password_envelope.open(ciphertext).ok()
+    password_encryption.open(ciphertext).ok()
 }
 
 fn authorize_user_session(headers: &HeaderMap, state: &AppState) -> Result<String, ApiError> {

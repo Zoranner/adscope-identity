@@ -20,7 +20,7 @@ cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
 
 ## 主服务
 
-主服务入口位于 `adss-server` crate。主服务必须配置 `ADSS_DATABASE_URL`，并配置密码加密方式和密码校验哈希方式。
+主服务入口位于 `adss-server` crate。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY` 和密码校验哈希方式。
 
 启动命令：
 
@@ -28,9 +28,7 @@ cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
 cargo run -p adss-server
 ```
 
-没有外部密钥系统时，生产环境使用 `ADSS_PASSWORD_ENVELOPE_PROVIDER=local`，并将 `ADSS_PASSWORD_ENVELOPE_LOCAL_KEY` 设置为高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
-
-`ADSS_PASSWORD_ENVELOPE_PROVIDER=command` 只在已经具备 KMS/HSM 或等价外部密钥适配器时使用。
+`ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
 ## 域配置初始化
 
@@ -84,8 +82,8 @@ Agent 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ld
 进入真实环境前必须满足：
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
-- 生产环境配置密码加密方式；没有外部密钥系统时使用本机高熵密码加密密钥。
-- `ADSS_PASSWORD_ENVELOPE_LOCAL_KEY`、`ADSS_USER_SESSION_KEY`、Agent key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入。
+- 生产环境配置本机高熵密码加密密钥。
+- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、Agent key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
 - 受管用户禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。

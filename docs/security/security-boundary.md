@@ -12,9 +12,7 @@
 
 `user_credentials.password_ciphertext` 用于保存中心当前密码材料。主服务通过密码加密方式处理密文，只有在响应 `/api/agent/sync` 时才在内存中解封，并组装 `CredentialEntry.plaintext_password`。
 
-没有外部密钥系统时，生产环境使用 `local` 密码加密方式，并通过本机受保护配置提供高熵 `ADSS_PASSWORD_ENVELOPE_LOCAL_KEY`。该密钥必须和数据库备份分离保存，不能进入源码、日志或配置仓库；轮换密钥时需要先用旧密钥解封现有 `password_ciphertext`，再用新密钥重新加密。
-
-`command` 密码加密方式是可选扩展，只在已经具备 KMS/HSM 或等价外部密钥适配器时使用。
+主服务使用内置 XChaCha20-Poly1305 加密密码材料，并通过本机受保护配置提供高熵 `ADSS_PASSWORD_ENCRYPTION_KEY`。该密钥必须和数据库备份分离保存，不能进入源码、日志或配置仓库；轮换密钥时需要先用旧密钥解封现有 `password_ciphertext`，再用新密钥重新加密。
 
 ## 凭据传输
 
