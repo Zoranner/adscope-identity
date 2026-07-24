@@ -7,9 +7,9 @@ API 按调用身份分组：
 - `/api/auth/*` 用于普通用户登录。
 - `/api/me/*` 用于普通用户自助，只能操作 token 对应的本人账号。
 - `/api/admin/*` 用于受保护管理入口，写入中心目录和域配置事实。
-- `/api/agent/*` 用于域内 Agent 同步，必须通过域绑定的 Agent key 鉴权。
+- `/api/connector/*` 用于域内 Connector 同步，必须通过域绑定的 Connector key 鉴权。
 
-中心数据库是 API 写入的唯一事实源。普通用户、管理员和 Agent 都不直接写 AD；AD 写入只由域内 Agent 通过同步协议执行。
+中心数据库是 API 写入的唯一事实源。普通用户、管理员和 Connector 都不直接写 AD；AD 写入只由域内 Connector 通过同步协议执行。
 
 管理入口必须和普通用户自助入口区分身份边界。系统使用受保护管理凭证区分管理调用，不引入管理员账号、角色或审批流程。
 
@@ -26,7 +26,7 @@ API 按调用身份分组：
 | `409 Conflict` | 请求与唯一约束、revision 或状态规则冲突。 |
 | `500 Internal Server Error` | 服务端持久化、密码加密或外部依赖错误。 |
 
-密码明文、密码密文和 Agent key 明文不得出现在普通查询响应、错误响应或日志中。
+密码明文、密码密文和 Connector key 明文不得出现在普通查询响应、错误响应或日志中。
 
 ## 普通用户接口
 
@@ -107,7 +107,7 @@ Authorization: Bearer <access_token>
 
 - 只允许修改 token 对应用户的 `email`、`mobile` 和 `telephone`。
 - 不接受 `employee_id`、`username`、`display_name`、`organizational_unit_id`、`status` 或组成员字段。
-- 成功后推进目录 revision，由 Agent 同步到各域。
+- 成功后推进目录 revision，由 Connector 同步到各域。
 
 响应：
 
@@ -181,11 +181,11 @@ Authorization: Bearer <management_token>
   "upn_suffix": "a.example.com",
   "employee_id_attribute": "employeeID",
   "managed_group_id_attribute": "adminDescription",
-  "agent_key": "generated-or-imported-agent-key"
+  "connector_key": "generated-or-imported-connector-key"
 }
 ```
 
-`PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性。`agent_key_hash` 不能通过普通 PATCH 更新。
+`PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性。`connector_key_hash` 不能通过普通 PATCH 更新。
 
 ### OU 管理
 
@@ -292,21 +292,21 @@ Authorization: Bearer <management_token>
 }
 ```
 
-rebuild 由 Agent 请求中的 `rebuild_directory` 和 `rebuild_credentials` 标志触发。
+rebuild 由 Connector 请求中的 `rebuild_directory` 和 `rebuild_credentials` 标志触发。
 
-## Agent 接口
+## Connector 接口
 
-所有 Agent 接口必须携带：
+所有 Connector 接口必须携带：
 
 ```text
-x-adss-agent-key: <agent-key>
+x-adss-connector-key: <connector-key>
 ```
 
-服务端按请求 `domain_id` 校验 `domains.agent_key_hash`。未知域、错误 key 或缺少 key 返回 `401 Unauthorized`，域被禁用返回 `403 Forbidden`。
+服务端按请求 `domain_id` 校验 `domains.connector_key_hash`。未知域、错误 key 或缺少 key 返回 `401 Unauthorized`，域被禁用返回 `403 Forbidden`。
 
-### Agent 同步
+### Connector 同步
 
-`POST /api/agent/sync`
+`POST /api/connector/sync`
 
 请求：
 
@@ -349,11 +349,11 @@ x-adss-agent-key: <agent-key>
 }
 ```
 
-凭据响应包含 Agent 可执行的明文密码。Agent 调用主服务 `/api/agent/sync` 时必须走 TLS，并设置 `Cache-Control: no-store`。
+凭据响应包含 Connector 可执行的明文密码。Connector 调用主服务 `/api/connector/sync` 时必须走 TLS，并设置 `Cache-Control: no-store`。
 
-### Agent 确认
+### Connector 确认
 
-`POST /api/agent/confirm`
+`POST /api/connector/confirm`
 
 请求：
 

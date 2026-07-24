@@ -3,42 +3,11 @@
 version = 4
 
 [[package]]
-name = "adss-agent"
+name = "adss-center"
 version = "0.1.0"
 dependencies = [
- "adss-contract",
- "anyhow",
- "async-trait",
- "ldap3",
- "reqwest",
- "tokio",
-]
-
-[[package]]
-name = "adss-contract"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "adss-persistence"
-version = "0.1.0"
-dependencies = [
- "adss-contract",
- "anyhow",
- "sea-orm",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "adss-server"
-version = "0.1.0"
-dependencies = [
- "adss-contract",
- "adss-persistence",
+ "adss-protocol",
+ "adss-store",
  "anyhow",
  "argon2",
  "axum",
@@ -50,6 +19,36 @@ dependencies = [
  "sha2",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "adss-connector"
+version = "0.1.0"
+dependencies = [
+ "adss-protocol",
+ "anyhow",
+ "async-trait",
+ "ldap3",
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
+name = "adss-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "adss-store"
+version = "0.1.0"
+dependencies = [
+ "adss-protocol",
+ "anyhow",
+ "sea-orm",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

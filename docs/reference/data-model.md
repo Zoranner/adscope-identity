@@ -2,14 +2,14 @@
 
 ## 设计原则
 
-中心数据库是账号和目录同步的唯一事实源。主服务通过 `Repository` 读写数据库，Agent 只通过 HTTP API 获取期望状态，不直接访问数据库。
+中心数据库是账号和目录同步的唯一事实源。主服务通过 `Repository` 读写数据库，Connector 只通过 HTTP API 获取期望状态，不直接访问数据库。
 
 数据库保存当前事实，不保存历史事件流：
 
 - 目录事实只保存 OU、用户和组的当前状态。
 - 凭据事实只保存用户当前 verifier 和 ciphertext。
 - 域记录保存该域已确认的目录和凭据 revision。
-- 对象多次变更后，Agent 只拉取最新完整状态。
+- 对象多次变更后，Connector 只拉取最新完整状态。
 
 数据库 schema 由主服务初始化逻辑创建基础表。
 
@@ -76,7 +76,7 @@
 | `password_verifier` | 中心登录和改密校验使用的 verifier。 |
 | `changed_revision` | 该用户当前凭据最后一次变化所在的凭据 revision。 |
 
-`password_verifier` 不能还原密码。`password_ciphertext` 只能由主服务通过密码加密方式解封，并只在响应 Agent 凭据同步时短暂进入内存。
+`password_verifier` 不能还原密码。`password_ciphertext` 只能由主服务通过密码加密方式解封，并只在响应 Connector 凭据同步时短暂进入内存。
 
 ### `domains`
 
@@ -84,7 +84,7 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` | 域标识，也是 Agent 同步请求中的 `domain_id`。 |
+| `id` | 域标识，也是 Connector 同步请求中的 `domain_id`。 |
 | `name` | 域显示名。 |
 | `enabled` | 域是否允许同步。 |
 | `mirror_root_dn` | 本系统管理对象所在镜像根 DN。 |
@@ -92,7 +92,7 @@
 | `upn_suffix` | 该域 UPN 后缀。 |
 | `employee_id_attribute` | AD 中保存工号的属性名。 |
 | `managed_group_id_attribute` | AD 受管组对象中保存中心组标识的属性名，默认 `adminDescription`。 |
-| `agent_key_hash` | Agent key 摘要，不保存明文 key。 |
+| `connector_key_hash` | Connector key 摘要，不保存明文 key。 |
 | `applied_directory_revision` | 该域已确认应用的目录 revision。 |
 | `applied_credential_revision` | 该域已确认应用的凭据 revision。 |
 
@@ -112,7 +112,7 @@
 - 写入新的 `password_verifier` 和 `password_ciphertext`。
 - 将该用户凭据的 `changed_revision` 设置为该 revision。
 
-Agent 确认只更新 `domains` 中目标通道的 applied revision。服务端必须拒绝倒退确认，也必须拒绝超过全局 revision 的确认。
+Connector 确认只更新 `domains` 中目标通道的 applied revision。服务端必须拒绝倒退确认，也必须拒绝超过全局 revision 的确认。
 
 ## 查询规则
 

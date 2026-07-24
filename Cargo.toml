@@ -1,9 +1,11 @@
 [workspace]
 members = [
-    "crates/adss-contract",
-    "crates/adss-persistence",
-    "crates/adss-server",
-    "crates/adss-agent",
+    "center",
+    "connector",
+]
+exclude = [
+    "crates/protocol",
+    "crates/store",
 ]
 resolver = "2"
 
