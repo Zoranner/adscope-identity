@@ -15,11 +15,14 @@
 
 ## 快速开始
 
-复制根目录 `.env.example` 为 `.env`，按本地环境调整数据库、密码保护、会话密钥和 Agent 配置。
+主服务和 Agent 是两个独立部署单元，各自在自己的运行目录读取 `.env`。运行目录是进程启动时的工作目录，不要求放在仓库根目录。
 
 ```text
-cp .env.example .env
+cp crates/adss-server/.env.example <server-runtime-dir>/.env
+cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
 ```
+
+示例文件分别是 [crates/adss-server/.env.example](crates/adss-server/.env.example) 和 [crates/adss-agent/.env.example](crates/adss-agent/.env.example)。
 
 启动主服务：
 
@@ -27,7 +30,7 @@ cp .env.example .env
 cargo run -p adss-server
 ```
 
-Agent dry-run 可用于验证同步协议和本地 state，不写入 AD。默认 `.env.example` 已使用 dry-run 配置。
+Agent dry-run 可用于验证同步协议和本地 state，不写入 AD。默认 [crates/adss-agent/.env.example](crates/adss-agent/.env.example) 已使用 dry-run 配置。
 
 启动 Agent：
 

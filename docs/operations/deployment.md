@@ -2,15 +2,21 @@
 
 ## 配置文件
 
-运行配置从根目录 `.env` 读取。复制 [.env.example](../../.env.example) 后按本机环境修改：
+`adss-server` 和 `adss-agent` 是两个独立部署单元。每个进程启动时读取当前运行目录下的 `.env`；运行目录是进程启动时的工作目录，不要求放在仓库根目录。部署时分别复制对应示例文件：
 
 ```text
-cp .env.example .env
+cp crates/adss-server/.env.example <server-runtime-dir>/.env
+cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
 ```
 
-系统环境变量优先级高于 `.env`。生产环境可以由进程管理器、容器平台或 Secret 管理系统注入环境变量；不要把生产密钥写入仓库。
+示例文件：
 
-`.env.example` 已说明每个变量的用途、是否必填和适用进程。本文档只说明启动方式和部署边界，避免重复维护变量说明。
+- [adss-server .env 示例](../../crates/adss-server/.env.example)
+- [adss-agent .env 示例](../../crates/adss-agent/.env.example)
+
+系统环境变量优先级高于运行目录下的 `.env`。生产环境可以由进程管理器、容器平台或 Secret 管理系统注入环境变量；不要把生产密钥写入仓库。
+
+示例文件已说明每个变量的用途和是否必填。本文档只说明启动方式和部署边界，避免重复维护变量说明。
 
 ## 主服务
 
@@ -43,7 +49,7 @@ cargo run -p adss-server
 
 ## Agent
 
-Agent 入口位于 `adss-agent` crate。默认 `.env.example` 使用 dry-run，不写入 AD。
+Agent 入口位于 `adss-agent` crate。默认 [adss-agent .env 示例](../../crates/adss-agent/.env.example) 使用 dry-run，不写入 AD。
 
 启动命令：
 
