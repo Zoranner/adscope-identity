@@ -1,22 +1,18 @@
 # AD 同步文档
 
-本目录保存项目的正式产品、设计、安全和运行文档。
+本目录按用途组织文档。产品边界、运行部署和安全要求放在指南中；架构、接口、数据和同步协议放在参考文档中。
 
-## 产品
+## 指南
 
-- [需求说明](product/requirements.md)
+- [产品概览](guide/overview.md)
+- [运行部署](guide/deployment.md)
+- [安全要求](guide/security.md)
 
-## 设计
+## 参考
 
-- [系统架构](design/system-architecture.md)
-- [数据模型](design/data-model.md)
-- [API 契约](design/api-contract.md)
-- [Agent 同步协议](design/agent-sync-protocol.md)
-
-## 安全
-
-- [安全边界](security/security-boundary.md)
-
-## 运行
-
-- [运行部署](operations/deployment.md)
+- [参考说明](reference/README.md)
+- [系统架构](reference/system-architecture.md)
+- [数据模型](reference/data-model.md)
+- [API 契约](reference/api-contract.md)
+- [Agent 同步协议](reference/agent-sync-protocol.md)
+- [安全实现边界](reference/security-boundary.md)

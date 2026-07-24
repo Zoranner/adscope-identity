@@ -20,40 +20,19 @@ cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
 
 ## 主服务
 
-主服务入口位于 `adss-server` crate。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY` 和密码校验哈希方式。
-
-启动命令：
-
-```text
-cargo run -p adss-server
-```
+主服务是中心 API 和同步控制面。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY` 和密码校验哈希方式。
 
 `ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
 ## 域配置初始化
 
-主服务 schema 包含：
-
-- `sync_metadata`
-- `organizational_units`
-- `users`
-- `groups`
-- `user_credentials`
-- `domains`
-
-域配置变更属于受控运维动作，应通过受保护管理入口维护。测试或部署初始化可以通过 repository、迁移脚本或运维脚本预置 `domains` 记录，并写入 `agent_key_hash`。
+域配置变更属于受控运维动作，应通过受保护管理入口维护。测试或部署初始化可以通过受控初始化脚本预置域记录，并写入 Agent key 摘要。
 
 直接数据库写入只适用于初始化或迁移，不作为普通管理后台入口。
 
 ## Agent
 
-Agent 入口位于 `adss-agent` crate。默认 [adss-agent .env 示例](../../crates/adss-agent/.env.example) 使用 dry-run，不写入 AD。
-
-启动命令：
-
-```text
-cargo run -p adss-agent
-```
+Agent 是域内常驻同步进程。默认 [adss-agent .env 示例](../../crates/adss-agent/.env.example) 使用 dry-run，不写入 AD。
 
 启用真实域控写入时，设置：
 
@@ -88,15 +67,3 @@ Agent 在运行目录下自动维护 `adss-agent-state.json`。文件无法解�
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
 - 受管用户禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。
 - AD 沙箱域验证 OU、用户、组、成员、禁用、隔离移动和 Reset Password 全链路，并覆盖实际采用的 `ldap://` 或 `ldaps://` 连接方式。
-
-## 验证命令
-
-Rust 代码修改后执行：
-
-```text
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --workspace
-```
-
-文档修改至少检查链接、标题、接口路径和术语一致性。文档检查不代表真实 AD、TLS、密钥保护或生产权限已经验收。

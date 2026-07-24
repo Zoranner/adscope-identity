@@ -13,42 +13,16 @@
 - Agent 按域主动拉取当前期望状态，并以 revision 确认执行进度。
 - 目录和凭据分通道同步，互不阻塞。
 
-## 快速开始
+## 使用和部署
 
-主服务和 Agent 是两个独立部署单元，各自在自己的运行目录读取 `.env`。运行目录是进程启动时的工作目录，不要求放在仓库根目录。
+- [产品概览](docs/guide/overview.md)
+- [运行部署](docs/guide/deployment.md)
+- [安全要求](docs/guide/security.md)
 
-```text
-cp crates/adss-server/.env.example <server-runtime-dir>/.env
-cp crates/adss-agent/.env.example <agent-runtime-dir>/.env
-```
-
-示例文件分别是 [crates/adss-server/.env.example](crates/adss-server/.env.example) 和 [crates/adss-agent/.env.example](crates/adss-agent/.env.example)。
-
-启动主服务：
-
-```text
-cargo run -p adss-server
-```
-
-Agent dry-run 可用于验证同步协议和本地 state，不写入 AD。默认 [crates/adss-agent/.env.example](crates/adss-agent/.env.example) 已使用 dry-run 配置。
-
-启动 Agent：
-
-```text
-cargo run -p adss-agent
-```
+主服务和 Agent 是两个独立部署单元，各自在自己的运行目录读取 `.env`。示例文件分别位于 [crates/adss-server/.env.example](crates/adss-server/.env.example) 和 [crates/adss-agent/.env.example](crates/adss-agent/.env.example)。
 
 真实域控连接支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；密码下发和管理面仍必须通过主服务 TLS。
 
-## 文档
+## 参考文档
 
-见 [文档总览](docs/README.md)。
-
-## 工程结构
-
-```text
-crates/adss-contract     同步契约、目录计划和共享数据结构
-crates/adss-persistence  数据库访问和事实源读写
-crates/adss-server       中心服务 API、认证、密码加密和同步控制面
-crates/adss-agent        域内 Agent、HTTP 客户端、本地 state 和域控写入
-```
+工程结构、数据模型、API、同步协议和安全实现边界见 [文档索引](docs/README.md) 和 [参考说明](docs/reference/README.md)。
