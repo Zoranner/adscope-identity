@@ -82,7 +82,11 @@ watch(query, () => pagination.resetPage())
         <h2>对象</h2>
         <AdminStatusBadge>{{ filteredRows.length }}</AdminStatusBadge>
       </div>
-      <div class="row-actions">
+      <div class="panel-tools">
+        <label class="inline-search">
+          <Search :size="16" />
+          <input v-model="query" placeholder="搜索类型、标识、名称或详情" />
+        </label>
         <button class="primary-button compact-button" :disabled="disabled" @click="$emit('createUser')">
           <UserPlus :size="15" />
           用户
@@ -92,11 +96,6 @@ watch(query, () => pagination.resetPage())
           安全组
         </button>
       </div>
-    </div>
-
-    <div class="table-toolbar">
-      <Search :size="16" />
-      <input v-model="query" placeholder="搜索类型、标识、名称或详情" />
     </div>
 
     <div class="table-wrap">

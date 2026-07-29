@@ -311,6 +311,15 @@ button:disabled {
   min-width: 0;
 }
 
+.panel-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: min(560px, 100%);
+}
+
 .selection-summary {
   display: flex;
   align-items: flex-start;
@@ -380,6 +389,19 @@ button:disabled {
   border-bottom: 1px solid #e4e9f0;
   color: #647384;
   background: #fbfcfd;
+}
+
+.inline-search {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 260px);
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  border: 1px solid #cfd7e2;
+  border-radius: 8px;
+  padding: 0 9px;
+  color: #647384;
+  background: #ffffff;
 }
 
 .table-wrap {
@@ -480,7 +502,8 @@ strong {
 .field input,
 .field select,
 .field textarea,
-.table-toolbar input {
+.table-toolbar input,
+.inline-search input {
   width: 100%;
   min-height: 36px;
   border: 1px solid #cfd7e2;
@@ -488,6 +511,12 @@ strong {
   padding: 7px 10px;
   color: #17202c;
   background: #ffffff;
+}
+
+.inline-search input {
+  min-height: 28px;
+  border: 0;
+  padding: 0;
 }
 
 .field textarea {
@@ -687,9 +716,18 @@ strong {
 
   .view-header,
   .selection-summary,
+  .panel-header,
   .pagination-bar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .panel-tools {
+    justify-content: stretch;
+  }
+
+  .inline-search {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .form-row {
