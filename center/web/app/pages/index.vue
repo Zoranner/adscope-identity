@@ -334,47 +334,56 @@ function closeModal() {
       <OuTree
         :items="treeItems"
         :selected-id="selectedOuId"
+        :disabled="!tokenReady"
         @select="selectOu"
         @create="newOu"
       />
 
       <div class="directory-content">
-        <section v-if="selectedOu" class="selection-summary">
-          <div>
-            <h2>{{ selectedOu.name }}</h2>
-            <p>{{ selectedOu.id }} / 父级 {{ ouName(organizationalUnits, selectedOu.parent_id) }}</p>
-          </div>
-          <div class="row-actions">
-            <button class="secondary-button" @click="newOu(selectedOu.id)">
-              <FolderTree :size="16" />
-              子 OU
-            </button>
-            <button class="secondary-button" @click="editOu(selectedOu.id)">编辑 OU</button>
-            <button class="primary-button" @click="newUser">
-              <Users :size="16" />
-              用户
-            </button>
-            <button class="primary-button" @click="newGroup">
-              <ShieldCheck :size="16" />
-              安全组
-            </button>
-          </div>
+        <template v-if="selectedOu">
+          <section class="selection-summary">
+            <div>
+              <h2>{{ selectedOu.name }}</h2>
+              <p>{{ selectedOu.id }} / 父级 {{ ouName(organizationalUnits, selectedOu.parent_id) }}</p>
+            </div>
+            <div class="row-actions">
+              <button class="secondary-button" @click="newOu(selectedOu.id)">
+                <FolderTree :size="16" />
+                子 OU
+              </button>
+              <button class="secondary-button" @click="editOu(selectedOu.id)">编辑 OU</button>
+              <button class="primary-button" @click="newUser">
+                <Users :size="16" />
+                用户
+              </button>
+              <button class="primary-button" @click="newGroup">
+                <ShieldCheck :size="16" />
+                安全组
+              </button>
+            </div>
+          </section>
+
+          <UserTable
+            :users="selectedUsers"
+            :disabled="!selectedOuId"
+            @create="newUser"
+            @edit="editUser"
+          />
+          <GroupTable
+            :groups="selectedGroups"
+            :disabled="!selectedOuId"
+            @create="newGroup"
+            @edit="editGroup"
+          />
+        </template>
+
+        <section v-else class="panel directory-empty-panel">
+          <AdminEmptyState
+            :title="tokenReady ? '暂无组织单元' : '未连接管理入口'"
+            :action-label="tokenReady ? '新建 OU' : undefined"
+            @action="newOu(null)"
+          />
         </section>
-
-        <AdminEmptyState v-else title="先创建 OU，再维护用户和安全组。" action-label="新建 OU" @action="newOu(null)" />
-
-        <UserTable
-          :users="selectedUsers"
-          :disabled="!selectedOuId"
-          @create="newUser"
-          @edit="editUser"
-        />
-        <GroupTable
-          :groups="selectedGroups"
-          :disabled="!selectedOuId"
-          @create="newGroup"
-          @edit="editGroup"
-        />
       </div>
     </section>
 

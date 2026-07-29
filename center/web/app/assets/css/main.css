@@ -225,6 +225,7 @@ button:disabled {
   display: grid;
   gap: 14px;
   min-width: 0;
+  align-content: start;
 }
 
 .workspace-grid {
@@ -238,6 +239,11 @@ button:disabled {
   display: grid;
   gap: 14px;
   min-width: 0;
+}
+
+.directory-empty-panel {
+  min-height: 360px;
+  display: grid;
 }
 
 .panel {

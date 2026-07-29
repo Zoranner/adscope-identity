@@ -5,6 +5,7 @@ import type { OuTreeItem } from '~/types/admin'
 defineProps<{
   items: OuTreeItem[]
   selectedId: string | null
+  disabled?: boolean
 }>()
 
 defineEmits<{
@@ -17,7 +18,7 @@ defineEmits<{
   <section class="panel tree-panel">
     <div class="panel-header">
       <h2>OU 树</h2>
-      <button class="secondary-button compact-button" @click="$emit('create', null)">
+      <button class="secondary-button compact-button" :disabled="disabled" @click="$emit('create', null)">
         <Plus :size="15" />
         新建
       </button>
@@ -38,6 +39,11 @@ defineEmits<{
       </button>
     </div>
 
-    <AdminEmptyState v-else title="暂无 OU" action-label="新建 OU" @action="$emit('create', null)" />
+    <AdminEmptyState
+      v-else
+      title="暂无组织单元"
+      :action-label="disabled ? undefined : '新建 OU'"
+      @action="$emit('create', null)"
+    />
   </section>
 </template>
