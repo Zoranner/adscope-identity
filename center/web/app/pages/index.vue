@@ -328,7 +328,6 @@ function closeModal() {
       :disabled="!tokenReady"
       @refresh="refreshDirectory"
     />
-    <AdminStatusLine />
 
     <section class="directory-page">
       <OuTree

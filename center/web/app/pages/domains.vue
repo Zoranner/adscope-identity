@@ -91,7 +91,6 @@ async function saveDomain() {
       :disabled="!tokenReady"
       @refresh="refreshDomains"
     />
-    <AdminStatusLine />
 
     <section class="single-column-page">
       <DomainTable :domains="domains" @create="newDomain" @edit="editDomain" />

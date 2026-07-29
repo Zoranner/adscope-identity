@@ -202,18 +202,6 @@ button:disabled {
   font-size: 13px;
 }
 
-.status-line {
-  min-height: 22px;
-  margin: 0 0 12px;
-  color: #1e6472;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.status-line.error {
-  color: #9b3f39;
-}
-
 .directory-page {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
@@ -512,6 +500,56 @@ strong {
 
 .empty-state p {
   margin: 0;
+}
+
+.toast-stack {
+  position: fixed;
+  top: 76px;
+  right: 20px;
+  z-index: 80;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  border: 1px solid #b8dce4;
+  border-radius: 8px;
+  padding: 10px 10px 10px 12px;
+  color: #174f5b;
+  background: #ecf8fa;
+  box-shadow: 0 10px 28px rgba(12, 20, 31, 0.14);
+  font-size: 13px;
+  font-weight: 650;
+  pointer-events: auto;
+}
+
+.toast.error {
+  border-color: #e0b5b1;
+  color: #8f342e;
+  background: #fff0ef;
+}
+
+.toast-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  padding: 0;
+}
+
+.toast-close:hover {
+  background: rgba(12, 20, 31, 0.08);
 }
 
 .modal-backdrop {

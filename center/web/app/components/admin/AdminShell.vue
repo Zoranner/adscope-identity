@@ -32,6 +32,8 @@ onMounted(() => {
 
 <template>
   <div class="app-shell">
+    <AdminStatusLine />
+
     <header class="topbar">
       <NuxtLink class="brand" to="/">
         <span class="brand-mark">

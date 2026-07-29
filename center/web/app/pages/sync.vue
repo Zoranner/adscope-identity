@@ -19,7 +19,6 @@ async function refreshSync() {
       :disabled="!tokenReady"
       @refresh="refreshSync"
     />
-    <AdminStatusLine />
 
     <SyncTable :domains="syncDomains" />
   </AdminShell>
