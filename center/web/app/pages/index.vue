@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { FolderTree, ShieldCheck, Users } from 'lucide-vue-next'
 import GroupEditor from '~/components/directory/GroupEditor.vue'
-import GroupTable from '~/components/directory/GroupTable.vue'
+import ObjectTable from '~/components/directory/ObjectTable.vue'
 import OuEditor from '~/components/directory/OuEditor.vue'
 import OuTree from '~/components/directory/OuTree.vue'
 import UserEditor from '~/components/directory/UserEditor.vue'
-import UserTable from '~/components/directory/UserTable.vue'
 import type { GroupForm, GroupRecord, OuForm, UserForm, UserRecord } from '~/types/admin'
 import { flattenOus, ouName, sortOus } from '~/utils/directory'
 import {
@@ -362,17 +361,14 @@ function closeModal() {
             </div>
           </section>
 
-          <UserTable
+          <ObjectTable
             :users="selectedUsers"
-            :disabled="!selectedOuId"
-            @create="newUser"
-            @edit="editUser"
-          />
-          <GroupTable
             :groups="selectedGroups"
             :disabled="!selectedOuId"
-            @create="newGroup"
-            @edit="editGroup"
+            @create-user="newUser"
+            @create-group="newGroup"
+            @edit-user="editUser"
+            @edit-group="editGroup"
           />
         </template>
 
