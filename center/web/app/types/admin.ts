@@ -72,7 +72,6 @@ export interface UserForm {
   display_name: string
   email: string
   mobile: string
-  telephone: string
   organizational_unit_id: string
   status: UserStatus
   initial_password: string

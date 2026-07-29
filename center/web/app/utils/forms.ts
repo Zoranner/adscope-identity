@@ -29,7 +29,6 @@ export function blankUserForm(): UserForm {
     display_name: '',
     email: '',
     mobile: '',
-    telephone: '',
     organizational_unit_id: '',
     status: 'active',
     initial_password: '',

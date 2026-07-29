@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { KeyRound, Save } from 'lucide-vue-next'
-import type { OuTreeItem, UserForm } from '~/types/admin'
+import type { UserForm } from '~/types/admin'
 
 const form = defineModel<UserForm>({ required: true })
 
 defineProps<{
-  items: OuTreeItem[]
   editingId: string | null
   loading?: boolean
   disabled?: boolean
@@ -39,14 +38,6 @@ defineEmits<{
       <label>显示名</label>
       <input v-model="form.display_name" required />
     </div>
-    <div class="field">
-      <label>所属 OU</label>
-      <select v-model="form.organizational_unit_id" required>
-        <option v-for="item in items" :key="item.ou.id" :value="item.ou.id">
-          {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
-        </option>
-      </select>
-    </div>
     <div class="form-row">
       <div class="field">
         <label>邮箱</label>
@@ -55,12 +46,6 @@ defineEmits<{
       <div class="field">
         <label>手机</label>
         <input v-model="form.mobile" />
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="field">
-        <label>电话</label>
-        <input v-model="form.telephone" />
       </div>
       <div class="field">
         <label>状态</label>

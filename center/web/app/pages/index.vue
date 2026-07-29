@@ -175,7 +175,6 @@ function editUser(user: UserRecord) {
     display_name: user.display_name,
     email: user.email ?? '',
     mobile: user.mobile ?? '',
-    telephone: user.telephone ?? '',
     organizational_unit_id: user.organizational_unit_id,
     status: user.status,
     initial_password: '',
@@ -190,7 +189,6 @@ async function saveUser() {
       display_name: userForm.display_name,
       email: nullable(userForm.email),
       mobile: nullable(userForm.mobile),
-      telephone: nullable(userForm.telephone),
       organizational_unit_id: userForm.organizational_unit_id,
       status: userForm.status,
     }
@@ -387,7 +385,6 @@ function closeModal() {
       <UserEditor
         v-else-if="activeModal === 'user'"
         v-model="userForm"
-        :items="treeItems"
         :editing-id="selectedUserId"
         :loading="loading"
         :disabled="!tokenReady"

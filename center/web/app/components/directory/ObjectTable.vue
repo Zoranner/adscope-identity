@@ -41,7 +41,7 @@ const rows = computed<DirectoryObjectRow[]>(() => [
     key: `user:${user.employee_id}`,
     id: user.employee_id,
     name: user.display_name,
-    detail: [user.username, user.email, user.mobile, user.telephone].filter(Boolean).join(' / '),
+    detail: [user.username, user.email, user.mobile].filter(Boolean).join(' / '),
     state: user.status === 'active' ? '启用' : '禁用',
     revision: '-',
     record: user,
