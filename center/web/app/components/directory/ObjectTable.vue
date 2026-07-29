@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Search, ShieldPlus, UserPlus } from 'lucide-vue-next'
+import { Search } from 'lucide-vue-next'
 import type { GroupRecord, UserRecord } from '~/types/admin'
 
 type DirectoryObjectRow =
@@ -27,12 +27,9 @@ type DirectoryObjectRow =
 const props = defineProps<{
   users: UserRecord[]
   groups: GroupRecord[]
-  disabled?: boolean
 }>()
 
 defineEmits<{
-  createUser: []
-  createGroup: []
   editUser: [user: UserRecord]
   editGroup: [group: GroupRecord]
 }>()
@@ -87,14 +84,6 @@ watch(query, () => pagination.resetPage())
           <Search :size="16" />
           <input v-model="query" placeholder="搜索类型、标识、名称或详情" />
         </label>
-        <button class="primary-button compact-button" :disabled="disabled" @click="$emit('createUser')">
-          <UserPlus :size="15" />
-          用户
-        </button>
-        <button class="primary-button compact-button" :disabled="disabled" @click="$emit('createGroup')">
-          <ShieldPlus :size="15" />
-          安全组
-        </button>
       </div>
     </div>
 

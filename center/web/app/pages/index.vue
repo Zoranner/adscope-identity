@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FolderTree, ShieldCheck, Users } from 'lucide-vue-next'
+import CreateMenu from '~/components/directory/CreateMenu.vue'
 import GroupEditor from '~/components/directory/GroupEditor.vue'
 import ObjectTable from '~/components/directory/ObjectTable.vue'
 import OuEditor from '~/components/directory/OuEditor.vue'
@@ -345,28 +345,19 @@ function closeModal() {
               <p>{{ selectedOu.id }} / 父级 {{ ouName(organizationalUnits, selectedOu.parent_id) }}</p>
             </div>
             <div class="row-actions">
-              <button class="secondary-button" @click="newOu(selectedOu.id)">
-                <FolderTree :size="16" />
-                子 OU
-              </button>
-              <button class="secondary-button" @click="editOu(selectedOu.id)">编辑 OU</button>
-              <button class="primary-button" @click="newUser">
-                <Users :size="16" />
-                用户
-              </button>
-              <button class="primary-button" @click="newGroup">
-                <ShieldCheck :size="16" />
-                安全组
-              </button>
+              <button class="secondary-button" :disabled="!tokenReady" @click="editOu(selectedOu.id)">编辑 OU</button>
+              <CreateMenu
+                :disabled="!tokenReady"
+                @create-ou="newOu(selectedOu.id)"
+                @create-user="newUser"
+                @create-group="newGroup"
+              />
             </div>
           </section>
 
           <ObjectTable
             :users="selectedUsers"
             :groups="selectedGroups"
-            :disabled="!selectedOuId"
-            @create-user="newUser"
-            @create-group="newGroup"
             @edit-user="editUser"
             @edit-group="editGroup"
           />

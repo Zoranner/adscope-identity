@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FolderTree, Plus } from 'lucide-vue-next'
+import { FolderTree } from 'lucide-vue-next'
 import type { OuTreeItem } from '~/types/admin'
 
 defineProps<{
@@ -18,10 +18,6 @@ defineEmits<{
   <section class="panel tree-panel">
     <div class="panel-header">
       <h2>OU 树</h2>
-      <button class="secondary-button compact-button" :disabled="disabled" @click="$emit('create', null)">
-        <Plus :size="15" />
-        新建
-      </button>
     </div>
 
     <div v-if="items.length" class="ou-tree">
