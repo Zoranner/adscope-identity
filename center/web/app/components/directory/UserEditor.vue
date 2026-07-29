@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { KeyRound, Save } from 'lucide-vue-next'
-import type { UserForm } from '~/types/admin'
+import type { OuTreeItem, UserForm } from '~/types/admin'
 
 const form = defineModel<UserForm>({ required: true })
 
 defineProps<{
+  items: OuTreeItem[]
   editingId: string | null
   loading?: boolean
   disabled?: boolean
@@ -37,6 +38,14 @@ defineEmits<{
     <div class="field">
       <label>显示名</label>
       <input v-model="form.display_name" required />
+    </div>
+    <div class="field">
+      <label>所属 OU</label>
+      <select v-model="form.organizational_unit_id" required>
+        <option v-for="item in items" :key="item.ou.id" :value="item.ou.id">
+          {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
+        </option>
+      </select>
     </div>
     <div class="form-row">
       <div class="field">

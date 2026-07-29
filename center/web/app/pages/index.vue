@@ -385,6 +385,7 @@ function closeModal() {
       <UserEditor
         v-else-if="activeModal === 'user'"
         v-model="userForm"
+        :items="treeItems"
         :editing-id="selectedUserId"
         :loading="loading"
         :disabled="!tokenReady"
