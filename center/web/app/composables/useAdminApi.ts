@@ -12,20 +12,34 @@ interface AdminRequestOptions extends RequestInit {
 
 export function useAdminApi() {
   const managementToken = useState('admin-management-token', () => '')
+  const authenticated = useState('admin-authenticated', () => false)
   const loading = useState('admin-loading', () => false)
   const domains = useState<Domain[]>('admin-domains', () => [])
   const organizationalUnits = useState<OrganizationalUnit[]>('admin-ous', () => [])
   const users = useState<UserRecord[]>('admin-users', () => [])
   const groups = useState<GroupRecord[]>('admin-groups', () => [])
   const syncDomains = useState<SyncDomain[]>('admin-sync-domains', () => [])
-  const tokenReady = computed(() => managementToken.value.trim().length > 0)
+  const tokenReady = computed(
+    () => authenticated.value && managementToken.value.trim().length > 0,
+  )
   const { setStatus } = useAdminStatus()
 
-  function loadToken() {
+  function resetData() {
+    domains.value = []
+    organizationalUnits.value = []
+    users.value = []
+    groups.value = []
+    syncDomains.value = []
+  }
+
+  function loadToken(): string {
     if (!import.meta.client) {
-      return
+      return ''
     }
-    managementToken.value = window.localStorage.getItem('adss.managementToken') ?? ''
+    const storedToken = window.localStorage.getItem('adss.managementToken') ?? ''
+    managementToken.value = storedToken
+    authenticated.value = false
+    return storedToken
   }
 
   function rememberToken(showMessage = true) {
@@ -40,15 +54,59 @@ export function useAdminApi() {
 
   function clearToken() {
     managementToken.value = ''
-    domains.value = []
-    organizationalUnits.value = []
-    users.value = []
-    groups.value = []
-    syncDomains.value = []
+    authenticated.value = false
+    resetData()
     if (import.meta.client) {
       window.localStorage.removeItem('adss.managementToken')
     }
     setStatus('管理凭证已清除')
+  }
+
+  async function authenticateToken(token: string, showSuccess = true) {
+    const trimmedToken = token.trim()
+    if (!trimmedToken) {
+      setStatus('请输入管理凭证', true)
+      return
+    }
+
+    loading.value = true
+    try {
+      const response = await fetch('/api/admin/domains', {
+        headers: {
+          authorization: `Bearer ${trimmedToken}`,
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(
+          response.status === 401 || response.status === 403
+            ? '管理凭证无效'
+            : `${response.status} ${response.statusText}`,
+        )
+      }
+
+      const payload = (await response.json()) as { domains: Domain[] }
+      managementToken.value = trimmedToken
+      authenticated.value = true
+      domains.value = payload.domains
+      if (import.meta.client) {
+        window.localStorage.setItem('adss.managementToken', trimmedToken)
+      }
+      await Promise.all([loadOus(), loadUsers(), loadGroups(), loadSyncDomains()])
+      if (showSuccess) {
+        setStatus('已进入管理台')
+      }
+    } catch (error) {
+      managementToken.value = ''
+      authenticated.value = false
+      resetData()
+      if (import.meta.client) {
+        window.localStorage.removeItem('adss.managementToken')
+      }
+      setStatus(error instanceof Error ? error.message : '管理凭证无效', true)
+    } finally {
+      loading.value = false
+    }
   }
 
   async function adminFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -141,6 +199,7 @@ export function useAdminApi() {
     loadToken,
     rememberToken,
     clearToken,
+    authenticateToken,
     adminFetch,
     runAction,
     loadDomains,

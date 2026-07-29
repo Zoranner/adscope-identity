@@ -3,12 +3,11 @@ import { Building2, Database, FolderTree, LogOut, RefreshCw, Workflow } from 'lu
 
 const route = useRoute()
 const {
-  managementToken,
   tokenReady,
   loading,
   loadToken,
-  rememberToken,
   clearToken,
+  authenticateToken,
   refreshAll,
 } = useAdminApi()
 const credentialDraft = ref('')
@@ -24,9 +23,9 @@ const activeTitle = computed(
 )
 
 onMounted(() => {
-  loadToken()
-  if (tokenReady.value) {
-    void refreshAll()
+  const storedToken = loadToken()
+  if (storedToken) {
+    void authenticateToken(storedToken, false)
   }
 })
 
@@ -35,9 +34,7 @@ async function submitCredential() {
   if (!token) {
     return
   }
-  managementToken.value = token
-  rememberToken(false)
-  await refreshAll()
+  await authenticateToken(token)
 }
 
 function exitManagement() {
