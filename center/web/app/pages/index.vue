@@ -35,7 +35,7 @@ const {
 const { setStatus } = useAdminStatus()
 
 const selectedOuId = ref<string | null>(null)
-const activeEditor = ref<EditorKey>('ou')
+const activeModal = ref<EditorKey | null>(null)
 const editingOuId = ref<string | null>(null)
 const selectedUserId = ref<string | null>(null)
 const selectedGroupId = ref<string | null>(null)
@@ -59,6 +59,18 @@ const selectedGroups = computed(() =>
     ? groups.value.filter((group) => group.organizational_unit_id === selectedOuId.value)
     : [],
 )
+const modalTitle = computed(() => {
+  if (activeModal.value === 'ou') {
+    return editingOuId.value ? '编辑 OU' : '创建 OU'
+  }
+  if (activeModal.value === 'user') {
+    return selectedUserId.value ? '编辑用户' : '创建用户'
+  }
+  if (activeModal.value === 'group') {
+    return selectedGroupId.value ? '编辑安全组' : '创建安全组'
+  }
+  return ''
+})
 
 watch(
   organizationalUnits,
@@ -85,10 +97,16 @@ function selectOu(id: string) {
     return
   }
   selectedOuId.value = id
-  activeEditor.value = 'ou'
+}
+
+function editOu(id: string) {
+  const ou = organizationalUnits.value.find((item) => item.id === id)
+  if (!ou) {
+    return
+  }
+  selectedOuId.value = id
+  activeModal.value = 'ou'
   editingOuId.value = id
-  selectedUserId.value = null
-  selectedGroupId.value = null
   assignForm(ouForm, {
     id: ou.id,
     name: ou.name,
@@ -97,7 +115,7 @@ function selectOu(id: string) {
 }
 
 function newOu(parentId: string | null = selectedOuId.value) {
-  activeEditor.value = 'ou'
+  activeModal.value = 'ou'
   editingOuId.value = null
   selectedUserId.value = null
   selectedGroupId.value = null
@@ -129,6 +147,7 @@ async function saveOu() {
       selectedOuId.value = ouForm.id
     }
     await Promise.all([loadOus(), loadSyncDomains()])
+    closeModal()
   }, { successMessage: editingOuId.value ? 'OU 已更新' : 'OU 已创建' })
 }
 
@@ -137,7 +156,7 @@ function newUser() {
     setStatus('请先选择 OU', true)
     return
   }
-  activeEditor.value = 'user'
+  activeModal.value = 'user'
   selectedUserId.value = null
   selectedGroupId.value = null
   assignForm(userForm, {
@@ -148,7 +167,7 @@ function newUser() {
 
 function editUser(user: UserRecord) {
   selectedOuId.value = user.organizational_unit_id
-  activeEditor.value = 'user'
+  activeModal.value = 'user'
   selectedUserId.value = user.employee_id
   selectedGroupId.value = null
   assignForm(userForm, {
@@ -193,6 +212,7 @@ async function saveUser() {
     }
     selectedOuId.value = userForm.organizational_unit_id
     await Promise.all([loadUsers(), loadSyncDomains()])
+    closeModal()
   }, { successMessage: selectedUserId.value ? '用户已更新' : '用户已创建' })
 }
 
@@ -232,7 +252,7 @@ function newGroup() {
     setStatus('请先选择 OU', true)
     return
   }
-  activeEditor.value = 'group'
+  activeModal.value = 'group'
   selectedGroupId.value = null
   selectedUserId.value = null
   assignForm(groupForm, {
@@ -243,7 +263,7 @@ function newGroup() {
 
 function editGroup(group: GroupRecord) {
   selectedOuId.value = group.organizational_unit_id
-  activeEditor.value = 'group'
+  activeModal.value = 'group'
   selectedGroupId.value = group.id
   selectedUserId.value = null
   assignForm(groupForm, {
@@ -290,7 +310,12 @@ async function saveGroup() {
     }
     selectedOuId.value = groupForm.organizational_unit_id
     await Promise.all([loadGroups(), loadSyncDomains()])
+    closeModal()
   }, { successMessage: selectedGroupId.value ? '组已更新' : '组已创建' })
+}
+
+function closeModal() {
+  activeModal.value = null
 }
 </script>
 
@@ -324,6 +349,7 @@ async function saveGroup() {
               <FolderTree :size="16" />
               子 OU
             </button>
+            <button class="secondary-button" @click="editOu(selectedOu.id)">编辑 OU</button>
             <button class="primary-button" @click="newUser">
               <Users :size="16" />
               用户
@@ -350,54 +376,42 @@ async function saveGroup() {
           @edit="editGroup"
         />
       </div>
-
-      <aside class="editor-panel">
-        <div class="editor-tabs">
-          <button class="secondary-button" :class="{ active: activeEditor === 'ou' }" @click="activeEditor = 'ou'">
-            OU
-          </button>
-          <button class="secondary-button" :class="{ active: activeEditor === 'user' }" @click="newUser">
-            用户
-          </button>
-          <button class="secondary-button" :class="{ active: activeEditor === 'group' }" @click="newGroup">
-            组
-          </button>
-        </div>
-
-        <OuEditor
-          v-if="activeEditor === 'ou'"
-          v-model="ouForm"
-          :items="treeItems"
-          :editing-id="editingOuId"
-          :loading="loading"
-          :disabled="!tokenReady"
-          @save="saveOu"
-          @reset="newOu(selectedOuId)"
-        />
-        <UserEditor
-          v-else-if="activeEditor === 'user'"
-          v-model="userForm"
-          :items="treeItems"
-          :editing-id="selectedUserId"
-          :loading="loading"
-          :disabled="!tokenReady"
-          @save="saveUser"
-          @reset="newUser"
-          @enable="setUserEnabled(true)"
-          @disable="setUserEnabled(false)"
-          @reset-password="resetUserPassword"
-        />
-        <GroupEditor
-          v-else
-          v-model="groupForm"
-          :items="treeItems"
-          :editing-id="selectedGroupId"
-          :loading="loading"
-          :disabled="!tokenReady"
-          @save="saveGroup"
-          @reset="newGroup"
-        />
-      </aside>
     </section>
+
+    <AdminModal :open="activeModal !== null" :title="modalTitle" width="wide" @close="closeModal">
+      <OuEditor
+        v-if="activeModal === 'ou'"
+        v-model="ouForm"
+        :items="treeItems"
+        :editing-id="editingOuId"
+        :loading="loading"
+        :disabled="!tokenReady"
+        @save="saveOu"
+        @reset="newOu(selectedOuId)"
+      />
+      <UserEditor
+        v-else-if="activeModal === 'user'"
+        v-model="userForm"
+        :items="treeItems"
+        :editing-id="selectedUserId"
+        :loading="loading"
+        :disabled="!tokenReady"
+        @save="saveUser"
+        @reset="newUser"
+        @enable="setUserEnabled(true)"
+        @disable="setUserEnabled(false)"
+        @reset-password="resetUserPassword"
+      />
+      <GroupEditor
+        v-else-if="activeModal === 'group'"
+        v-model="groupForm"
+        :items="treeItems"
+        :editing-id="selectedGroupId"
+        :loading="loading"
+        :disabled="!tokenReady"
+        @save="saveGroup"
+        @reset="newGroup"
+      />
+    </AdminModal>
   </AdminShell>
 </template>

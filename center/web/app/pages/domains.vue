@@ -15,6 +15,7 @@ const {
 } = useAdminApi()
 
 const selectedDomainId = ref<string | null>(null)
+const modalOpen = ref(false)
 const domainForm = reactive<DomainForm>(blankDomainForm())
 
 function assignForm<T extends object>(target: T, source: T) {
@@ -24,10 +25,12 @@ function assignForm<T extends object>(target: T, source: T) {
 function newDomain() {
   selectedDomainId.value = null
   assignForm(domainForm, blankDomainForm())
+  modalOpen.value = true
 }
 
 function editDomain(domain: Domain) {
   selectedDomainId.value = domain.id
+  modalOpen.value = true
   assignForm(domainForm, {
     id: domain.id,
     name: domain.name,
@@ -74,6 +77,7 @@ async function saveDomain() {
       })
     }
     await Promise.all([loadDomains(), loadSyncDomains()])
+    modalOpen.value = false
   }, { successMessage: selectedDomainId.value ? '域配置已更新' : '域配置已创建' })
 }
 </script>
@@ -89,8 +93,16 @@ async function saveDomain() {
     />
     <AdminStatusLine />
 
-    <section class="workspace-grid">
+    <section class="single-column-page">
       <DomainTable :domains="domains" @create="newDomain" @edit="editDomain" />
+    </section>
+
+    <AdminModal
+      :open="modalOpen"
+      :title="selectedDomainId ? '编辑域' : '创建域'"
+      width="wide"
+      @close="modalOpen = false"
+    >
       <DomainEditor
         v-model="domainForm"
         :editing-id="selectedDomainId"
@@ -99,6 +111,6 @@ async function saveDomain() {
         @save="saveDomain"
         @reset="newDomain"
       />
-    </section>
+    </AdminModal>
   </AdminShell>
 </template>
