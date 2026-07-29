@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Building2, Database, FolderTree, KeyRound, RefreshCw, Workflow } from 'lucide-vue-next'
+import { Building2, Database, FolderTree, LogOut, RefreshCw, Workflow } from 'lucide-vue-next'
 
 const route = useRoute()
 const {
@@ -11,6 +11,7 @@ const {
   clearToken,
   refreshAll,
 } = useAdminApi()
+const credentialDraft = ref('')
 
 const navItems = [
   { to: '/', label: '目录', icon: FolderTree },
@@ -28,6 +29,21 @@ onMounted(() => {
     void refreshAll()
   }
 })
+
+async function submitCredential() {
+  const token = credentialDraft.value.trim()
+  if (!token) {
+    return
+  }
+  managementToken.value = token
+  rememberToken(false)
+  await refreshAll()
+}
+
+function exitManagement() {
+  credentialDraft.value = ''
+  clearToken()
+}
 </script>
 
 <template>
@@ -45,22 +61,34 @@ onMounted(() => {
         </span>
       </NuxtLink>
 
-      <div class="token-panel">
-        <KeyRound :size="18" />
-        <input v-model="managementToken" type="password" placeholder="管理凭证" />
-        <button class="secondary-button" :disabled="!managementToken" @click="rememberToken">
-          保存
-        </button>
+      <div v-if="tokenReady" class="topbar-actions">
         <button class="icon-button" title="刷新" :disabled="loading || !tokenReady" @click="refreshAll">
           <RefreshCw :size="17" />
         </button>
-        <button class="icon-button" title="清除凭证" @click="clearToken">
-          <KeyRound :size="17" />
+        <button class="secondary-button" @click="exitManagement">
+          <LogOut :size="16" />
+          退出
         </button>
       </div>
     </header>
 
-    <div class="layout">
+    <main v-if="!tokenReady" class="credential-screen">
+      <form class="credential-card" @submit.prevent="submitCredential">
+        <div>
+          <h1>管理入口</h1>
+          <p>输入中心服务的管理凭证后进入控制台。</p>
+        </div>
+        <div class="field">
+          <label>管理凭证</label>
+          <input v-model="credentialDraft" type="password" autocomplete="current-password" autofocus />
+        </div>
+        <button class="primary-button" :disabled="!credentialDraft.trim() || loading">
+          进入
+        </button>
+      </form>
+    </main>
+
+    <div v-else class="layout">
       <aside class="sidebar">
         <nav class="nav-list">
           <NuxtLink

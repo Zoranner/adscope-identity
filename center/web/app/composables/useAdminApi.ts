@@ -28,12 +28,14 @@ export function useAdminApi() {
     managementToken.value = window.localStorage.getItem('adss.managementToken') ?? ''
   }
 
-  function rememberToken() {
+  function rememberToken(showMessage = true) {
     if (!import.meta.client) {
       return
     }
     window.localStorage.setItem('adss.managementToken', managementToken.value.trim())
-    setStatus('管理凭证已保存到当前浏览器')
+    if (showMessage) {
+      setStatus('管理凭证已保存到当前浏览器')
+    }
   }
 
   function clearToken() {

@@ -90,9 +90,9 @@ button:disabled {
   line-height: 1.2;
 }
 
-.token-panel {
+.topbar-actions {
   display: grid;
-  grid-template-columns: auto minmax(180px, 320px) auto auto auto;
+  grid-template-columns: auto auto;
   align-items: center;
   gap: 8px;
 }
@@ -179,6 +179,36 @@ button:disabled {
 .content {
   min-width: 0;
   padding: 20px;
+}
+
+.credential-screen {
+  min-height: calc(100vh - 64px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.credential-card {
+  display: grid;
+  gap: 16px;
+  width: min(420px, 100%);
+  border: 1px solid #d8dee7;
+  border-radius: 8px;
+  padding: 22px;
+  background: #ffffff;
+  box-shadow: 0 14px 40px rgba(12, 20, 31, 0.08);
+}
+
+.credential-card h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.credential-card p {
+  margin: 6px 0 0;
+  color: #647384;
+  font-size: 13px;
 }
 
 .view-header {
@@ -450,7 +480,6 @@ strong {
 .field input,
 .field select,
 .field textarea,
-.token-panel input,
 .table-toolbar input {
   width: 100%;
   min-height: 36px;
@@ -623,10 +652,6 @@ strong {
     min-width: 0;
   }
 
-  .token-panel {
-    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-  }
-
   .layout {
     grid-template-columns: 1fr;
   }
@@ -671,11 +696,7 @@ strong {
     grid-template-columns: 1fr;
   }
 
-  .token-panel {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .token-panel .icon-button {
-    display: none;
+  .topbar-actions {
+    grid-template-columns: 1fr;
   }
 }
