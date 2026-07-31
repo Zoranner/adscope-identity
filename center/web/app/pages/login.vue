@@ -60,7 +60,6 @@ async function submitLogin() {
           <LogIn :size="16" />
           登录
         </button>
-        <NuxtLink class="text-link" to="/admin">管理入口</NuxtLink>
       </form>
     </main>
   </div>
