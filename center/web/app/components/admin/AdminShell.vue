@@ -13,9 +13,9 @@ const {
 const credentialDraft = ref('')
 
 const navItems = [
-  { to: '/', label: '目录', icon: FolderTree },
-  { to: '/domains', label: '域', icon: Building2 },
-  { to: '/sync', label: '同步', icon: Workflow },
+  { to: '/admin', label: '目录', icon: FolderTree },
+  { to: '/admin/domains', label: '域', icon: Building2 },
+  { to: '/admin/sync', label: '同步', icon: Workflow },
 ]
 
 const activeTitle = computed(
@@ -48,7 +48,7 @@ function exitManagement() {
     <AdminStatusLine />
 
     <header class="topbar">
-      <NuxtLink class="brand" to="/">
+      <NuxtLink class="brand" to="/admin">
         <span class="brand-mark">
           <Database :size="22" />
         </span>

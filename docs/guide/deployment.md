@@ -24,7 +24,7 @@ cp connector/.env.example <connector-runtime-dir>/.env
 
 `ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
-管理 Web 使用 Nuxt 静态构建，由主服务统一托管。构建命令在 `center/web` 下执行：
+Web 使用 Nuxt 静态构建，由主服务统一托管。构建命令在 `center/web` 下执行：
 
 ```text
 bun install
@@ -33,7 +33,7 @@ bun run build
 
 构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `ADSS_WEB_ROOT` 指定静态文件目录。
 
-主服务会优先匹配 `/api/*`，非 API 请求由 Web 静态文件处理。未知 `/api/*` 返回 API 404，不会回退到前端页面。
+主服务会优先匹配 `/api/*`，非 API 请求由 Web 静态文件处理。普通用户入口为 `/login`，管理入口为 `/admin`。未知 `/api/*` 返回 API 404，不会回退到前端页面。
 
 ## 域配置初始化
 

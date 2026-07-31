@@ -211,6 +211,13 @@ button:disabled {
   font-size: 13px;
 }
 
+.text-link {
+  justify-self: start;
+  color: #1e6472;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .view-header {
   display: flex;
   align-items: flex-start;
@@ -455,6 +462,58 @@ strong {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.form-error {
+  margin: -2px 0 0;
+  color: #9b3f39;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.user-content {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.user-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.profile-list {
+  display: grid;
+  margin: 0;
+  padding: 6px 14px;
+}
+
+.profile-list > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e4e9f0;
+}
+
+.profile-list > div:last-child {
+  border-bottom: 0;
+}
+
+.profile-list dt {
+  color: #647384;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-list dd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  color: #17202c;
+  font-size: 13px;
 }
 
 .pagination-bar {
