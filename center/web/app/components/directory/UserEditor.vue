@@ -35,9 +35,18 @@ defineEmits<{
         <input v-model="form.username" required />
       </div>
     </div>
-    <div class="field">
-      <label>显示名</label>
-      <input v-model="form.display_name" required />
+    <div class="form-row">
+      <div class="field">
+        <label>显示名</label>
+        <input v-model="form.display_name" required />
+      </div>
+      <div class="field">
+        <label>状态</label>
+        <select v-model="form.status">
+          <option value="active">启用</option>
+          <option value="disabled">禁用</option>
+        </select>
+      </div>
     </div>
     <div class="field">
       <label>所属 OU</label>
@@ -55,13 +64,6 @@ defineEmits<{
       <div class="field">
         <label>手机</label>
         <input v-model="form.mobile" />
-      </div>
-      <div class="field">
-        <label>状态</label>
-        <select v-model="form.status">
-          <option value="active">启用</option>
-          <option value="disabled">禁用</option>
-        </select>
       </div>
     </div>
     <div v-if="!editingId" class="field">
