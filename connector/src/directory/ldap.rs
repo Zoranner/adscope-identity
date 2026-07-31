@@ -96,6 +96,23 @@ impl LdapDirectoryClient {
             return Ok(());
         }
 
+        if self.config.adopt_existing_users_by_username
+            && let Some(dn) = find_adoptable_user_dn_by_username(ldap, context, user).await?
+        {
+            ldap.modify(
+                &dn,
+                user_mods(
+                    user,
+                    &context.domain.employee_id_attribute,
+                    &context.domain.upn_suffix,
+                    user_account_control,
+                ),
+            )
+            .await?
+            .success()?;
+            return Ok(());
+        }
+
         let ou_dn = context.organizational_unit_dn(&user.organizational_unit_id)?;
         let dn = format!("CN={},{}", escape_ldap_dn_value(&user.username), ou_dn);
         ldap.add(
@@ -345,6 +362,61 @@ async fn find_user_dn(
     search_managed_dn(ldap, context, &filter).await
 }
 
+async fn find_adoptable_user_dn_by_username(
+    ldap: &mut Ldap,
+    context: &DirectoryExecutionContext,
+    user: &User,
+) -> anyhow::Result<Option<String>> {
+    validate_ldap_attribute_name(&context.domain.employee_id_attribute)?;
+    let filter = adoption_username_filter(&user.username);
+    let mut matched_dn = None;
+    for base in managed_search_bases(context) {
+        let (entries, _) = ldap
+            .search(
+                &base,
+                Scope::Subtree,
+                &filter,
+                vec!["distinguishedName", &context.domain.employee_id_attribute],
+            )
+            .await?
+            .success()?;
+        for entry in entries {
+            let entry = SearchEntry::construct(entry);
+            if matched_dn.is_some() {
+                anyhow::bail!("managed AD search returned more than one object for {filter}");
+            }
+            let employee_id_values = entry
+                .attrs
+                .get(&context.domain.employee_id_attribute)
+                .cloned()
+                .unwrap_or_default();
+            ensure_adoption_candidate_has_no_employee_id(
+                &context.domain.employee_id_attribute,
+                &employee_id_values,
+            )?;
+            matched_dn = Some(entry.dn);
+        }
+    }
+    Ok(matched_dn)
+}
+
+fn adoption_username_filter(username: &str) -> String {
+    format!(
+        "(&(objectClass=user)(sAMAccountName={}))",
+        escape_ldap_filter_value(username)
+    )
+}
+
+fn ensure_adoption_candidate_has_no_employee_id(
+    employee_id_attribute: &str,
+    values: &[String],
+) -> anyhow::Result<()> {
+    if values.iter().any(|value| !value.trim().is_empty()) {
+        anyhow::bail!("existing AD user already has {employee_id_attribute}");
+    }
+    Ok(())
+}
+
 async fn require_user_dn(
     ldap: &mut Ldap,
     context: &DirectoryExecutionContext,
@@ -565,4 +637,42 @@ pub fn encode_ad_unicode_password(password: &str) -> Vec<u8> {
         .encode_utf16()
         .flat_map(u16::to_le_bytes)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adoption_username_filter_targets_sam_account_name_and_escapes_value() {
+        assert_eq!(
+            adoption_username_filter(r#"zhang*(san)\0"#),
+            r#"(&(objectClass=user)(sAMAccountName=zhang\2a\28san\29\5c0))"#
+        );
+    }
+
+    #[test]
+    fn adoption_rejects_existing_employee_id_values() {
+        let error = ensure_adoption_candidate_has_no_employee_id(
+            "employeeID",
+            &[String::new(), "1002".to_string()],
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("existing AD user already has employeeID")
+        );
+    }
+
+    #[test]
+    fn adoption_accepts_missing_or_blank_employee_id_values() {
+        ensure_adoption_candidate_has_no_employee_id("employeeID", &[]).unwrap();
+        ensure_adoption_candidate_has_no_employee_id(
+            "employeeID",
+            &[String::new(), " ".to_string()],
+        )
+        .unwrap();
+    }
 }

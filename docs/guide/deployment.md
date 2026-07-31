@@ -56,6 +56,8 @@ ADSS_LDAP_BIND_PASSWORD=<from-local-secret>
 
 Connector 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；如果域控策略要求加密密码修改，应按域策略启用 `ldaps://` 或等价受保护绑定。
 
+历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `ADSS_ADOPT_EXISTING_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写中心 `employee_id`。迁移完成后应关闭该开关。
+
 本地 state 文件只保存：
 
 ```json

@@ -15,6 +15,7 @@ pub struct LdapDirectoryConfig {
     pub bind_dn: String,
     pub bind_password: String,
     pub accept_invalid_certs: bool,
+    pub adopt_existing_users_by_username: bool,
 }
 
 const DEFAULT_STATE_PATH: &str = "adss-connector-state.json";
@@ -70,6 +71,11 @@ impl ConnectorProcessConfig {
                 accept_invalid_certs: std::env::var("ADSS_LDAP_ACCEPT_INVALID_CERTS")
                     .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
                     .unwrap_or(false),
+                adopt_existing_users_by_username: std::env::var(
+                    "ADSS_ADOPT_EXISTING_USERS_BY_USERNAME",
+                )
+                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
             })
         };
 

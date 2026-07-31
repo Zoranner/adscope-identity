@@ -253,6 +253,7 @@ fn connector_process_config_parses_ldap_settings_from_env() {
         );
         std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
         std::env::set_var("ADSS_LDAP_ACCEPT_INVALID_CERTS", "true");
+        std::env::set_var("ADSS_ADOPT_EXISTING_USERS_BY_USERNAME", "true");
     }
 
     let config = ConnectorProcessConfig::from_env().unwrap();
@@ -266,6 +267,7 @@ fn connector_process_config_parses_ldap_settings_from_env() {
     assert_eq!(ldap.bind_dn, "CN=adss-connector,OU=Svc,DC=example,DC=com");
     assert_eq!(ldap.bind_password, "BindSecret123!");
     assert!(ldap.accept_invalid_certs);
+    assert!(ldap.adopt_existing_users_by_username);
 
     clear_connector_env();
 }
@@ -284,6 +286,7 @@ fn configured_directory_client_selects_ldap_without_dry_run() {
             bind_dn: "CN=adss-connector,OU=Svc,DC=example,DC=com".to_string(),
             bind_password: "BindSecret123!".to_string(),
             accept_invalid_certs: false,
+            adopt_existing_users_by_username: false,
         }),
     );
 
@@ -324,6 +327,7 @@ fn clear_connector_env() {
         std::env::remove_var("ADSS_LDAP_BIND_DN");
         std::env::remove_var("ADSS_LDAP_BIND_PASSWORD");
         std::env::remove_var("ADSS_LDAP_ACCEPT_INVALID_CERTS");
+        std::env::remove_var("ADSS_ADOPT_EXISTING_USERS_BY_USERNAME");
     }
 }
 
