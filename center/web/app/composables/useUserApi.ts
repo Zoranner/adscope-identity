@@ -64,10 +64,10 @@ export function useUserApi() {
     return (await response.json()) as T
   }
 
-  async function login(employeeId: string, password: string): Promise<boolean> {
-    const trimmedEmployeeId = employeeId.trim()
-    if (!trimmedEmployeeId || !password) {
-      setStatus('请输入工号和密码', true)
+  async function login(username: string, password: string): Promise<boolean> {
+    const trimmedUsername = username.trim()
+    if (!trimmedUsername || !password) {
+      setStatus('请输入用户名和密码', true)
       return false
     }
 
@@ -77,7 +77,7 @@ export function useUserApi() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          employee_id: trimmedEmployeeId,
+          username: trimmedUsername,
           password,
         }),
       })
@@ -85,7 +85,7 @@ export function useUserApi() {
       if (!response.ok) {
         throw new Error(
           response.status === 401 || response.status === 403
-            ? '工号或密码错误'
+            ? '用户名或密码错误'
             : `${response.status} ${response.statusText}`,
         )
       }

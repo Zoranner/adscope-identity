@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS users (
         self.db
             .execute_unprepared(
                 r#"
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users(username)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
 CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
@@ -323,6 +330,17 @@ CREATE TABLE IF NOT EXISTS domains (
         use entities::user;
 
         user::Entity::find_by_id(employee_id)
+            .one(&self.db)
+            .await?
+            .map(User::try_from)
+            .transpose()
+    }
+
+    pub async fn get_user_by_username(&self, username: &str) -> anyhow::Result<Option<User>> {
+        use entities::user;
+
+        user::Entity::find()
+            .filter(user::Column::Username.eq(username))
             .one(&self.db)
             .await?
             .map(User::try_from)

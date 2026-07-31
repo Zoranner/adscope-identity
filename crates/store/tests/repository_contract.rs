@@ -1,6 +1,7 @@
 use adss_protocol::{Group, OrganizationalUnit, UserStatus};
 use adss_store::{
     DomainRecord, Repository, UserContactPatch, UserCredentialInput, UserDirectoryPatch,
+    UserListFilter,
 };
 use sea_orm::{ConnectionTrait, Database};
 use std::{
@@ -54,6 +55,58 @@ async fn repository_updates_directory_objects_in_one_revision() {
     assert_eq!(batch.groups[0].organizational_unit_id, "ou-rd");
     assert_eq!(batch.groups[0].changed_revision, 1);
     assert!(!batch.has_more);
+}
+
+#[tokio::test]
+async fn repository_gets_user_by_username() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch_with_username(
+                "1001",
+                "zhangsan",
+                "zhangsan@example.com",
+            )],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+    let user = repository
+        .get_user_by_username("zhangsan")
+        .await
+        .unwrap()
+        .unwrap();
+    let missing = repository.get_user_by_username("lisi").await.unwrap();
+
+    assert_eq!(user.employee_id, "1001");
+    assert_eq!(user.username, "zhangsan");
+    assert!(missing.is_none());
+}
+
+#[tokio::test]
+async fn repository_rejects_duplicate_usernames() {
+    let repository = sqlite_repository().await;
+
+    let result = repository
+        .upsert_directory(
+            Vec::new(),
+            vec![
+                user_patch_with_username("1001", "zhangsan", "first@example.com"),
+                user_patch_with_username("1002", "zhangsan", "second@example.com"),
+            ],
+            Vec::new(),
+        )
+        .await;
+    let users = repository
+        .list_users(UserListFilter::default())
+        .await
+        .unwrap();
+
+    assert!(result.is_err());
+    assert!(users.is_empty());
 }
 
 #[tokio::test]
@@ -707,9 +760,13 @@ fn domain() -> DomainRecord {
 }
 
 fn user_patch(employee_id: &str, email: &str) -> UserDirectoryPatch {
+    user_patch_with_username(employee_id, employee_id, email)
+}
+
+fn user_patch_with_username(employee_id: &str, username: &str, email: &str) -> UserDirectoryPatch {
     UserDirectoryPatch {
         employee_id: employee_id.to_string(),
-        username: employee_id.to_string(),
+        username: username.to_string(),
         display_name: employee_id.to_string(),
         email: Some(email.to_string()),
         mobile: None,

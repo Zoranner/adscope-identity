@@ -340,7 +340,7 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
     )
     .await;
     assert_eq!(reset["credential_revision"], 2);
-    login(&app, "1001", "ResetPass123!").await;
+    login(&app, "zhangsan", "ResetPass123!").await;
 
     let created_group = admin_json(
         &app,
@@ -456,6 +456,27 @@ async fn login_returns_user_access_token_for_self_service() {
     let token = login_token(&app, "1001", "OldPass123!").await;
 
     assert!(token.starts_with("adss-user-session:v1:1001:"));
+}
+
+#[tokio::test]
+async fn login_uses_username_not_employee_id() {
+    let TestApp { app, .. } = test_app_with_seeded_user("1001", "zhangsan", "OldPass123!").await;
+
+    let token = login_token(&app, "zhangsan", "OldPass123!").await;
+    let employee_id_login = app
+        .clone()
+        .oneshot(json_request(
+            "/api/auth/login",
+            &UserLoginRequest {
+                username: "1001".to_string(),
+                password: "OldPass123!".to_string(),
+            },
+        ))
+        .await
+        .expect("login response");
+
+    assert!(token.starts_with("adss-user-session:v1:1001:"));
+    assert_eq!(employee_id_login.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -589,7 +610,7 @@ async fn login_rejects_same_length_wrong_password() {
         .oneshot(json_request(
             "/api/auth/login",
             &UserLoginRequest {
-                employee_id: "1001".to_string(),
+                username: "1001".to_string(),
                 password: "BadPass123!".to_string(),
             },
         ))
@@ -882,6 +903,9 @@ async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_c
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain(true)).await.unwrap();
+    seed_user(&repository, "1001", "old@example.com")
+        .await
+        .unwrap();
     repository
         .change_user_password(UserCredentialInput {
             employee_id: "1001".to_string(),
@@ -939,15 +963,19 @@ async fn test_app_with_domain_enabled(enabled: bool) -> TestApp {
 }
 
 async fn test_app_with_seeded_credential(password: &str) -> TestApp {
+    test_app_with_seeded_user("1001", "1001", password).await
+}
+
+async fn test_app_with_seeded_user(employee_id: &str, username: &str, password: &str) -> TestApp {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
     repository.seed_domain(domain(true)).await.unwrap();
-    seed_user(&repository, "1001", "old@example.com")
+    seed_user_with_username(&repository, employee_id, username, "old@example.com")
         .await
         .unwrap();
     repository
         .change_user_password(UserCredentialInput {
-            employee_id: "1001".to_string(),
+            employee_id: employee_id.to_string(),
             password_ciphertext: seal_password_for_storage(password),
             password_verifier: password_verifier(password),
         })
@@ -983,13 +1011,13 @@ async fn patch_user(app: &axum::Router, employee_id: &str, email: &str) {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-async fn login(app: &axum::Router, employee_id: &str, password: &str) {
+async fn login(app: &axum::Router, username: &str, password: &str) {
     let response = app
         .clone()
         .oneshot(json_request(
             "/api/auth/login",
             &UserLoginRequest {
-                employee_id: employee_id.to_string(),
+                username: username.to_string(),
                 password: password.to_string(),
             },
         ))
@@ -999,13 +1027,13 @@ async fn login(app: &axum::Router, employee_id: &str, password: &str) {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-async fn login_token(app: &axum::Router, employee_id: &str, password: &str) -> String {
+async fn login_token(app: &axum::Router, username: &str, password: &str) -> String {
     let response = app
         .clone()
         .oneshot(json_request(
             "/api/auth/login",
             &UserLoginRequest {
-                employee_id: employee_id.to_string(),
+                username: username.to_string(),
                 password: password.to_string(),
             },
         ))
@@ -1256,6 +1284,15 @@ fn test_web_root() -> std::path::PathBuf {
 }
 
 async fn seed_user(repository: &Repository, employee_id: &str, email: &str) -> anyhow::Result<u64> {
+    seed_user_with_username(repository, employee_id, employee_id, email).await
+}
+
+async fn seed_user_with_username(
+    repository: &Repository,
+    employee_id: &str,
+    username: &str,
+    email: &str,
+) -> anyhow::Result<u64> {
     repository
         .upsert_directory(
             vec![adss_protocol::OrganizationalUnit {
@@ -1266,7 +1303,7 @@ async fn seed_user(repository: &Repository, employee_id: &str, email: &str) -> a
             }],
             vec![UserDirectoryPatch {
                 employee_id: employee_id.to_string(),
-                username: employee_id.to_string(),
+                username: username.to_string(),
                 display_name: format!("User {employee_id}"),
                 email: Some(email.to_string()),
                 mobile: Some("13800000000".to_string()),

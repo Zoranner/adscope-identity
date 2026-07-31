@@ -57,9 +57,15 @@ async fn login(
     State(state): State<AppState>,
     Json(request): Json<UserLoginRequest>,
 ) -> Result<Json<UserLoginResponse>, ApiError> {
+    let user = state
+        .repository
+        .get_user_by_username(&request.username)
+        .await
+        .map_err(|_| ApiError::Persistence)?
+        .ok_or(ApiError::Unauthorized)?;
     let credential = state
         .repository
-        .get_credential_record(&request.employee_id)
+        .get_credential_record(&user.employee_id)
         .await
         .map_err(|_| ApiError::Persistence)?
         .ok_or(ApiError::Unauthorized)?;
@@ -72,7 +78,7 @@ async fn login(
     }
 
     Ok(Json(UserLoginResponse {
-        employee_id: request.employee_id,
+        employee_id: user.employee_id,
         access_token: state
             .user_sessions
             .issue(&credential.employee_id)

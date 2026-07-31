@@ -160,7 +160,7 @@ pub struct ConnectorConfirmResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserLoginRequest {
-    pub employee_id: String,
+    pub username: String,
     pub password: String,
 }
 

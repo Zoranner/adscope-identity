@@ -3,7 +3,7 @@ import { Database, LogIn } from 'lucide-vue-next'
 
 const { loading, loadToken, loadMe, login } = useUserApi()
 
-const employeeId = ref('')
+const username = ref('')
 const password = ref('')
 
 onMounted(async () => {
@@ -18,7 +18,7 @@ onMounted(async () => {
 })
 
 async function submitLogin() {
-  const ok = await login(employeeId.value, password.value)
+  const ok = await login(username.value, password.value)
   if (ok) {
     password.value = ''
     await navigateTo('/me', { replace: true })
@@ -49,14 +49,14 @@ async function submitLogin() {
           <p>使用中心账号登录，维护本人资料和密码。</p>
         </div>
         <div class="field">
-          <label>工号</label>
-          <input v-model="employeeId" autocomplete="username" autofocus />
+          <label>用户名</label>
+          <input v-model="username" autocomplete="username" autofocus />
         </div>
         <div class="field">
           <label>密码</label>
           <input v-model="password" type="password" autocomplete="current-password" />
         </div>
-        <button class="primary-button" :disabled="loading || !employeeId.trim() || !password">
+        <button class="primary-button" :disabled="loading || !username.trim() || !password">
           <LogIn :size="16" />
           登录
         </button>

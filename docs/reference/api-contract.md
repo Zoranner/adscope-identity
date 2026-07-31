@@ -38,13 +38,14 @@ API 按调用身份分组：
 
 ```json
 {
-  "employee_id": "1001",
+  "username": "zhangsan",
   "password": "CurrentPass123!"
 }
 ```
 
 行为：
 
+- 根据 `users.username` 定位用户。用户名必须唯一，不能用工号代替登录名。
 - 使用 `user_credentials.password_verifier` 验证用户提交的密码。
 - 登录成功后签发普通用户自助接口使用的 Bearer token。
 - 登录失败返回 `401 Unauthorized`。
