@@ -5,8 +5,12 @@ use adss_store::{
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, header},
+    http::{HeaderMap, HeaderValue, header},
     routing::{get, patch, post, put},
+};
+use chacha20poly1305::{
+    XChaCha20Poly1305,
+    aead::{KeyInit, OsRng},
 };
 use serde::{Deserialize, Serialize};
 
@@ -67,11 +71,12 @@ async fn create_domain(
     headers: HeaderMap,
     State(state): State<AppState>,
     Json(request): Json<CreateDomainRequest>,
-) -> Result<Json<DomainResponse>, ApiError> {
+) -> Result<(HeaderMap, Json<DomainMutationResponse>), ApiError> {
     authorize_management(&headers, &state)?;
+    let connector_key = generate_connector_key();
     let domain = state
         .repository
-        .upsert_domain(DomainRecord {
+        .create_domain(DomainRecord {
             id: request.id,
             name: request.name,
             enabled: request.enabled,
@@ -80,14 +85,15 @@ async fn create_domain(
             upn_suffix: request.upn_suffix,
             employee_id_attribute: request.employee_id_attribute,
             managed_group_id_attribute: request.managed_group_id_attribute,
-            connector_key_hash: connector_key_hash(&request.connector_key),
+            connector_key_hash: connector_key_hash(&connector_key),
             applied_directory_revision: 0,
             applied_credential_revision: 0,
         })
         .await
-        .map_err(|_| ApiError::Persistence)?;
+        .map_err(|_| ApiError::Persistence)?
+        .ok_or(ApiError::Conflict)?;
 
-    Ok(Json(DomainResponse::from(domain)))
+    Ok(domain_mutation_response(domain, connector_key))
 }
 
 async fn update_domain(
@@ -95,8 +101,9 @@ async fn update_domain(
     State(state): State<AppState>,
     Path(domain_id): Path<String>,
     Json(request): Json<DomainPatchRequest>,
-) -> Result<Json<DomainResponse>, ApiError> {
+) -> Result<(HeaderMap, Json<DomainMutationResponse>), ApiError> {
     authorize_management(&headers, &state)?;
+    let connector_key = generate_connector_key();
     let domain = state
         .repository
         .update_domain(
@@ -109,12 +116,14 @@ async fn update_domain(
                 upn_suffix: Some(request.upn_suffix),
                 employee_id_attribute: Some(request.employee_id_attribute),
                 managed_group_id_attribute: Some(request.managed_group_id_attribute),
+                connector_key_hash: Some(connector_key_hash(&connector_key)),
             },
         )
         .await
-        .map_err(|_| ApiError::Persistence)?;
+        .map_err(|_| ApiError::Persistence)?
+        .ok_or(ApiError::NotFound)?;
 
-    Ok(Json(DomainResponse::from(domain)))
+    Ok(domain_mutation_response(domain, connector_key))
 }
 
 async fn list_organizational_units(
@@ -610,7 +619,33 @@ struct DomainListResponse {
     domains: Vec<DomainResponse>,
 }
 
+#[derive(Debug, Serialize)]
+struct DomainMutationResponse {
+    domain: DomainResponse,
+    connector_key: String,
+}
+
+fn generate_connector_key() -> String {
+    hex::encode(XChaCha20Poly1305::generate_key(&mut OsRng))
+}
+
+fn domain_mutation_response(
+    domain: DomainRecord,
+    connector_key: String,
+) -> (HeaderMap, Json<DomainMutationResponse>) {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    (
+        headers,
+        Json(DomainMutationResponse {
+            domain: DomainResponse::from(domain),
+            connector_key,
+        }),
+    )
+}
+
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CreateDomainRequest {
     id: String,
     name: String,
@@ -620,10 +655,10 @@ struct CreateDomainRequest {
     upn_suffix: String,
     employee_id_attribute: String,
     managed_group_id_attribute: String,
-    connector_key: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DomainPatchRequest {
     name: String,
     enabled: bool,

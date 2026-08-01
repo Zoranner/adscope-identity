@@ -138,6 +138,301 @@ async fn admin_routes_do_not_expose_connector_key_rotation() {
 }
 
 #[tokio::test]
+async fn creating_domain_generates_one_time_connector_key() {
+    let TestApp { app, repository } = test_app().await;
+
+    let response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/admin/domains",
+            &json!({
+                "id": "domain-generated-key",
+                "name": "Generated Key Domain",
+                "enabled": true,
+                "mirror_root_dn": "OU=Mirror,DC=generated,DC=example,DC=com",
+                "quarantine_ou_dn": "OU=Quarantine,DC=generated,DC=example,DC=com",
+                "upn_suffix": "generated.example.com",
+                "employee_id_attribute": "employeeID",
+                "managed_group_id_attribute": "adminDescription"
+            }),
+        ))
+        .await
+        .expect("create domain response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["domain"]["id"], "domain-generated-key");
+    assert!(body["domain"].get("connector_key").is_none());
+    assert!(body["domain"].get("connector_key_hash").is_none());
+
+    let connector_key = body["connector_key"].as_str().unwrap();
+    assert_eq!(connector_key.len(), 64);
+    assert!(
+        connector_key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+
+    let sync_response =
+        request_domain_with_connector_key(&app, "domain-generated-key", connector_key).await;
+    assert_eq!(sync_response.status(), StatusCode::OK);
+
+    let stored_domain = repository
+        .get_domain("domain-generated-key")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored_domain.connector_key_hash,
+        connector_key_hash(connector_key)
+    );
+    assert_ne!(stored_domain.connector_key_hash, connector_key);
+
+    let domains = admin_empty(&app, Method::GET, "/api/admin/domains").await;
+    let listed_domain = domains["domains"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|domain| domain["id"] == "domain-generated-key")
+        .unwrap();
+    assert!(listed_domain.get("connector_key").is_none());
+    assert!(listed_domain.get("connector_key_hash").is_none());
+}
+
+#[tokio::test]
+async fn creating_domain_rejects_client_supplied_connector_key_fields() {
+    let TestApp { app, repository } = test_app().await;
+
+    for (domain_id, injected_field) in [
+        (
+            "domain-manual-key",
+            json!({ "connector_key": "client-supplied-key" }),
+        ),
+        (
+            "domain-manual-hash",
+            json!({ "connector_key_hash": "client-supplied-hash" }),
+        ),
+    ] {
+        let mut request = json!({
+                "id": domain_id,
+                "name": "Manual Key Domain",
+                "enabled": true,
+                "mirror_root_dn": "OU=Mirror,DC=manual,DC=example,DC=com",
+                "quarantine_ou_dn": "OU=Quarantine,DC=manual,DC=example,DC=com",
+                "upn_suffix": "manual.example.com",
+                "employee_id_attribute": "employeeID",
+                "managed_group_id_attribute": "adminDescription"
+        });
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(injected_field.as_object().unwrap().clone());
+
+        let response = app
+            .clone()
+            .oneshot(admin_json_request(
+                Method::POST,
+                "/api/admin/domains",
+                &request,
+            ))
+            .await
+            .expect("create domain response");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(repository.get_domain(domain_id).await.unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn creating_duplicate_domain_returns_conflict_without_changing_existing_domain() {
+    let TestApp { app, repository } = test_app().await;
+    let existing_domain = DomainRecord {
+        name: "Existing Domain".to_string(),
+        connector_key_hash: connector_key_hash("existing-connector-key"),
+        applied_directory_revision: 12,
+        applied_credential_revision: 34,
+        ..domain(true)
+    };
+    repository
+        .upsert_domain(existing_domain.clone())
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/admin/domains",
+            &json!({
+                "id": "domain-a",
+                "name": "Replacement Domain",
+                "enabled": false,
+                "mirror_root_dn": "OU=Replacement,DC=a,DC=example,DC=com",
+                "quarantine_ou_dn": "OU=ReplacementQuarantine,DC=a,DC=example,DC=com",
+                "upn_suffix": "replacement.example.com",
+                "employee_id_attribute": "employeeNumber",
+                "managed_group_id_attribute": "extensionAttribute10"
+            }),
+        ))
+        .await
+        .expect("create domain response");
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        repository.get_domain("domain-a").await.unwrap().unwrap(),
+        existing_domain
+    );
+}
+
+#[tokio::test]
+async fn updating_domain_regenerates_connector_key_and_preserves_applied_revisions() {
+    let TestApp { app, repository } = test_app().await;
+    let old_connector_key = "domain-rekey-old-connector-key";
+    repository
+        .upsert_domain(DomainRecord {
+            id: "domain-rekey".to_string(),
+            name: "Domain Rekey".to_string(),
+            enabled: true,
+            mirror_root_dn: "OU=Mirror,DC=rekey,DC=example,DC=com".to_string(),
+            quarantine_ou_dn: "OU=Quarantine,DC=rekey,DC=example,DC=com".to_string(),
+            upn_suffix: "rekey.example.com".to_string(),
+            employee_id_attribute: "employeeID".to_string(),
+            managed_group_id_attribute: "adminDescription".to_string(),
+            connector_key_hash: connector_key_hash(old_connector_key),
+            applied_directory_revision: 12,
+            applied_credential_revision: 34,
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::PATCH,
+            "/api/admin/domains/domain-rekey",
+            &json!({
+                "name": "Domain Rekey Updated",
+                "enabled": true,
+                "mirror_root_dn": "OU=Mirror2,DC=rekey,DC=example,DC=com",
+                "quarantine_ou_dn": "OU=Quarantine2,DC=rekey,DC=example,DC=com",
+                "upn_suffix": "rekey2.example.com",
+                "employee_id_attribute": "employeeNumber",
+                "managed_group_id_attribute": "extensionAttribute10"
+            }),
+        ))
+        .await
+        .expect("update domain response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["domain"]["name"], "Domain Rekey Updated");
+    assert_eq!(body["domain"]["applied_directory_revision"], 12);
+    assert_eq!(body["domain"]["applied_credential_revision"], 34);
+
+    let new_connector_key = body["connector_key"].as_str().unwrap();
+    assert_eq!(new_connector_key.len(), 64);
+    assert!(
+        new_connector_key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    assert_ne!(new_connector_key, old_connector_key);
+
+    let old_key_sync =
+        request_domain_with_connector_key(&app, "domain-rekey", old_connector_key).await;
+    assert_eq!(old_key_sync.status(), StatusCode::UNAUTHORIZED);
+    let new_key_sync =
+        request_domain_with_connector_key(&app, "domain-rekey", new_connector_key).await;
+    assert_eq!(new_key_sync.status(), StatusCode::OK);
+
+    let stored_domain = repository
+        .get_domain("domain-rekey")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored_domain.connector_key_hash,
+        connector_key_hash(new_connector_key)
+    );
+    assert_ne!(
+        stored_domain.connector_key_hash,
+        connector_key_hash(old_connector_key)
+    );
+    assert_eq!(stored_domain.applied_directory_revision, 12);
+    assert_eq!(stored_domain.applied_credential_revision, 34);
+}
+
+#[tokio::test]
+async fn updating_domain_rejects_client_supplied_connector_key_fields() {
+    let TestApp { app, repository } = test_app().await;
+
+    for injected_field in [
+        json!({ "connector_key": "client-supplied-key" }),
+        json!({ "connector_key_hash": "client-supplied-hash" }),
+    ] {
+        let mut request = json!({
+            "name": "Domain A",
+            "enabled": true,
+            "mirror_root_dn": "OU=Mirror,DC=a,DC=example,DC=com",
+            "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
+            "upn_suffix": "a.example.com",
+            "employee_id_attribute": "employeeID",
+            "managed_group_id_attribute": "adminDescription"
+        });
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(injected_field.as_object().unwrap().clone());
+
+        let response = app
+            .clone()
+            .oneshot(admin_json_request(
+                Method::PATCH,
+                "/api/admin/domains/domain-a",
+                &request,
+            ))
+            .await
+            .expect("update domain response");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    let stored_domain = repository.get_domain("domain-a").await.unwrap().unwrap();
+    assert_eq!(
+        stored_domain.connector_key_hash,
+        connector_key_hash(CONNECTOR_KEY)
+    );
+}
+
+#[tokio::test]
+async fn updating_missing_domain_returns_not_found() {
+    let TestApp { app, .. } = test_app().await;
+
+    let response = app
+        .oneshot(admin_json_request(
+            Method::PATCH,
+            "/api/admin/domains/missing-domain",
+            &json!({
+                "name": "Missing Domain",
+                "enabled": true,
+                "mirror_root_dn": "OU=Mirror,DC=missing,DC=example,DC=com",
+                "quarantine_ou_dn": "OU=Quarantine,DC=missing,DC=example,DC=com",
+                "upn_suffix": "missing.example.com",
+                "employee_id_attribute": "employeeID",
+                "managed_group_id_attribute": "adminDescription"
+            }),
+        ))
+        .await
+        .expect("update missing domain response");
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn web_static_routes_do_not_capture_unknown_api_paths() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
@@ -209,14 +504,14 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
             "quarantine_ou_dn": "OU=Quarantine,DC=b,DC=example,DC=com",
             "upn_suffix": "b.example.com",
             "employee_id_attribute": "employeeID",
-            "managed_group_id_attribute": "adminDescription",
-            "connector_key": "domain-b-connector-key"
+            "managed_group_id_attribute": "adminDescription"
         }),
     )
     .await;
-    assert_eq!(created_domain["id"], "domain-b");
-    assert!(created_domain.get("connector_key").is_none());
-    assert!(created_domain.get("connector_key_hash").is_none());
+    assert_eq!(created_domain["domain"]["id"], "domain-b");
+    let created_connector_key = created_domain["connector_key"].as_str().unwrap();
+    assert!(created_domain["domain"].get("connector_key").is_none());
+    assert!(created_domain["domain"].get("connector_key_hash").is_none());
 
     let domains = admin_empty(&app, Method::GET, "/api/admin/domains").await;
     assert_eq!(domains["domains"].as_array().unwrap().len(), 2);
@@ -232,16 +527,17 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
             "quarantine_ou_dn": "OU=Quarantine2,DC=b,DC=example,DC=com",
             "upn_suffix": "b2.example.com",
             "employee_id_attribute": "employeeNumber",
-            "managed_group_id_attribute": "extensionAttribute10",
-            "connector_key_hash": "must-not-be-accepted"
+            "managed_group_id_attribute": "extensionAttribute10"
         }),
     )
     .await;
-    assert_eq!(patched_domain["name"], "Domain B Updated");
+    assert_eq!(patched_domain["domain"]["name"], "Domain B Updated");
+    let patched_connector_key = patched_domain["connector_key"].as_str().unwrap();
+    assert_ne!(patched_connector_key, created_connector_key);
     let stored_domain = repository.get_domain("domain-b").await.unwrap().unwrap();
     assert_eq!(
         stored_domain.connector_key_hash,
-        connector_key_hash("domain-b-connector-key")
+        connector_key_hash(patched_connector_key)
     );
 
     let root_ou = admin_json(
@@ -1166,12 +1462,20 @@ async fn confirm(app: &axum::Router, channel: SyncChannel, target_revision: u64,
 }
 
 async fn request_with_connector_key(app: &axum::Router, connector_key: &str) -> Response<Body> {
+    request_domain_with_connector_key(app, "domain-a", connector_key).await
+}
+
+async fn request_domain_with_connector_key(
+    app: &axum::Router,
+    domain_id: &str,
+    connector_key: &str,
+) -> Response<Body> {
     app.clone()
         .oneshot(connector_json_request(
             "/api/connector/sync",
             connector_key,
             &ConnectorSyncRequest {
-                domain_id: "domain-a".to_string(),
+                domain_id: domain_id.to_string(),
                 applied_directory_revision: 0,
                 applied_credential_revision: 0,
                 rebuild_directory: false,

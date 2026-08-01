@@ -25,6 +25,7 @@ pub struct DomainPatch {
     pub upn_suffix: Option<String>,
     pub employee_id_attribute: Option<String>,
     pub managed_group_id_attribute: Option<String>,
+    pub connector_key_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

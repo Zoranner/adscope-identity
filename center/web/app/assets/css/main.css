@@ -629,6 +629,30 @@ strong {
   resize: vertical;
 }
 
+.connector-key-result h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.connector-key-result p {
+  margin: 5px 0 0;
+  color: #647384;
+  font-size: 13px;
+}
+
+.connector-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.connector-key-row input {
+  min-width: 0;
+  font-family: Consolas, "Courier New", monospace;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

@@ -53,10 +53,6 @@ defineEmits<{
         <input v-model="form.managed_group_id_attribute" required />
       </div>
     </div>
-    <div v-if="!editingId" class="field">
-      <label>Connector key</label>
-      <input v-model="form.connector_key" required />
-    </div>
     <div class="field">
       <label>状态</label>
       <select v-model="form.enabled">
@@ -69,7 +65,14 @@ defineEmits<{
         <Save :size="17" />
         保存
       </button>
-      <button type="button" class="secondary-button" @click="$emit('reset')">清空</button>
+      <button
+        type="button"
+        class="secondary-button"
+        :disabled="loading || disabled"
+        @click="$emit('reset')"
+      >
+        清空
+      </button>
     </div>
   </form>
 </template>

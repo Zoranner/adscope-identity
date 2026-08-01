@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { Building2, Database, FolderTree, LogOut, RefreshCw, Workflow } from 'lucide-vue-next'
 
+const props = defineProps<{
+  busy?: boolean
+}>()
+
 const route = useRoute()
 const {
   tokenReady,
@@ -38,8 +42,17 @@ async function submitCredential() {
 }
 
 function exitManagement() {
+  if (props.busy) {
+    return
+  }
   credentialDraft.value = ''
   clearToken()
+}
+
+function preventBusyNavigation(event: MouseEvent) {
+  if (props.busy) {
+    event.preventDefault()
+  }
 }
 </script>
 
@@ -48,7 +61,13 @@ function exitManagement() {
     <AdminStatusLine />
 
     <header class="topbar">
-      <NuxtLink class="brand" to="/admin">
+      <NuxtLink
+        class="brand"
+        to="/admin"
+        :aria-disabled="busy ? 'true' : undefined"
+        :tabindex="busy ? -1 : undefined"
+        @click="preventBusyNavigation"
+      >
         <span class="brand-mark">
           <Database :size="22" />
         </span>
@@ -59,10 +78,15 @@ function exitManagement() {
       </NuxtLink>
 
       <div v-if="tokenReady" class="topbar-actions">
-        <button class="icon-button" title="刷新" :disabled="loading || !tokenReady" @click="refreshAll">
+        <button
+          class="icon-button"
+          title="刷新"
+          :disabled="loading || !tokenReady || busy"
+          @click="refreshAll"
+        >
           <RefreshCw :size="17" />
         </button>
-        <button class="secondary-button" @click="exitManagement">
+        <button class="secondary-button" :disabled="busy" @click="exitManagement">
           <LogOut :size="16" />
           退出
         </button>
@@ -94,6 +118,9 @@ function exitManagement() {
             class="nav-button"
             :class="{ active: route.path === item.to }"
             :to="item.to"
+            :aria-disabled="busy ? 'true' : undefined"
+            :tabindex="busy ? -1 : undefined"
+            @click="preventBusyNavigation"
           >
             <component :is="item.icon" :size="18" />
             <span>{{ item.label }}</span>

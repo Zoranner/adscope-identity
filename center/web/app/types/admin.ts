@@ -13,6 +13,11 @@ export interface Domain {
   applied_credential_revision: number
 }
 
+export interface DomainMutationResponse {
+  domain: Domain
+  connector_key: string
+}
+
 export interface OrganizationalUnit {
   id: string
   name: string
@@ -57,7 +62,6 @@ export interface DomainForm {
   upn_suffix: string
   employee_id_attribute: string
   managed_group_id_attribute: string
-  connector_key: string
 }
 
 export interface OuForm {

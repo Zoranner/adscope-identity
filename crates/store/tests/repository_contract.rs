@@ -1,7 +1,7 @@
 use adss_protocol::{Group, OrganizationalUnit, UserStatus};
 use adss_store::{
-    DomainRecord, Repository, UserContactPatch, UserCredentialInput, UserDirectoryPatch,
-    UserListFilter,
+    DomainPatch, DomainRecord, Repository, UserContactPatch, UserCredentialInput,
+    UserDirectoryPatch, UserListFilter,
 };
 use sea_orm::{ConnectionTrait, Database};
 use std::{
@@ -446,6 +446,77 @@ async fn repository_preserves_both_channels_after_concurrent_confirmations() {
     drop(repository);
     drop(directory_repository);
     drop(credential_repository);
+    let _ = std::fs::remove_file(database_path);
+}
+
+#[tokio::test]
+async fn repository_domain_update_does_not_replace_row_and_preserves_both_confirmed_revisions() {
+    let (database_url, database_path) = sqlite_file_database_url("domain_update_in_place");
+    let repository = sqlite_file_repository(&database_url).await;
+    seed_directory_revisions(&repository, 7).await;
+    seed_credential_revisions(&repository, 3).await;
+    repository
+        .confirm_directory_revision("domain-a", 7)
+        .await
+        .unwrap();
+    repository
+        .confirm_credential_revision("domain-a", 3)
+        .await
+        .unwrap();
+
+    let guard_connection = Database::connect(&database_url).await.unwrap();
+    guard_connection
+        .execute_unprepared(
+            "CREATE TRIGGER reject_domain_delete
+             BEFORE DELETE ON domains
+             BEGIN
+                 SELECT RAISE(ABORT, 'domain rows must not be replaced');
+             END",
+        )
+        .await
+        .unwrap();
+    let delete_attempt = guard_connection
+        .execute_unprepared("DELETE FROM domains WHERE id = 'domain-a'")
+        .await;
+    assert!(
+        delete_attempt.is_err(),
+        "delete guard must reject the previous delete-and-insert update strategy"
+    );
+
+    let updated = repository
+        .update_domain(
+            "domain-a",
+            DomainPatch {
+                name: Some("Domain A Updated".to_string()),
+                enabled: Some(false),
+                mirror_root_dn: Some("OU=Updated,DC=a,DC=example,DC=com".to_string()),
+                quarantine_ou_dn: Some("OU=UpdatedQuarantine,DC=a,DC=example,DC=com".to_string()),
+                upn_suffix: Some("updated.example.com".to_string()),
+                employee_id_attribute: Some("employeeNumber".to_string()),
+                managed_group_id_attribute: Some("extensionAttribute10".to_string()),
+                connector_key_hash: Some("hash:new-connector-key".to_string()),
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(updated.name, "Domain A Updated");
+    assert!(!updated.enabled);
+    assert_eq!(updated.mirror_root_dn, "OU=Updated,DC=a,DC=example,DC=com");
+    assert_eq!(
+        updated.quarantine_ou_dn,
+        "OU=UpdatedQuarantine,DC=a,DC=example,DC=com"
+    );
+    assert_eq!(updated.upn_suffix, "updated.example.com");
+    assert_eq!(updated.employee_id_attribute, "employeeNumber");
+    assert_eq!(updated.managed_group_id_attribute, "extensionAttribute10");
+    assert_eq!(updated.connector_key_hash, "hash:new-connector-key");
+    assert_eq!(updated.applied_directory_revision, 7);
+    assert_eq!(updated.applied_credential_revision, 3);
+
+    drop(repository);
+    drop(guard_connection);
     let _ = std::fs::remove_file(database_path);
 }
 

@@ -1,7 +1,7 @@
 use adss_protocol::{DirectoryBatch, Group, OrganizationalUnit, User, UserStatus};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, Set, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbErr,
+    EntityTrait, QueryFilter, QueryOrder, Set, SqlErr, Statement, TransactionTrait,
 };
 
 use crate::{
@@ -154,37 +154,62 @@ CREATE TABLE IF NOT EXISTS domains (
         DomainRecord::try_from(domain)
     }
 
+    pub async fn create_domain(
+        &self,
+        domain: DomainRecord,
+    ) -> anyhow::Result<Option<DomainRecord>> {
+        let domain = domain_active_model(domain)?;
+        match domain.insert(&self.db).await {
+            Ok(domain) => Ok(Some(DomainRecord::try_from(domain)?)),
+            Err(error) if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub async fn update_domain(
         &self,
         domain_id: &str,
         patch: DomainPatch,
-    ) -> anyhow::Result<DomainRecord> {
-        let mut domain = self.require_domain(domain_id).await?;
+    ) -> anyhow::Result<Option<DomainRecord>> {
+        use entities::domain;
+
+        let mut domain = domain::ActiveModel {
+            id: Set(domain_id.to_string()),
+            ..Default::default()
+        };
 
         if let Some(name) = patch.name {
-            domain.name = name;
+            domain.name = Set(name);
         }
         if let Some(enabled) = patch.enabled {
-            domain.enabled = enabled;
+            domain.enabled = Set(enabled);
         }
         if let Some(mirror_root_dn) = patch.mirror_root_dn {
-            domain.mirror_root_dn = mirror_root_dn;
+            domain.mirror_root_dn = Set(mirror_root_dn);
         }
         if let Some(quarantine_ou_dn) = patch.quarantine_ou_dn {
-            domain.quarantine_ou_dn = quarantine_ou_dn;
+            domain.quarantine_ou_dn = Set(quarantine_ou_dn);
         }
         if let Some(upn_suffix) = patch.upn_suffix {
-            domain.upn_suffix = upn_suffix;
+            domain.upn_suffix = Set(upn_suffix);
         }
         if let Some(employee_id_attribute) = patch.employee_id_attribute {
-            domain.employee_id_attribute = employee_id_attribute;
+            domain.employee_id_attribute = Set(employee_id_attribute);
         }
         if let Some(managed_group_id_attribute) = patch.managed_group_id_attribute {
-            domain.managed_group_id_attribute = managed_group_id_attribute;
+            domain.managed_group_id_attribute = Set(managed_group_id_attribute);
+        }
+        if let Some(connector_key_hash) = patch.connector_key_hash {
+            domain.connector_key_hash = Set(connector_key_hash);
         }
 
-        self.upsert_domain(domain.clone()).await?;
-        Ok(domain)
+        match domain.update(&self.db).await {
+            Ok(domain) => Ok(Some(DomainRecord::try_from(domain)?)),
+            Err(DbErr::RecordNotUpdated) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub async fn seed_domain(&self, domain: DomainRecord) -> anyhow::Result<()> {

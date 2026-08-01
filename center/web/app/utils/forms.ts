@@ -10,7 +10,6 @@ export function blankDomainForm(): DomainForm {
     upn_suffix: '',
     employee_id_attribute: 'employeeID',
     managed_group_id_attribute: 'adminDescription',
-    connector_key: '',
   }
 }
 

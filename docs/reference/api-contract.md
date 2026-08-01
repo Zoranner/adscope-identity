@@ -181,12 +181,35 @@ Authorization: Bearer <management_token>
   "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
   "upn_suffix": "a.example.com",
   "employee_id_attribute": "employeeID",
-  "managed_group_id_attribute": "adminDescription",
-  "connector_key": "generated-or-imported-connector-key"
+  "managed_group_id_attribute": "adminDescription"
 }
 ```
 
-`PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性。`connector_key_hash` 不能通过普通 PATCH 更新。
+域 ID 已存在时返回 `409 Conflict`，原域配置、Connector key 摘要和 applied revision 保持不变。
+
+`PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性，并保留域已有的目录与凭据 applied revision。
+
+创建或修改域成功时，中心从系统安全随机源生成新的 32 字节 Connector key，只持久化其摘要。明文 key 只在本次响应中返回，响应包含 `Cache-Control: no-store`：
+
+```json
+{
+  "domain": {
+    "id": "domain-a",
+    "name": "A 域",
+    "enabled": true,
+    "mirror_root_dn": "OU=Mirror,DC=a,DC=example,DC=com",
+    "quarantine_ou_dn": "OU=Quarantine,DC=a,DC=example,DC=com",
+    "upn_suffix": "a.example.com",
+    "employee_id_attribute": "employeeID",
+    "managed_group_id_attribute": "adminDescription",
+    "applied_directory_revision": 0,
+    "applied_credential_revision": 0
+  },
+  "connector_key": "64-character-lowercase-hex"
+}
+```
+
+创建和修改请求不得携带 `connector_key` 或 `connector_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Connector key。管理员必须把本次响应中的新 key 配置到对应 Connector 的 `ADSS_CONNECTOR_KEY`。域列表及其他查询响应不返回 Connector key 或其摘要。
 
 ### OU 管理
 
