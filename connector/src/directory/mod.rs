@@ -7,6 +7,7 @@ use adss_protocol::{
 };
 use async_trait::async_trait;
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use crate::config::ConnectorProcessConfig;
 
@@ -44,7 +45,10 @@ impl ConfiguredDirectoryClient {
             .ldap
             .clone()
             .ok_or_else(|| anyhow::anyhow!("LDAP settings are required without dry-run"))?;
-        Ok(Self::Ldap(LdapDirectoryClient::new(ldap)))
+        Ok(Self::Ldap(LdapDirectoryClient::with_connection_timeout(
+            ldap,
+            Duration::from_secs(config.operation_timeout_seconds),
+        )))
     }
 }
 
@@ -141,11 +145,21 @@ fn build_organizational_unit_dn<'a>(
 
 pub struct DirectoryExecutor<C> {
     client: C,
+    operation_timeout: Duration,
 }
+
+const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl<C> DirectoryExecutor<C> {
     pub fn new(client: C) -> Self {
-        Self { client }
+        Self::with_operation_timeout(client, DEFAULT_OPERATION_TIMEOUT)
+    }
+
+    pub fn with_operation_timeout(client: C, operation_timeout: Duration) -> Self {
+        Self {
+            client,
+            operation_timeout,
+        }
     }
 }
 
@@ -157,55 +171,166 @@ where
         &self,
         plan: &DirectoryPlan,
         context: &DirectoryExecutionContext,
-    ) -> anyhow::Result<SyncSummary> {
-        Ok(execute_directory_plan(&self.client, plan, context).await)
+    ) -> anyhow::Result<ExecutionResult> {
+        Ok(
+            execute_directory_plan_with_timeout(
+                &self.client,
+                plan,
+                context,
+                self.operation_timeout,
+            )
+            .await,
+        )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionFailure {
+    pub operation: &'static str,
+    pub subject: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecutionResult {
+    pub summary: SyncSummary,
+    pub failure: Option<ExecutionFailure>,
 }
 
 pub async fn execute_directory_plan<C>(
     client: &C,
     plan: &DirectoryPlan,
     context: &DirectoryExecutionContext,
-) -> SyncSummary
+) -> ExecutionResult
+where
+    C: DirectoryClient + Sync,
+{
+    execute_directory_plan_with_timeout(client, plan, context, DEFAULT_OPERATION_TIMEOUT).await
+}
+
+pub async fn execute_directory_plan_with_timeout<C>(
+    client: &C,
+    plan: &DirectoryPlan,
+    context: &DirectoryExecutionContext,
+    operation_timeout: Duration,
+) -> ExecutionResult
 where
     C: DirectoryClient + Sync,
 {
     let mut summary = SyncSummary::default();
 
     for (index, operation) in plan.operations.iter().enumerate() {
-        match client.apply(operation, context).await {
-            Ok(()) => summary.succeeded += 1,
+        match tokio::time::timeout(operation_timeout, client.apply(operation, context)).await {
+            Ok(Ok(())) => summary.succeeded += 1,
+            Ok(Err(error)) => {
+                summary.failed += 1;
+                summary.skipped += (plan.operations.len() - index - 1) as u32;
+                return ExecutionResult {
+                    summary,
+                    failure: Some(ExecutionFailure {
+                        operation: operation_name(operation.kind),
+                        subject: operation.subject.clone(),
+                        detail: format!("{error:#}"),
+                    }),
+                };
+            }
             Err(_) => {
                 summary.failed += 1;
                 summary.skipped += (plan.operations.len() - index - 1) as u32;
-                break;
+                return ExecutionResult {
+                    summary,
+                    failure: Some(ExecutionFailure {
+                        operation: operation_name(operation.kind),
+                        subject: operation.subject.clone(),
+                        detail: format!(
+                            "operation timed out after {} seconds",
+                            operation_timeout.as_secs_f64()
+                        ),
+                    }),
+                };
             }
         }
     }
 
-    summary
+    ExecutionResult {
+        summary,
+        failure: None,
+    }
 }
 
 pub async fn execute_credential_batch<C>(
     client: &C,
     batch: &CredentialBatch,
     context: &DirectoryExecutionContext,
-) -> SyncSummary
+) -> ExecutionResult
+where
+    C: DirectoryClient + Sync,
+{
+    execute_credential_batch_with_timeout(client, batch, context, DEFAULT_OPERATION_TIMEOUT).await
+}
+
+pub async fn execute_credential_batch_with_timeout<C>(
+    client: &C,
+    batch: &CredentialBatch,
+    context: &DirectoryExecutionContext,
+    operation_timeout: Duration,
+) -> ExecutionResult
 where
     C: DirectoryClient + Sync,
 {
     let mut summary = SyncSummary::default();
 
     for (index, credential) in batch.credentials.iter().enumerate() {
-        match client.set_password(credential, context).await {
-            Ok(()) => summary.succeeded += 1,
+        match tokio::time::timeout(operation_timeout, client.set_password(credential, context))
+            .await
+        {
+            Ok(Ok(())) => summary.succeeded += 1,
+            Ok(Err(error)) => {
+                summary.failed += 1;
+                summary.skipped += (batch.credentials.len() - index - 1) as u32;
+                return ExecutionResult {
+                    summary,
+                    failure: Some(ExecutionFailure {
+                        operation: "set_password",
+                        subject: credential.employee_id.clone(),
+                        detail: format!("{error:#}"),
+                    }),
+                };
+            }
             Err(_) => {
                 summary.failed += 1;
                 summary.skipped += (batch.credentials.len() - index - 1) as u32;
-                break;
+                return ExecutionResult {
+                    summary,
+                    failure: Some(ExecutionFailure {
+                        operation: "set_password",
+                        subject: credential.employee_id.clone(),
+                        detail: format!(
+                            "operation timed out after {} seconds",
+                            operation_timeout.as_secs_f64()
+                        ),
+                    }),
+                };
             }
         }
     }
 
-    summary
+    ExecutionResult {
+        summary,
+        failure: None,
+    }
+}
+
+fn operation_name(kind: adss_protocol::DirectoryOperationKind) -> &'static str {
+    use adss_protocol::DirectoryOperationKind;
+
+    match kind {
+        DirectoryOperationKind::EnsureOu => "ensure_ou",
+        DirectoryOperationKind::EnsureUser => "ensure_user",
+        DirectoryOperationKind::EnsureUserPlacement => "ensure_user_placement",
+        DirectoryOperationKind::EnsureGroup => "ensure_group",
+        DirectoryOperationKind::EnsureGroupMembers => "ensure_group_members",
+        DirectoryOperationKind::DisableUser => "disable_user",
+        DirectoryOperationKind::MoveUserToQuarantine => "move_user_to_quarantine",
+    }
 }

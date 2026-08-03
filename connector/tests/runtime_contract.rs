@@ -18,7 +18,7 @@ async fn runtime_confirms_directory_only_after_full_success() {
     let state = MemoryLocalState::default();
     let mut runtime = ConnectorRuntime::new("domain-a".to_string(), control, directory, state);
 
-    runtime.run_once().await.unwrap();
+    let summary = runtime.run_once().await.unwrap();
 
     assert_eq!(
         runtime.local_state(),
@@ -31,6 +31,7 @@ async fn runtime_confirms_directory_only_after_full_success() {
         runtime.control_plane().confirmed_directory_revision(),
         Some(5)
     );
+    assert!(summary.directory_failure.is_none());
     assert_eq!(
         runtime.control_plane().confirmed_credential_revision(),
         None
@@ -44,7 +45,7 @@ async fn runtime_does_not_confirm_failed_directory_batch() {
     let state = MemoryLocalState::default();
     let mut runtime = ConnectorRuntime::new("domain-a".to_string(), control, directory, state);
 
-    runtime.run_once().await.unwrap();
+    let summary = runtime.run_once().await.unwrap();
 
     assert_eq!(runtime.local_state().applied_directory_revision, 0);
     assert_eq!(runtime.control_plane().confirmed_directory_revision(), None);
@@ -54,6 +55,10 @@ async fn runtime_does_not_confirm_failed_directory_batch() {
             .failed_confirm_error_code(SyncChannel::Directory),
         Some("directory_execution_failed".to_string())
     );
+    let failure = summary.directory_failure.unwrap();
+    assert_eq!(failure.operation, "ensure_user");
+    assert_eq!(failure.subject, "1001");
+    assert!(failure.detail.contains("directory operation failed"));
 }
 
 #[tokio::test]
@@ -63,7 +68,7 @@ async fn credential_failure_does_not_block_directory_confirmation() {
     let state = MemoryLocalState::default();
     let mut runtime = ConnectorRuntime::new("domain-a".to_string(), control, directory, state);
 
-    runtime.run_once().await.unwrap();
+    let summary = runtime.run_once().await.unwrap();
 
     assert_eq!(runtime.local_state().applied_directory_revision, 5);
     assert_eq!(runtime.local_state().applied_credential_revision, 0);
@@ -81,6 +86,11 @@ async fn credential_failure_does_not_block_directory_confirmation() {
             .failed_confirm_error_code(SyncChannel::Credential),
         Some("credential_execution_failed".to_string())
     );
+    let failure = summary.credential_failure.unwrap();
+    assert_eq!(failure.operation, "set_password");
+    assert_eq!(failure.subject, "1001");
+    assert!(failure.detail.contains("password failed"));
+    assert!(!failure.detail.contains("NewPass123!"));
 }
 
 #[tokio::test]

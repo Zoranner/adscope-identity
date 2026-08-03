@@ -9,8 +9,11 @@ async fn main() -> anyhow::Result<()> {
     load_env_file(".env")?;
     let config = ConnectorProcessConfig::from_env()?;
 
-    let control_plane =
-        HttpControlPlaneClient::new(config.center_url.clone(), config.connector_key.clone());
+    let control_plane = HttpControlPlaneClient::new(
+        config.center_url.clone(),
+        config.connector_key.clone(),
+        Duration::from_secs(config.http_timeout_seconds),
+    )?;
     let directory = ConfiguredDirectoryClient::from_process_config(&config)?;
     let local_state = FileLocalStateStore::new(config.state_path.clone());
     let mut runtime = ConnectorRuntime::new(
@@ -18,7 +21,8 @@ async fn main() -> anyhow::Result<()> {
         control_plane,
         directory,
         local_state,
-    );
+    )
+    .with_operation_timeout(Duration::from_secs(config.operation_timeout_seconds));
     let interval = Duration::from_secs(config.interval_seconds);
 
     loop {

@@ -2,16 +2,19 @@ use adss_protocol::{
     ConnectorConfirmRequest, ConnectorSyncRequest, DirectoryBatch, DirectoryPlan, SyncChannel,
     SyncSummary,
 };
+use std::time::Duration;
 
 use crate::{
-    ControlPlaneClient, DirectoryClient, DirectoryExecutionContext, LocalRevisionState,
-    LocalStateStore, execute_credential_batch, execute_directory_plan,
+    ControlPlaneClient, DirectoryClient, DirectoryExecutionContext, ExecutionFailure,
+    LocalRevisionState, LocalStateStore, execute_credential_batch_with_timeout,
+    execute_directory_plan_with_timeout,
 };
 pub struct ConnectorRuntime<P, D, S> {
     domain_id: String,
     control_plane: P,
     directory: D,
     local_state: S,
+    operation_timeout: Duration,
 }
 
 impl<P, D, S> ConnectorRuntime<P, D, S> {
@@ -26,7 +29,13 @@ impl<P, D, S> ConnectorRuntime<P, D, S> {
             control_plane,
             directory,
             local_state,
+            operation_timeout: Duration::from_secs(60),
         }
+    }
+
+    pub fn with_operation_timeout(mut self, operation_timeout: Duration) -> Self {
+        self.operation_timeout = operation_timeout;
+        self
     }
 
     pub fn control_plane(&self) -> &P {
@@ -76,9 +85,11 @@ where
             &self.directory,
             &response.directory,
             &response.directory_config,
+            self.operation_timeout,
         )
         .await;
         run_summary.directory = directory_result.summary;
+        run_summary.directory_failure = directory_result.failure;
         if directory_result.succeeded {
             match self
                 .confirm_channel(
@@ -111,9 +122,14 @@ where
         }
 
         let credential_context = DirectoryExecutionContext::from_domain(&response.directory_config);
-        let credential_summary =
-            execute_credential_batch(&self.directory, &response.credentials, &credential_context)
-                .await;
+        let credential_result = execute_credential_batch_with_timeout(
+            &self.directory,
+            &response.credentials,
+            &credential_context,
+            self.operation_timeout,
+        )
+        .await;
+        let credential_summary = credential_result.summary;
         let credential_succeeded =
             !response.credentials.credentials.is_empty() && credential_summary.failed == 0;
         let credential_error_code = if credential_summary.failed > 0 {
@@ -122,6 +138,7 @@ where
             None
         };
         run_summary.credentials = credential_summary;
+        run_summary.credential_failure = credential_result.failure;
         if credential_succeeded {
             match self
                 .confirm_channel(
@@ -225,6 +242,8 @@ where
 pub struct ConnectorRunSummary {
     pub directory: SyncSummary,
     pub credentials: SyncSummary,
+    pub directory_failure: Option<ExecutionFailure>,
+    pub credential_failure: Option<ExecutionFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,12 +251,14 @@ struct ChannelExecutionResult {
     summary: SyncSummary,
     succeeded: bool,
     error_code: Option<&'static str>,
+    failure: Option<ExecutionFailure>,
 }
 
 async fn execute_directory_batch<C>(
     client: &C,
     batch: &DirectoryBatch,
     domain: &adss_protocol::DomainDirectoryConfig,
+    operation_timeout: Duration,
 ) -> ChannelExecutionResult
 where
     C: DirectoryClient + Sync,
@@ -247,12 +268,13 @@ where
             summary: SyncSummary::default(),
             succeeded: false,
             error_code: None,
+            failure: None,
         };
     }
 
     let plan = match DirectoryPlan::try_from_batch(batch, domain) {
         Ok(plan) => plan,
-        Err(_) => {
+        Err(error) => {
             return ChannelExecutionResult {
                 summary: SyncSummary {
                     failed: 1,
@@ -260,12 +282,17 @@ where
                 },
                 succeeded: false,
                 error_code: Some("directory_plan_failed"),
+                failure: Some(ExecutionFailure {
+                    operation: "build_directory_plan",
+                    subject: domain.domain_id.clone(),
+                    detail: error.to_string(),
+                }),
             };
         }
     };
     let context = match DirectoryExecutionContext::try_from_batch(batch, domain) {
         Ok(context) => context,
-        Err(_) => {
+        Err(error) => {
             return ChannelExecutionResult {
                 summary: SyncSummary {
                     failed: 1,
@@ -273,11 +300,17 @@ where
                 },
                 succeeded: false,
                 error_code: Some("directory_context_failed"),
+                failure: Some(ExecutionFailure {
+                    operation: "build_directory_context",
+                    subject: domain.domain_id.clone(),
+                    detail: format!("{error:#}"),
+                }),
             };
         }
     };
-    let summary = execute_directory_plan(client, &plan, &context).await;
-    let succeeded = summary.failed == 0;
+    let result =
+        execute_directory_plan_with_timeout(client, &plan, &context, operation_timeout).await;
+    let succeeded = result.summary.failed == 0;
     let error_code = if succeeded {
         None
     } else {
@@ -285,9 +318,10 @@ where
     };
 
     ChannelExecutionResult {
-        summary,
+        summary: result.summary,
         succeeded,
         error_code,
+        failure: result.failure,
     }
 }
 

@@ -2,6 +2,7 @@ use adss_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
 };
 use async_trait::async_trait;
+use std::time::Duration;
 
 #[async_trait]
 pub trait ControlPlaneClient {
@@ -20,12 +21,20 @@ pub struct HttpControlPlaneClient {
 }
 
 impl HttpControlPlaneClient {
-    pub fn new(base_url: impl Into<String>, connector_key: impl Into<String>) -> Self {
-        Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        connector_key: impl Into<String>,
+        timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(timeout)
+            .timeout(timeout)
+            .build()?;
+        Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             connector_key: connector_key.into(),
-            client: reqwest::Client::new(),
-        }
+            client,
+        })
     }
 
     pub fn endpoint(&self, path: &str) -> String {

@@ -9,6 +9,7 @@ use adss_protocol::{
 };
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[tokio::test]
 async fn executor_runs_directory_plan_in_contract_order() {
@@ -28,9 +29,10 @@ async fn executor_runs_directory_plan_in_contract_order() {
     )
     .unwrap();
 
-    let summary = executor.execute(&plan, &context).await.unwrap();
+    let result = executor.execute(&plan, &context).await.unwrap();
 
-    assert_eq!(summary.succeeded, 5);
+    assert_eq!(result.summary.succeeded, 5);
+    assert!(result.failure.is_none());
     assert_eq!(
         calls.lock().unwrap().as_slice(),
         &[
@@ -59,11 +61,15 @@ async fn failed_directory_operation_is_reported_without_running_later_operations
     )
     .unwrap();
 
-    let summary = execute_directory_plan(&client, &plan, &context).await;
+    let result = execute_directory_plan(&client, &plan, &context).await;
 
-    assert_eq!(summary.succeeded, 1);
-    assert_eq!(summary.failed, 1);
-    assert_eq!(summary.skipped, 3);
+    assert_eq!(result.summary.succeeded, 1);
+    assert_eq!(result.summary.failed, 1);
+    assert_eq!(result.summary.skipped, 3);
+    let failure = result.failure.unwrap();
+    assert_eq!(failure.operation, "ensure_user");
+    assert_eq!(failure.subject, "1001");
+    assert!(failure.detail.contains("LDAPS permission denied"));
 }
 
 #[tokio::test]
@@ -102,15 +108,42 @@ async fn credential_batch_stops_at_first_password_failure() {
 
     let context = DirectoryExecutionContext::from_domain(&DomainDirectoryConfig::example());
 
-    let summary = execute_credential_batch(&client, &batch, &context).await;
+    let result = execute_credential_batch(&client, &batch, &context).await;
 
-    assert_eq!(summary.succeeded, 1);
-    assert_eq!(summary.failed, 1);
-    assert_eq!(summary.skipped, 1);
+    assert_eq!(result.summary.succeeded, 1);
+    assert_eq!(result.summary.failed, 1);
+    assert_eq!(result.summary.skipped, 1);
+    let failure = result.failure.unwrap();
+    assert_eq!(failure.operation, "set_password");
+    assert_eq!(failure.subject, "1002");
+    assert!(failure.detail.contains("password denied"));
+    assert!(!failure.detail.contains("SecondPass123!"));
     assert_eq!(
         calls.lock().unwrap().as_slice(),
         &["password:1001".to_string(), "password:1002".to_string()]
     );
+}
+
+#[tokio::test]
+async fn directory_executor_times_out_a_single_operation() {
+    let executor =
+        DirectoryExecutor::with_operation_timeout(SlowDirectoryClient, Duration::from_millis(20));
+    let plan =
+        DirectoryPlan::try_from_batch(&directory_batch(13), &DomainDirectoryConfig::example())
+            .unwrap();
+    let context = DirectoryExecutionContext::try_from_batch(
+        &directory_batch(13),
+        &DomainDirectoryConfig::example(),
+    )
+    .unwrap();
+
+    let result = executor.execute(&plan, &context).await.unwrap();
+
+    assert_eq!(result.summary.failed, 1);
+    let failure = result.failure.unwrap();
+    assert_eq!(failure.operation, "ensure_ou");
+    assert_eq!(failure.subject, "ou-rd");
+    assert!(failure.detail.contains("timed out"));
 }
 
 #[test]
@@ -230,6 +263,29 @@ struct RecordingDirectoryClient {
     calls: Arc<Mutex<Vec<String>>>,
     fail_kind: Option<DirectoryOperationKind>,
     fail_password_employee_id: Option<&'static str>,
+}
+
+struct SlowDirectoryClient;
+
+#[async_trait]
+impl DirectoryClient for SlowDirectoryClient {
+    async fn apply(
+        &self,
+        _operation: &DirectoryOperation,
+        _context: &DirectoryExecutionContext,
+    ) -> anyhow::Result<()> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        Ok(())
+    }
+
+    async fn set_password(
+        &self,
+        _credential: &CredentialEntry,
+        _context: &DirectoryExecutionContext,
+    ) -> anyhow::Result<()> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        Ok(())
+    }
 }
 
 #[async_trait]

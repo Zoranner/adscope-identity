@@ -5,17 +5,29 @@ use adss_protocol::{
 use async_trait::async_trait;
 use ldap3::{Ldap, LdapConnAsync, LdapConnSettings, Mod, Scope, SearchEntry};
 use std::collections::HashSet;
+use std::time::Duration;
 
 use crate::config::{LdapDirectoryConfig, validate_ldap_attribute_name};
 
 use super::{DirectoryClient, DirectoryExecutionContext};
 pub struct LdapDirectoryClient {
     config: LdapDirectoryConfig,
+    connection_timeout: Duration,
 }
 
 impl LdapDirectoryClient {
     pub fn new(config: LdapDirectoryConfig) -> Self {
-        Self { config }
+        Self::with_connection_timeout(config, Duration::from_secs(60))
+    }
+
+    pub fn with_connection_timeout(
+        config: LdapDirectoryConfig,
+        connection_timeout: Duration,
+    ) -> Self {
+        Self {
+            config,
+            connection_timeout,
+        }
     }
 
     pub fn config(&self) -> &LdapDirectoryConfig {
@@ -23,7 +35,9 @@ impl LdapDirectoryClient {
     }
 
     async fn bind(&self) -> anyhow::Result<Ldap> {
-        let settings = LdapConnSettings::new().set_no_tls_verify(self.config.accept_invalid_certs);
+        let settings = LdapConnSettings::new()
+            .set_conn_timeout(self.connection_timeout)
+            .set_no_tls_verify(self.config.accept_invalid_certs);
         let (connection, mut ldap) =
             LdapConnAsync::with_settings(settings, &self.config.url).await?;
         tokio::spawn(async move {
