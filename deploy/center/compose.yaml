@@ -1,0 +1,16 @@
+services:
+  center:
+    image: adss-center:0.1.0
+    restart: unless-stopped
+    env_file:
+      - center.env
+    volumes:
+      - adss-center-data:/data
+    expose:
+      - "8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  adss-center-data:
