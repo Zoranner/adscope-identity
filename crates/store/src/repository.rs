@@ -34,6 +34,11 @@ impl Repository {
         Self { db }
     }
 
+    pub async fn ping(&self) -> anyhow::Result<()> {
+        self.db.execute_unprepared("SELECT 1").await?;
+        Ok(())
+    }
+
     pub async fn initialize_schema(&self) -> anyhow::Result<()> {
         self.db
             .execute_unprepared(

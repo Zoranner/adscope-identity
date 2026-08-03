@@ -755,6 +755,15 @@ async fn repository_schema_uses_group_ou_and_member_employee_ids_column_names() 
     );
 }
 
+#[tokio::test]
+async fn repository_ping_reports_connection_state() {
+    let repository = sqlite_repository().await;
+    repository.ping().await.unwrap();
+
+    let disconnected = Repository::from_connection(Default::default());
+    assert!(disconnected.ping().await.is_err());
+}
+
 async fn sqlite_repository() -> Repository {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();

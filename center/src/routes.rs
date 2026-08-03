@@ -39,6 +39,7 @@ pub fn build_router_with_web_root(
 
 fn api_routes() -> Router<AppState> {
     Router::new()
+        .route("/health", get(health))
         .route("/auth/login", post(login))
         .route("/me", get(get_me))
         .route("/me/contact", patch(update_me_contact))
@@ -47,6 +48,18 @@ fn api_routes() -> Router<AppState> {
         .route("/connector/sync", post(connector_sync))
         .route("/connector/confirm", post(connector_confirm))
         .fallback(api_not_found)
+}
+
+async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    match state.repository.ping().await {
+        Ok(()) => (StatusCode::OK, Json(HealthResponse { status: "ok" })),
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthResponse {
+                status: "unavailable",
+            }),
+        ),
+    }
 }
 
 async fn api_not_found() -> StatusCode {
@@ -310,6 +323,11 @@ fn authorize_user_session(headers: &HeaderMap, state: &AppState) -> Result<Strin
         .user_sessions
         .verify(token)
         .ok_or(ApiError::Unauthorized)
+}
+
+#[derive(Debug, Serialize)]
+struct HealthResponse {
+    status: &'static str,
 }
 
 #[derive(Debug, Serialize)]

@@ -32,6 +32,46 @@ struct TestApp {
 }
 
 #[tokio::test]
+async fn health_reports_database_readiness() {
+    let ready_repository = Repository::connect("sqlite::memory:").await.unwrap();
+    ready_repository.initialize_schema().await.unwrap();
+    let ready_app = build_router(AppState::new_for_tests(
+        ready_repository,
+        TEST_ENCRYPTION_KEY,
+    ));
+
+    let ready = ready_app
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("health response");
+    assert_eq!(ready.status(), StatusCode::OK);
+    let ready_body = ready.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(ready_body.as_ref(), br#"{"status":"ok"}"#);
+
+    let unavailable_app = build_router(AppState::new_for_tests(
+        Repository::from_connection(Default::default()),
+        TEST_ENCRYPTION_KEY,
+    ));
+    let unavailable = unavailable_app
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("health response");
+    assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let unavailable_body = unavailable.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(unavailable_body.as_ref(), br#"{"status":"unavailable"}"#);
+}
+
+#[tokio::test]
 async fn user_directory_update_returns_changed_user_with_ou_context() {
     let TestApp { app, repository } = test_app().await;
 
