@@ -1,34 +1,37 @@
-use adss_connector::{
-    ConfiguredDirectoryClient, ConnectorProcessConfig, ConnectorRuntime, FileLocalStateStore,
-    HttpControlPlaneClient, load_env_file,
-};
-use tokio::time::{Duration, sleep};
+use adss_connector::{ConnectorCommand, LoggingTarget, run_configured_connector};
+use tokio::sync::watch;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    load_env_file(".env")?;
-    let config = ConnectorProcessConfig::from_env()?;
-
-    let control_plane = HttpControlPlaneClient::new(
-        config.center_url.clone(),
-        config.connector_key.clone(),
-        Duration::from_secs(config.http_timeout_seconds),
-    )?;
-    let directory = ConfiguredDirectoryClient::from_process_config(&config)?;
-    let local_state = FileLocalStateStore::new(config.state_path.clone());
-    let mut runtime = ConnectorRuntime::new(
-        config.domain_id.clone(),
-        control_plane,
-        directory,
-        local_state,
-    )
-    .with_operation_timeout(Duration::from_secs(config.operation_timeout_seconds));
-    let interval = Duration::from_secs(config.interval_seconds);
-
-    loop {
-        if let Err(error) = runtime.run_once().await {
-            eprintln!("connector sync failed: {error:#}");
+fn main() -> anyhow::Result<()> {
+    match ConnectorCommand::parse(std::env::args_os())? {
+        ConnectorCommand::Version => {
+            println!("adss-connector {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
         }
-        sleep(interval).await;
+        ConnectorCommand::Console { runtime_dir } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(async move {
+                let (stop_tx, stop_rx) = watch::channel(false);
+                tokio::spawn(async move {
+                    if tokio::signal::ctrl_c().await.is_ok() {
+                        let _ = stop_tx.send(true);
+                    }
+                });
+                run_configured_connector(runtime_dir, LoggingTarget::Console, stop_rx, || Ok(()))
+                    .await
+            })
+        }
+        ConnectorCommand::Service { runtime_dir } => run_service(runtime_dir),
     }
+}
+
+#[cfg(windows)]
+fn run_service(runtime_dir: std::path::PathBuf) -> anyhow::Result<()> {
+    adss_connector::run_service_dispatcher(runtime_dir)
+}
+
+#[cfg(not(windows))]
+fn run_service(_runtime_dir: std::path::PathBuf) -> anyhow::Result<()> {
+    anyhow::bail!("--service is only supported on Windows")
 }
