@@ -4,6 +4,7 @@ node_modules/
 .nuxt/
 .output/
 center/web/dist/
+dist/
 /.idea/
 /.vscode/
 *.log
