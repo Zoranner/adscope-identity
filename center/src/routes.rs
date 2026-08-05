@@ -322,6 +322,7 @@ fn authorize_user_session(headers: &HeaderMap, state: &AppState) -> Result<Strin
     state
         .user_sessions
         .verify(token)
+        .map(|session| session.employee_id)
         .ok_or(ApiError::Unauthorized)
 }
 

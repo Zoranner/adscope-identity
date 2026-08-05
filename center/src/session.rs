@@ -1,22 +1,34 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sha2::{Digest, Sha256};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 
-const TOKEN_PREFIX: &str = "adss-user-session:v1";
+const TOKEN_PREFIX: &str = "adss-user-session:v2";
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 3600;
 const SESSION_KEY_ENV: &str = "ADSS_USER_SESSION_KEY";
 const SESSION_TTL_ENV: &str = "ADSS_USER_SESSION_TTL_SECONDS";
 
-#[derive(Debug, Clone)]
+type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct UserSession {
+    pub(crate) employee_id: String,
+    pub(crate) auth_time: u64,
+    pub(crate) expires_at: u64,
+}
+
+#[derive(Clone)]
 pub(crate) struct UserSessionIssuer {
-    key: String,
+    key: Vec<u8>,
     ttl: Duration,
 }
 
 impl UserSessionIssuer {
     pub(crate) fn new(key: impl Into<String>, ttl: Duration) -> Self {
         Self {
-            key: key.into(),
+            key: key.into().into_bytes(),
             ttl,
         }
     }
@@ -44,46 +56,79 @@ impl UserSessionIssuer {
     }
 
     pub(crate) fn issue(&self, employee_id: &str) -> anyhow::Result<String> {
-        if employee_id.contains(':') {
-            anyhow::bail!("employee_id must not contain ':' for session tokens");
-        }
-        let expires_at = current_unix_seconds()? + self.ttl.as_secs();
-        let signature = self.signature(employee_id, expires_at);
-        Ok(format!(
-            "{TOKEN_PREFIX}:{employee_id}:{expires_at}:{signature}"
-        ))
+        self.issue_at(employee_id, current_unix_seconds()?)
     }
 
-    pub(crate) fn verify(&self, token: &str) -> Option<String> {
-        let mut parts = token.split(':');
-        let prefix = format!("{}:{}", parts.next()?, parts.next()?);
-        if prefix != TOKEN_PREFIX {
-            return None;
-        }
-        let employee_id = parts.next()?;
-        let expires_at = parts.next()?.parse::<u64>().ok()?;
-        let signature = parts.next()?;
-        if parts.next().is_some() {
-            return None;
-        }
-        if current_unix_seconds().ok()? > expires_at {
-            return None;
-        }
-        let expected = self.signature(employee_id, expires_at);
-        crate::auth::constant_time_eq(signature.as_bytes(), expected.as_bytes())
-            .then(|| employee_id.to_string())
+    pub(crate) fn verify(&self, token: &str) -> Option<UserSession> {
+        self.verify_at(token, current_unix_seconds().ok()?)
     }
 
-    fn signature(&self, employee_id: &str, expires_at: u64) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(b"adss:user-session:v1");
-        hasher.update(self.key.as_bytes());
-        hasher.update(employee_id.as_bytes());
-        hasher.update(expires_at.to_be_bytes());
-        hex::encode(hasher.finalize())
+    fn issue_at(&self, employee_id: &str, auth_time: u64) -> anyhow::Result<String> {
+        let expires_at = auth_time
+            .checked_add(self.ttl.as_secs())
+            .ok_or_else(|| anyhow::anyhow!("session expiration overflow"))?;
+        let session = UserSession {
+            employee_id: employee_id.to_string(),
+            auth_time,
+            expires_at,
+        };
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&session)?);
+        let signed = format!("{TOKEN_PREFIX}.{payload}");
+        let mut mac = HmacSha256::new_from_slice(&self.key)?;
+        mac.update(signed.as_bytes());
+        let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        Ok(format!("{signed}.{signature}"))
+    }
+
+    fn verify_at(&self, token: &str, now: u64) -> Option<UserSession> {
+        let (signed, signature) = token.rsplit_once('.')?;
+        let payload = signed.strip_prefix(&format!("{TOKEN_PREFIX}."))?;
+        let signature = URL_SAFE_NO_PAD.decode(signature).ok()?;
+        let mut mac = HmacSha256::new_from_slice(&self.key).ok()?;
+        mac.update(signed.as_bytes());
+        mac.verify_slice(&signature).ok()?;
+
+        let payload = URL_SAFE_NO_PAD.decode(payload).ok()?;
+        let session: UserSession = serde_json::from_slice(&payload).ok()?;
+        (session.auth_time <= session.expires_at && now <= session.expires_at).then_some(session)
     }
 }
 
 fn current_unix_seconds() -> anyhow::Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v2_session_round_trips_structured_payload() {
+        let issuer = UserSessionIssuer::new("session-secret", Duration::from_secs(60));
+
+        let token = issuer.issue_at("employee:1001", 1_000).unwrap();
+        let session = issuer.verify_at(&token, 1_030).unwrap();
+
+        assert!(token.starts_with("adss-user-session:v2."));
+        assert_eq!(session.employee_id, "employee:1001");
+        assert_eq!(session.auth_time, 1_000);
+        assert_eq!(session.expires_at, 1_060);
+    }
+
+    #[test]
+    fn v2_session_rejects_tampering_malformed_payload_and_expiration() {
+        let issuer = UserSessionIssuer::new("session-secret", Duration::from_secs(60));
+        let token = issuer.issue_at("1001", 1_000).unwrap();
+        let (signed, signature) = token.rsplit_once('.').unwrap();
+        let tampered = format!("{signed}.A{}", &signature[1..]);
+
+        assert!(issuer.verify_at(&tampered, 1_001).is_none());
+        assert!(
+            issuer
+                .verify_at("adss-user-session:v2.not-json.signature", 1_001)
+                .is_none()
+        );
+        assert!(issuer.verify_at(&token, 1_061).is_none());
+        assert!(issuer.verify_at(&token, 1_060).is_some());
+    }
 }

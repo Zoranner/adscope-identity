@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod env_file;
 mod error;
+pub mod oidc;
 mod password;
 mod routes;
 mod session;

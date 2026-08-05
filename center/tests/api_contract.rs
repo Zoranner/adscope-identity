@@ -24,6 +24,12 @@ use tower::ServiceExt;
 const CONNECTOR_KEY: &str = "test-connector-key";
 const MANAGEMENT_TOKEN: &str = "test-management-token";
 const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
+const TEST_OIDC_ISSUER: &str = "https://center.example.test";
+const TEST_OIDC_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/oidc-private-key.pem");
+const TEST_OIDC_PRIVATE_KEY_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/oidc-private-key.pem"
+);
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct TestApp {
@@ -38,6 +44,8 @@ async fn health_reports_database_readiness() {
     let ready_app = build_router(AppState::new_for_tests(
         ready_repository,
         TEST_ENCRYPTION_KEY,
+        TEST_OIDC_ISSUER,
+        TEST_OIDC_PRIVATE_KEY,
     ));
 
     let ready = ready_app
@@ -56,6 +64,8 @@ async fn health_reports_database_readiness() {
     let unavailable_app = build_router(AppState::new_for_tests(
         Repository::from_connection(Default::default()),
         TEST_ENCRYPTION_KEY,
+        TEST_OIDC_ISSUER,
+        TEST_OIDC_PRIVATE_KEY,
     ));
     let unavailable = unavailable_app
         .oneshot(
@@ -482,7 +492,12 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
     std::fs::write(web_root.join("index.html"), "<main>ADSS Web Shell</main>").unwrap();
     std::fs::write(web_root.join("_nuxt").join("app.js"), "console.log('adss')").unwrap();
     let app = build_router_with_web_root(
-        AppState::new_for_tests(repository, TEST_ENCRYPTION_KEY),
+        AppState::new_for_tests(
+            repository,
+            TEST_ENCRYPTION_KEY,
+            TEST_OIDC_ISSUER,
+            TEST_OIDC_PRIVATE_KEY,
+        ),
         web_root.clone(),
     );
 
@@ -791,7 +806,7 @@ async fn login_returns_user_access_token_for_self_service() {
 
     let token = login_token(&app, "1001", "OldPass123!").await;
 
-    assert!(token.starts_with("adss-user-session:v1:1001:"));
+    assert!(token.starts_with("adss-user-session:v2."));
 }
 
 #[tokio::test]
@@ -811,7 +826,7 @@ async fn login_uses_username_not_employee_id() {
         .await
         .expect("login response");
 
-    assert!(token.starts_with("adss-user-session:v1:1001:"));
+    assert!(token.starts_with("adss-user-session:v2."));
     assert_eq!(employee_id_login.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -1032,7 +1047,12 @@ async fn stored_connector_key_hash_is_not_plaintext_connector_key() {
         })
         .await
         .unwrap();
-    let app = build_router(AppState::new_for_tests(repository, TEST_ENCRYPTION_KEY));
+    let app = build_router(AppState::new_for_tests(
+        repository,
+        TEST_ENCRYPTION_KEY,
+        TEST_OIDC_ISSUER,
+        TEST_OIDC_PRIVATE_KEY,
+    ));
 
     let response = request_with_connector_key(&app, CONNECTOR_KEY).await;
 
@@ -1130,6 +1150,7 @@ async fn app_state_from_env_requires_password_encryption_key() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
+    set_oidc_env();
 
     let error = match AppState::from_env(repository) {
         Ok(_) => panic!("missing password encryption key must not configure AppState"),
@@ -1150,6 +1171,7 @@ async fn app_state_from_env_accepts_password_encryption_key() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
+    set_oidc_env();
     unsafe {
         std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
@@ -1157,7 +1179,9 @@ async fn app_state_from_env_accepts_password_encryption_key() {
         std::env::set_var("ADSS_MANAGEMENT_TOKEN", MANAGEMENT_TOKEN);
     }
 
-    AppState::from_env(repository).unwrap();
+    let state = AppState::from_env(repository).unwrap();
+    assert_eq!(state.oidc.config().issuer(), TEST_OIDC_ISSUER);
+    assert!(!state.oidc.config().allow_insecure_web_loopback_redirects());
 
     clear_server_env();
 }
@@ -1167,6 +1191,7 @@ async fn app_state_from_env_rejects_missing_password_hash_provider() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
+    set_oidc_env();
     unsafe {
         std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
     }
@@ -1190,6 +1215,7 @@ async fn app_state_from_env_rejects_missing_user_session_key() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
+    set_oidc_env();
     unsafe {
         std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
@@ -1214,6 +1240,7 @@ async fn app_state_from_env_rejects_missing_management_token() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
+    set_oidc_env();
     unsafe {
         std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
         std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
@@ -1231,6 +1258,118 @@ async fn app_state_from_env_rejects_missing_management_token() {
             .contains("ADSS_MANAGEMENT_TOKEN is required")
     );
 
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_rejects_invalid_oidc_issuer() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    set_valid_server_env();
+    unsafe {
+        std::env::set_var("ADSS_OIDC_ISSUER", "http://center.example.test");
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("HTTP OIDC issuer must not configure AppState"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("ADSS_OIDC_ISSUER must use HTTPS")
+    );
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_requires_oidc_issuer() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    set_valid_server_env();
+    unsafe {
+        std::env::remove_var("ADSS_OIDC_ISSUER");
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("missing OIDC issuer must not configure AppState"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("ADSS_OIDC_ISSUER is required"));
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_requires_oidc_private_key_file() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    set_valid_server_env();
+    unsafe {
+        std::env::remove_var("ADSS_OIDC_PRIVATE_KEY_FILE");
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("missing OIDC private key setting must not configure AppState"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("ADSS_OIDC_PRIVATE_KEY_FILE is required")
+    );
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_rejects_missing_oidc_private_key_file() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    set_valid_server_env();
+    unsafe {
+        std::env::set_var(
+            "ADSS_OIDC_PRIVATE_KEY_FILE",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/missing.pem"),
+        );
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("missing OIDC private key file must not configure AppState"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("failed to read ADSS_OIDC_PRIVATE_KEY_FILE")
+    );
+    clear_server_env();
+}
+
+#[tokio::test]
+async fn app_state_from_env_rejects_invalid_oidc_private_key_contents() {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_server_env();
+    set_valid_server_env();
+    unsafe {
+        std::env::set_var(
+            "ADSS_OIDC_PRIVATE_KEY_FILE",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+        );
+    }
+
+    let error = match AppState::from_env(repository) {
+        Ok(_) => panic!("invalid OIDC PEM must not configure AppState"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("OIDC private key must be valid RSA")
+    );
     clear_server_env();
 }
 
@@ -1254,6 +1393,7 @@ async fn app_state_from_env_uses_argon2id_password_hash_provider_for_login_and_c
     let state = {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_server_env();
+        set_oidc_env();
         unsafe {
             std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
             std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
@@ -1294,6 +1434,8 @@ async fn test_app_with_domain_enabled(enabled: bool) -> TestApp {
     let app = build_router(AppState::new_for_tests(
         repository.clone(),
         TEST_ENCRYPTION_KEY,
+        TEST_OIDC_ISSUER,
+        TEST_OIDC_PRIVATE_KEY,
     ));
     TestApp { app, repository }
 }
@@ -1320,6 +1462,8 @@ async fn test_app_with_seeded_user(employee_id: &str, username: &str, password: 
     let app = build_router(AppState::new_for_tests(
         repository.clone(),
         TEST_ENCRYPTION_KEY,
+        TEST_OIDC_ISSUER,
+        TEST_OIDC_PRIVATE_KEY,
     ));
     TestApp { app, repository }
 }
@@ -1702,7 +1846,27 @@ fn clear_server_env() {
         std::env::remove_var("ADSS_USER_SESSION_KEY");
         std::env::remove_var("ADSS_USER_SESSION_TTL_SECONDS");
         std::env::remove_var("ADSS_MANAGEMENT_TOKEN");
+        std::env::remove_var("ADSS_OIDC_ISSUER");
+        std::env::remove_var("ADSS_OIDC_PRIVATE_KEY_FILE");
+        std::env::remove_var("ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS");
     }
+}
+
+fn set_oidc_env() {
+    unsafe {
+        std::env::set_var("ADSS_OIDC_ISSUER", TEST_OIDC_ISSUER);
+        std::env::set_var("ADSS_OIDC_PRIVATE_KEY_FILE", TEST_OIDC_PRIVATE_KEY_PATH);
+    }
+}
+
+fn set_valid_server_env() {
+    unsafe {
+        std::env::set_var("ADSS_PASSWORD_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+        std::env::set_var("ADSS_PASSWORD_HASH_PROVIDER", "argon2id");
+        std::env::set_var("ADSS_USER_SESSION_KEY", "test-user-session-key");
+        std::env::set_var("ADSS_MANAGEMENT_TOKEN", MANAGEMENT_TOKEN);
+    }
+    set_oidc_env();
 }
 
 #[allow(dead_code)]

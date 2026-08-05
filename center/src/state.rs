@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use adss_store::Repository;
 
+use crate::oidc::{OidcService, config::OidcConfig};
 use crate::password::{
     BuiltInPasswordEncryption, DeterministicPasswordHash, PasswordEncryption, PasswordHashProvider,
     password_encryption_from_env, password_hash_from_env,
@@ -18,6 +19,7 @@ pub struct AppState {
     pub(crate) password_hash: Arc<dyn PasswordHashProvider>,
     pub(crate) user_sessions: UserSessionIssuer,
     pub(crate) management_token: String,
+    pub oidc: OidcService,
 }
 
 impl AppState {
@@ -29,12 +31,15 @@ impl AppState {
             password_hash_from_env()?,
             UserSessionIssuer::from_env()?,
             management_token_from_env()?,
+            OidcService::from_env()?,
         ))
     }
 
     pub fn new_for_tests(
         repository: Repository,
         password_encryption_key: impl Into<String>,
+        oidc_issuer: &str,
+        oidc_private_key_pem: &[u8],
     ) -> Self {
         Self::with_password_providers(
             repository,
@@ -43,6 +48,7 @@ impl AppState {
             Arc::new(DeterministicPasswordHash),
             UserSessionIssuer::for_tests("test-user-session-key"),
             "test-management-token".to_string(),
+            oidc_service_for_tests(oidc_issuer, oidc_private_key_pem),
         )
     }
 
@@ -50,6 +56,8 @@ impl AppState {
         repository: Repository,
         batch_limit: usize,
         password_encryption_key: impl Into<String>,
+        oidc_issuer: &str,
+        oidc_private_key_pem: &[u8],
     ) -> Self {
         Self::with_password_providers(
             repository,
@@ -58,6 +66,7 @@ impl AppState {
             Arc::new(DeterministicPasswordHash),
             UserSessionIssuer::for_tests("test-user-session-key"),
             "test-management-token".to_string(),
+            oidc_service_for_tests(oidc_issuer, oidc_private_key_pem),
         )
     }
 
@@ -68,6 +77,7 @@ impl AppState {
         password_hash: Arc<dyn PasswordHashProvider>,
         user_sessions: UserSessionIssuer,
         management_token: String,
+        oidc: OidcService,
     ) -> Self {
         Self {
             repository,
@@ -76,8 +86,15 @@ impl AppState {
             password_hash,
             user_sessions,
             management_token,
+            oidc,
         }
     }
+}
+
+fn oidc_service_for_tests(issuer: &str, private_key_pem: &[u8]) -> OidcService {
+    let config = OidcConfig::new(issuer, private_key_pem.to_vec(), false)
+        .expect("test OIDC configuration must be valid");
+    OidcService::new(config).expect("test OIDC private key must be valid")
 }
 
 fn management_token_from_env() -> anyhow::Result<String> {
