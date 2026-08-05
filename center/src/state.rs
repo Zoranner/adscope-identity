@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use adss_store::Repository;
 
-use crate::oidc::{OidcService, config::OidcConfig};
+use crate::oidc::{OidcService, config::OidcConfig, crypto::CsrfSigner};
 use crate::password::{
     BuiltInPasswordEncryption, DeterministicPasswordHash, PasswordEncryption, PasswordHashProvider,
     password_encryption_from_env, password_hash_from_env,
@@ -18,6 +18,7 @@ pub struct AppState {
     pub(crate) password_encryption: Arc<dyn PasswordEncryption>,
     pub(crate) password_hash: Arc<dyn PasswordHashProvider>,
     pub(crate) user_sessions: UserSessionIssuer,
+    pub(crate) csrf_signer: CsrfSigner,
     pub(crate) management_token: String,
     pub oidc: OidcService,
 }
@@ -79,12 +80,14 @@ impl AppState {
         management_token: String,
         oidc: OidcService,
     ) -> Self {
+        let csrf_signer = user_sessions.csrf_signer();
         Self {
             repository,
             batch_limit: batch_limit.max(1),
             password_encryption,
             password_hash,
             user_sessions,
+            csrf_signer,
             management_token,
             oidc,
         }

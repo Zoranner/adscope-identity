@@ -5,6 +5,8 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
+use crate::oidc::crypto::CsrfSigner;
+
 const TOKEN_PREFIX: &str = "adss-user-session:v2";
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 3600;
 const SESSION_KEY_ENV: &str = "ADSS_USER_SESSION_KEY";
@@ -61,6 +63,14 @@ impl UserSessionIssuer {
 
     pub(crate) fn verify(&self, token: &str) -> Option<UserSession> {
         self.verify_at(token, current_unix_seconds().ok()?)
+    }
+
+    pub(crate) fn ttl_seconds(&self) -> u64 {
+        self.ttl.as_secs()
+    }
+
+    pub(crate) fn csrf_signer(&self) -> CsrfSigner {
+        CsrfSigner::new(&self.key).expect("user session key must be a valid HMAC key")
     }
 
     fn issue_at(&self, employee_id: &str, auth_time: u64) -> anyhow::Result<String> {

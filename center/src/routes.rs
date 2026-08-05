@@ -14,6 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, patch, post},
 };
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -44,6 +45,7 @@ fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/auth/login", post(login))
+        .route("/auth/logout", post(logout))
         .route("/me", get(get_me))
         .route("/me/contact", patch(update_me_contact))
         .route("/me/password", post(change_me_password))
@@ -72,8 +74,9 @@ async fn api_not_found() -> StatusCode {
 
 async fn login(
     State(state): State<AppState>,
+    jar: CookieJar,
     Json(request): Json<UserLoginRequest>,
-) -> Result<Json<UserLoginResponse>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     let user = state
         .repository
         .get_user_by_username(&request.username)
@@ -94,13 +97,36 @@ async fn login(
         return Err(ApiError::Unauthorized);
     }
 
-    Ok(Json(UserLoginResponse {
-        employee_id: user.employee_id,
-        access_token: state
-            .user_sessions
-            .issue(&credential.employee_id)
-            .map_err(|_| ApiError::Persistence)?,
-    }))
+    let access_token = state
+        .user_sessions
+        .issue(&credential.employee_id)
+        .map_err(|_| ApiError::Persistence)?;
+    let cookie = sso_cookie(access_token.clone(), state.user_sessions.ttl_seconds())?;
+    Ok((
+        jar.add(cookie),
+        Json(UserLoginResponse {
+            employee_id: user.employee_id,
+            access_token,
+        }),
+    ))
+}
+
+async fn logout(jar: CookieJar) -> Result<impl IntoResponse, ApiError> {
+    let cookie = sso_cookie(String::new(), 0)?;
+    Ok((StatusCode::NO_CONTENT, jar.remove(cookie)))
+}
+
+fn sso_cookie(value: String, ttl_seconds: u64) -> Result<Cookie<'static>, ApiError> {
+    let max_age = std::time::Duration::from_secs(ttl_seconds)
+        .try_into()
+        .map_err(|_| ApiError::Persistence)?;
+    Ok(Cookie::build(("adss_sso", value))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(max_age)
+        .build())
 }
 
 async fn get_me(

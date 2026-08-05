@@ -10,8 +10,9 @@ use adss_store::{
 };
 use axum::{
     body::Body,
-    http::{Method, Request, Response, StatusCode},
+    http::{Method, Request, Response, StatusCode, header},
 };
+use axum_extra::extract::cookie::Cookie;
 use http_body_util::BodyExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, pkcs8::DecodePrivateKey};
@@ -24,6 +25,10 @@ const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 const TEST_OIDC_ISSUER: &str = "https://center.example.test";
 const TEST_OIDC_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/oidc-private-key.pem");
 const OIDC_CLIENT_ID: &str = "client_oidc_contract";
+const OIDC_REDIRECT_URI: &str = "https://client.example.test/callback?source=adss";
+const OIDC_STATE: &str = "state-original";
+const OIDC_NONCE: &str = "nonce-original";
+const OIDC_CODE_CHALLENGE: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 struct TestApp {
     app: axum::Router,
@@ -817,6 +822,602 @@ async fn admin_oauth_client_delete_returns_no_content_and_not_found() {
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn login_cookie_matches_json_token_and_logout_expires_it() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_oidc_client(&repository).await;
+
+    let login = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/auth/login",
+            &UserLoginRequest {
+                username: "test-user".to_string(),
+                password: "UserPass123!".to_string(),
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let set_cookie = login.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let cookie_token = session_cookie_value(&set_cookie);
+    let body = json_body(login).await;
+    assert_eq!(body["access_token"], cookie_token);
+    for attribute in [
+        "HttpOnly",
+        "Secure",
+        "SameSite=Lax",
+        "Path=/",
+        "Max-Age=3600",
+    ] {
+        assert!(
+            set_cookie.contains(attribute),
+            "missing {attribute}: {set_cookie}"
+        );
+    }
+
+    let cookie_only_me = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, "/api/me", &cookie_token))
+        .await
+        .unwrap();
+    assert_eq!(cookie_only_me.status(), StatusCode::UNAUTHORIZED);
+
+    let logout = app
+        .clone()
+        .oneshot(cookie_request(
+            Method::POST,
+            "/api/auth/logout",
+            &cookie_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    let cleared = logout.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert!(cleared.starts_with("adss_sso="));
+    assert!(cleared.contains("HttpOnly"));
+    assert!(cleared.contains("Secure"));
+    assert!(cleared.contains("SameSite=Lax"));
+    assert!(cleared.contains("Path=/"));
+    assert!(cleared.contains("Max-Age=0"));
+    let cleared_cookie = Cookie::parse(cleared.to_string()).unwrap();
+    assert_eq!(cleared_cookie.max_age().unwrap().whole_seconds(), 0);
+    assert!(cleared_cookie.expires_datetime().unwrap().unix_timestamp() < unix_seconds() as i64);
+
+    let after_browser_clear = app
+        .oneshot(empty_request(Method::GET, &authorization_uri()))
+        .await
+        .unwrap();
+    assert_eq!(after_browser_clear.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        local_url(
+            after_browser_clear.headers()[header::LOCATION]
+                .to_str()
+                .unwrap()
+        )
+        .path(),
+        "/login"
+    );
+}
+
+#[tokio::test]
+async fn authorization_rejects_untrusted_redirects_and_redirects_trusted_protocol_errors() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_oidc_client(&repository).await;
+
+    for uri in [
+        authorization_uri_with(
+            "client_missing",
+            "https://evil.example/callback",
+            "openid",
+            None,
+        ),
+        authorization_uri_with(
+            OIDC_CLIENT_ID,
+            "https://evil.example/callback",
+            "openid",
+            None,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(empty_request(Method::GET, &uri))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(response.headers().get(header::LOCATION).is_none());
+    }
+
+    let invalid_scope = app
+        .clone()
+        .oneshot(empty_request(
+            Method::GET,
+            &authorization_uri_with(OIDC_CLIENT_ID, OIDC_REDIRECT_URI, "openid groups", None),
+        ))
+        .await
+        .unwrap();
+    assert_redirect_error(invalid_scope, "invalid_scope", Some(OIDC_STATE));
+
+    let prompt_none = app
+        .clone()
+        .oneshot(empty_request(
+            Method::GET,
+            &authorization_uri_with(OIDC_CLIENT_ID, OIDC_REDIRECT_URI, "openid", Some("none")),
+        ))
+        .await
+        .unwrap();
+    assert_redirect_error(prompt_none, "interaction_required", Some(OIDC_STATE));
+
+    for (uri, error) in [
+        (
+            authorization_uri().replace("response_type=code", "response_type=token"),
+            "unsupported_response_type",
+        ),
+        (
+            authorization_uri().replace("response_mode=query", "response_mode=fragment"),
+            "invalid_request",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(empty_request(Method::GET, &uri))
+            .await
+            .unwrap();
+        assert_redirect_error(response, error, Some(OIDC_STATE));
+    }
+
+    for uri in [
+        format!("{}&scope=openid", authorization_uri()),
+        format!("{}&unknown={}", authorization_uri(), "x".repeat(16 * 1024)),
+        authorization_uri().replace("state=state-original", "state=%FF"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(empty_request(Method::GET, &uri))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(response.headers().get(header::LOCATION).is_none());
+    }
+
+    let mut client = repository
+        .get_oauth_client(OIDC_CLIENT_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    client.allowed_scopes = vec!["openid".to_string()];
+    repository
+        .update_oauth_client(client.clone())
+        .await
+        .unwrap();
+    let disallowed_scope = app
+        .clone()
+        .oneshot(empty_request(
+            Method::GET,
+            &authorization_uri_with(OIDC_CLIENT_ID, OIDC_REDIRECT_URI, "openid profile", None),
+        ))
+        .await
+        .unwrap();
+    assert_redirect_error(disallowed_scope, "invalid_scope", Some(OIDC_STATE));
+
+    client.enabled = false;
+    repository.update_oauth_client(client).await.unwrap();
+    let disabled = app
+        .oneshot(empty_request(Method::GET, &authorization_uri()))
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), StatusCode::BAD_REQUEST);
+    assert!(disabled.headers().get(header::LOCATION).is_none());
+}
+
+#[tokio::test]
+async fn authorization_routes_only_to_server_rebuilt_internal_pages() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_oidc_client(&repository).await;
+    let authorization = authorization_uri();
+
+    let anonymous = app
+        .clone()
+        .oneshot(empty_request(Method::GET, &authorization))
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::SEE_OTHER);
+    let login_location = anonymous.headers()[header::LOCATION].to_str().unwrap();
+    let login_url = local_url(login_location);
+    assert_eq!(login_url.path(), "/login");
+    let continue_value = query_value(&login_url, "continue").unwrap();
+    assert_eq!(continue_value, authorization);
+    assert!(continue_value.starts_with("/oauth2/authorize?"));
+
+    let cookie = login_cookie(&app).await;
+    let authenticated = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, &authorization, &cookie))
+        .await
+        .unwrap();
+    assert_eq!(authenticated.status(), StatusCode::SEE_OTHER);
+    let authorize_location = authenticated.headers()[header::LOCATION].to_str().unwrap();
+    assert_eq!(
+        authorize_location,
+        authorization.replacen("/oauth2/authorize", "/authorize", 1)
+    );
+
+    seed_user_profile(&repository, None, None, None, UserStatus::Disabled).await;
+    let inactive = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, &authorization, &cookie))
+        .await
+        .unwrap();
+    assert_eq!(inactive.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        local_url(inactive.headers()[header::LOCATION].to_str().unwrap()).path(),
+        "/login"
+    );
+
+    let injected = format!("{authorization}&return_to=https%3A%2F%2Fevil.example%2F");
+    let response = app
+        .oneshot(empty_request(Method::GET, &injected))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get(header::LOCATION).is_none());
+}
+
+#[tokio::test]
+async fn authorization_context_requires_session_and_returns_confirmed_claims_and_csrf() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user_profile(
+        &repository,
+        Some("user@example.test"),
+        Some("13800000000"),
+        None,
+        UserStatus::Active,
+    )
+    .await;
+    seed_oidc_client(&repository).await;
+    let context_uri = format!(
+        "/api/oauth2/authorize/context?{}",
+        authorization_uri().split_once('?').unwrap().1
+    );
+
+    let anonymous = app
+        .clone()
+        .oneshot(empty_request(Method::GET, &context_uri))
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(anonymous).await["error"], "invalid_session");
+
+    let cookie = login_cookie(&app).await;
+    let prompt_none_context = format!(
+        "/api/oauth2/authorize/context?{}",
+        authorization_uri_with(OIDC_CLIENT_ID, OIDC_REDIRECT_URI, "openid", Some("none"))
+            .split_once('?')
+            .unwrap()
+            .1
+    );
+    let prompt_none = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, &prompt_none_context, &cookie))
+        .await
+        .unwrap();
+    assert_redirect_error(prompt_none, "interaction_required", Some(OIDC_STATE));
+    let response = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, &context_uri, &cookie))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["client_name"], "OIDC Contract Client");
+    assert_eq!(body["user"]["employee_id"], "1001");
+    assert_eq!(body["user"]["username"], "test-user");
+    assert_eq!(body["user"]["display_name"], "Test User");
+    assert_eq!(body["claims"]["sub"], "1001");
+    assert_eq!(body["claims"]["preferred_username"], "test-user");
+    assert_eq!(body["claims"]["name"], "Test User");
+    assert_eq!(body["claims"]["email"], "user@example.test");
+    assert_eq!(body["claims"]["phone_number"], "13800000000");
+    assert!(
+        body["csrf_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("adss-csrf:v1.")
+    );
+    assert_eq!(body["authorization"]["redirect_uri"], OIDC_REDIRECT_URI);
+    assert_eq!(body["authorization"]["state"], OIDC_STATE);
+
+    seed_user_profile(&repository, None, None, None, UserStatus::Disabled).await;
+    let disabled_user = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, &context_uri, &cookie))
+        .await
+        .unwrap();
+    assert_eq!(disabled_user.status(), StatusCode::UNAUTHORIZED);
+
+    seed_user(&repository).await;
+    let mut client = repository
+        .get_oauth_client(OIDC_CLIENT_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    client.enabled = false;
+    repository
+        .update_oauth_client(client)
+        .await
+        .unwrap()
+        .unwrap();
+    let disabled_client = app
+        .oneshot(cookie_request(Method::GET, &context_uri, &cookie))
+        .await
+        .unwrap();
+    assert_eq!(disabled_client.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn authorization_approve_stores_hash_bound_record_and_allows_new_confirmations() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_oidc_client(&repository).await;
+    let cookie = login_cookie(&app).await;
+
+    let first_csrf = authorization_csrf(&app, &cookie).await;
+    let first = app
+        .clone()
+        .oneshot(form_request(
+            "/oauth2/authorize",
+            &authorization_form("approve", &first_csrf),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    let first_code = approved_code(first);
+    let stored = repository
+        .consume_authorization_code(&sha256_token(&first_code), unix_seconds() as i64)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        repository
+            .consume_authorization_code(&sha256_token(&first_code), unix_seconds() as i64)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(stored.client_id, OIDC_CLIENT_ID);
+    assert_eq!(stored.employee_id, "1001");
+    assert_eq!(stored.redirect_uri, OIDC_REDIRECT_URI);
+    assert_eq!(stored.scopes, ["openid", "profile", "email", "phone"]);
+    assert_eq!(stored.nonce, OIDC_NONCE);
+    assert_eq!(stored.code_challenge, OIDC_CODE_CHALLENGE);
+    assert!(stored.auth_time <= unix_seconds() as i64);
+    assert!((1..=120).contains(&(stored.expires_at - unix_seconds() as i64)));
+
+    let second_csrf = authorization_csrf(&app, &cookie).await;
+    let second = app
+        .oneshot(form_request(
+            "/oauth2/authorize",
+            &authorization_form("approve", &second_csrf),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    let second_code = approved_code(second);
+    assert_ne!(first_code, second_code);
+}
+
+#[tokio::test]
+async fn authorization_cancel_and_invalid_confirmations_never_return_codes() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_oidc_client(&repository).await;
+    let cookie = login_cookie(&app).await;
+    let csrf = authorization_csrf(&app, &cookie).await;
+
+    let cancel = app
+        .clone()
+        .oneshot(form_request(
+            "/oauth2/authorize",
+            &authorization_form("cancel", &csrf),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_redirect_error(cancel, "access_denied", Some(OIDC_STATE));
+
+    let mut tampered_csrf = authorization_form("approve", &format!("{csrf}x"));
+    let mut tampered_request = authorization_form("approve", &csrf);
+    tampered_request = tampered_request.replace("nonce=nonce-original", "nonce=nonce-tampered");
+    let wrong_decision = authorization_form("later", &csrf);
+    let duplicate = format!("{}&decision=approve", authorization_form("approve", &csrf));
+    for form in [
+        &tampered_csrf,
+        &tampered_request,
+        &wrong_decision,
+        &duplicate,
+    ] {
+        let response = app
+            .clone()
+            .oneshot(form_request("/oauth2/authorize", form, &cookie))
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error() || response.status().is_redirection());
+        assert!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .is_none_or(|location| local_or_absolute_query_value(location, "code").is_none())
+        );
+    }
+    tampered_csrf.push_str(&"x".repeat(16 * 1024));
+    let oversized = app
+        .oneshot(form_request("/oauth2/authorize", &tampered_csrf, &cookie))
+        .await
+        .unwrap();
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+fn authorization_uri() -> String {
+    authorization_uri_with(
+        OIDC_CLIENT_ID,
+        OIDC_REDIRECT_URI,
+        "openid profile email phone",
+        None,
+    )
+}
+
+fn authorization_uri_with(
+    client_id: &str,
+    redirect_uri: &str,
+    scope: &str,
+    prompt: Option<&str>,
+) -> String {
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    serializer
+        .append_pair("response_type", "code")
+        .append_pair("client_id", client_id)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("scope", scope)
+        .append_pair("state", OIDC_STATE)
+        .append_pair("nonce", OIDC_NONCE)
+        .append_pair("code_challenge", OIDC_CODE_CHALLENGE)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("response_mode", "query");
+    if let Some(prompt) = prompt {
+        serializer.append_pair("prompt", prompt);
+    }
+    format!("/oauth2/authorize?{}", serializer.finish())
+}
+
+fn authorization_form(decision: &str, csrf_token: &str) -> String {
+    let query = authorization_uri();
+    let mut form = query.split_once('?').unwrap().1.to_string();
+    form.push('&');
+    form.push_str(
+        &url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("decision", decision)
+            .append_pair("csrf_token", csrf_token)
+            .finish(),
+    );
+    form
+}
+
+fn form_request(uri: &str, form: &str, cookie: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::COOKIE, format!("adss_sso={cookie}"))
+        .body(Body::from(form.to_string()))
+        .unwrap()
+}
+
+fn cookie_request(method: Method, uri: &str, cookie: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::COOKIE, format!("adss_sso={cookie}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn session_cookie_value(set_cookie: &str) -> String {
+    let cookie = Cookie::parse_encoded(set_cookie.to_string()).unwrap();
+    assert_eq!(cookie.name(), "adss_sso");
+    cookie.value().to_string()
+}
+
+async fn login_cookie(app: &axum::Router) -> String {
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/auth/login",
+            &UserLoginRequest {
+                username: "test-user".to_string(),
+                password: "UserPass123!".to_string(),
+            },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    session_cookie_value(response.headers()[header::SET_COOKIE].to_str().unwrap())
+}
+
+async fn authorization_csrf(app: &axum::Router, cookie: &str) -> String {
+    let context_uri = format!(
+        "/api/oauth2/authorize/context?{}",
+        authorization_uri().split_once('?').unwrap().1
+    );
+    let response = app
+        .clone()
+        .oneshot(cookie_request(Method::GET, &context_uri, cookie))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await["csrf_token"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn approved_code(response: Response<Body>) -> String {
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response.headers()[header::LOCATION].to_str().unwrap();
+    let url = url::Url::parse(location).unwrap();
+    assert_eq!(
+        url.as_str().split('?').next().unwrap(),
+        "https://client.example.test/callback"
+    );
+    assert_eq!(query_value(&url, "source").as_deref(), Some("adss"));
+    assert_eq!(query_value(&url, "state").as_deref(), Some(OIDC_STATE));
+    query_value(&url, "code").unwrap()
+}
+
+fn assert_redirect_error(response: Response<Body>, error: &str, state: Option<&str>) {
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response.headers()[header::LOCATION].to_str().unwrap();
+    let url = url::Url::parse(location).unwrap();
+    assert_eq!(query_value(&url, "error").as_deref(), Some(error));
+    assert_eq!(query_value(&url, "state").as_deref(), state);
+    assert!(query_value(&url, "code").is_none());
+}
+
+fn local_url(location: &str) -> url::Url {
+    url::Url::parse("https://center.example.test")
+        .unwrap()
+        .join(location)
+        .unwrap()
+}
+
+fn local_or_absolute_query_value(location: &str, name: &str) -> Option<String> {
+    query_value(&local_url(location), name)
+}
+
+fn query_value(url: &url::Url, name: &str) -> Option<String> {
+    url.query_pairs()
+        .find_map(|(key, value)| (key == name).then(|| value.into_owned()))
+}
+
 async fn test_app() -> TestApp {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
@@ -884,7 +1485,7 @@ async fn seed_oidc_client(repository: &Repository) -> OAuthClientRecord {
         name: "OIDC Contract Client".to_string(),
         client_type: OAuthClientType::Web,
         client_secret_hash: Some("not-used-by-userinfo".to_string()),
-        redirect_uris: vec!["https://client.example.test/callback".to_string()],
+        redirect_uris: vec![OIDC_REDIRECT_URI.to_string()],
         allowed_scopes: vec![
             "openid".to_string(),
             "profile".to_string(),
