@@ -570,7 +570,7 @@ fn user_patch_with_status(user: User, status: UserStatus) -> UserDirectoryPatch 
     }
 }
 
-fn authorize_management(headers: &HeaderMap, state: &AppState) -> Result<(), ApiError> {
+pub(super) fn authorize_management(headers: &HeaderMap, state: &AppState) -> Result<(), ApiError> {
     let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())

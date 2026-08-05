@@ -1,4 +1,5 @@
 mod admin;
+mod oauth_clients;
 
 use adss_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
@@ -45,6 +46,7 @@ fn api_routes() -> Router<AppState> {
         .route("/me/contact", patch(update_me_contact))
         .route("/me/password", post(change_me_password))
         .merge(admin::routes())
+        .merge(oauth_clients::routes())
         .route("/connector/sync", post(connector_sync))
         .route("/connector/confirm", post(connector_confirm))
         .fallback(api_not_found)
