@@ -18,6 +18,7 @@ dependencies = [
  "hmac",
  "http-body-util",
  "jsonwebtoken",
+ "mime",
  "rand 0.9.4",
  "rsa",
  "serde",

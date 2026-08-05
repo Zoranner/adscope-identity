@@ -1,4 +1,4 @@
-use adss_protocol::UserStatus;
+use adss_protocol::{User, UserStatus};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -49,6 +49,13 @@ pub struct AuthorizationCodeRecord {
     pub code_challenge: String,
     pub auth_time: i64,
     pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizationCodeExchange {
+    pub code: AuthorizationCodeRecord,
+    pub client: Option<OAuthClientRecord>,
+    pub user: Option<User>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

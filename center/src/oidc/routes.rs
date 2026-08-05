@@ -2,25 +2,33 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use adss_protocol::{User, UserStatus};
-use adss_store::{AuthorizationCodeRecord, OAuthClientRecord};
+use adss_store::{AuthorizationCodeRecord, OAuthClientRecord, OAuthClientType};
 use axum::{
     Form, Json, Router,
-    extract::{DefaultBodyLimit, OriginalUri, State, rejection::FormRejection},
+    body::Bytes,
+    extract::{
+        DefaultBodyLimit, OriginalUri, State,
+        rejection::{BytesRejection, FormRejection},
+    },
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
     response::{IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
 };
 use axum_extra::extract::cookie::CookieJar;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::Url;
 
 use crate::{
+    auth::constant_time_eq,
     oidc::{
-        crypto::{random_urlsafe, sha256_token},
+        IdTokenUserClaims,
+        crypto::{pkce_s256, random_urlsafe, sha256_token},
         validation::{
-            OIDC_BODY_LIMIT_BYTES, validate_client_id, validate_code_challenge, validate_nonce,
-            validate_redirect_uri, validate_response_mode, validate_scopes, validate_state,
+            OIDC_BODY_LIMIT_BYTES, validate_client_id, validate_code_challenge,
+            validate_code_verifier, validate_nonce, validate_redirect_uri, validate_response_mode,
+            validate_scopes, validate_state,
         },
     },
     session::UserSession,
@@ -39,6 +47,12 @@ pub(crate) fn routes() -> Router<AppState> {
             get(openid_configuration),
         )
         .route("/oauth2/jwks", get(jwks))
+        .route(
+            "/oauth2/token",
+            post(token)
+                .fallback(token_method_not_allowed)
+                .layer(DefaultBodyLimit::max(OIDC_BODY_LIMIT_BYTES)),
+        )
         .route("/oauth2/userinfo", get(userinfo))
         .route(
             "/oauth2/authorize",
@@ -326,6 +340,199 @@ async fn jwks(State(state): State<AppState>) -> impl IntoResponse {
     public_metadata_json(state.oidc.jwks().clone())
 }
 
+async fn token(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    match exchange_token(&state, &headers, body).await {
+        Ok(response) => token_json(response).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn token_method_not_allowed() -> TokenError {
+    TokenError::invalid_request(StatusCode::METHOD_NOT_ALLOWED)
+}
+
+async fn exchange_token(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<TokenResponse, TokenError> {
+    if !has_form_content_type(headers) {
+        return Err(TokenError::invalid_request(StatusCode::BAD_REQUEST));
+    }
+    let body = body.map_err(|rejection| TokenError::invalid_request(rejection.status()))?;
+    let request = TokenRequest::parse(&body)?;
+    let authentication = ClientAuthentication::parse(headers);
+    let authenticated_client = state
+        .repository
+        .get_oauth_client(&request.client_id)
+        .await
+        .map_err(|_| TokenError::server_error())?
+        .ok_or_else(TokenError::invalid_client)?;
+    if let Err(error) =
+        authenticate_token_client(&authenticated_client, &request.client_id, &authentication)
+    {
+        let now = token_now()?;
+        destroy_token_code(state, &request.code, now).await?;
+        return Err(error);
+    }
+    if request.grant_type != "authorization_code" {
+        return Err(TokenError::unsupported_grant_type());
+    }
+    let now = token_now()?;
+    let exchange = state
+        .repository
+        .consume_authorization_code_for_exchange(&sha256_token(&request.code), now)
+        .await
+        .map_err(|_| TokenError::server_error())?
+        .ok_or_else(TokenError::invalid_grant)?;
+    let record = exchange.code;
+    let client = exchange.client.ok_or_else(TokenError::invalid_grant)?;
+    if !client.enabled
+        || client.client_id != authenticated_client.client_id
+        || client.client_type != authenticated_client.client_type
+    {
+        return Err(TokenError::invalid_grant());
+    }
+    authenticate_token_client(&client, &request.client_id, &authentication)?;
+    if record.client_id != request.client_id
+        || record.redirect_uri != request.redirect_uri
+        || validate_code_verifier(&request.code_verifier).is_err()
+        || !constant_time_eq(
+            record.code_challenge.as_bytes(),
+            pkce_s256(&request.code_verifier).as_bytes(),
+        )
+    {
+        return Err(TokenError::invalid_grant());
+    }
+    let scope = record.scopes.join(" ");
+    if validate_scopes(&scope).is_err()
+        || record
+            .scopes
+            .iter()
+            .any(|scope| !client.allowed_scopes.contains(scope))
+    {
+        return Err(TokenError::invalid_grant());
+    }
+    let user = exchange
+        .user
+        .filter(|user| user.employee_id == record.employee_id && user.status == UserStatus::Active)
+        .ok_or_else(TokenError::invalid_grant)?;
+    let access_token = state
+        .oidc
+        .issue_access_token(&user.employee_id, &client.client_id, &scope)
+        .map_err(|_| TokenError::server_error())?;
+    let profile = record.scopes.iter().any(|scope| scope == "profile");
+    let email = record.scopes.iter().any(|scope| scope == "email");
+    let phone = record.scopes.iter().any(|scope| scope == "phone");
+    let auth_time = u64::try_from(record.auth_time).map_err(|_| TokenError::server_error())?;
+    let user_claims = IdTokenUserClaims {
+        preferred_username: if profile {
+            non_empty(Some(&user.username))
+        } else {
+            None
+        },
+        name: if profile {
+            non_empty(Some(&user.display_name))
+        } else {
+            None
+        },
+        email: if email {
+            non_empty(user.email.as_deref())
+        } else {
+            None
+        },
+        phone_number: if phone {
+            non_empty(user.mobile.as_deref()).or_else(|| non_empty(user.telephone.as_deref()))
+        } else {
+            None
+        },
+    };
+    let id_token = state
+        .oidc
+        .issue_id_token_with_user_claims(
+            &user.employee_id,
+            &client.client_id,
+            auth_time,
+            &record.nonce,
+            user_claims,
+        )
+        .map_err(|_| TokenError::server_error())?;
+
+    Ok(TokenResponse {
+        token_type: "Bearer",
+        expires_in: state.oidc.config().token_ttl().as_secs(),
+        scope,
+        access_token,
+        id_token,
+    })
+}
+
+fn token_now() -> Result<i64, TokenError> {
+    let now = unix_seconds().map_err(|_| TokenError::server_error())?;
+    i64::try_from(now).map_err(|_| TokenError::server_error())
+}
+
+async fn destroy_token_code(state: &AppState, code: &str, now: i64) -> Result<(), TokenError> {
+    state
+        .repository
+        .consume_authorization_code(&sha256_token(code), now)
+        .await
+        .map(|_| ())
+        .map_err(|_| TokenError::server_error())
+}
+
+fn has_form_content_type(headers: &HeaderMap) -> bool {
+    let mut values = headers.get_all(header::CONTENT_TYPE).iter();
+    let Some(value) = values.next() else {
+        return false;
+    };
+    if values.next().is_some() {
+        return false;
+    }
+    value
+        .to_str()
+        .ok()
+        .and_then(|value| value.parse::<mime::Mime>().ok())
+        .is_some_and(|value| {
+            value.type_() == mime::APPLICATION && value.subtype() == mime::WWW_FORM_URLENCODED
+        })
+}
+
+fn authenticate_token_client(
+    client: &OAuthClientRecord,
+    body_client_id: &str,
+    authentication: &ClientAuthentication,
+) -> Result<(), TokenError> {
+    match client.client_type {
+        OAuthClientType::Web => {
+            let ClientAuthentication::Basic(credentials) = authentication else {
+                return Err(TokenError::invalid_client());
+            };
+            let Some(expected_hash) = client.client_secret_hash.as_deref() else {
+                return Err(TokenError::invalid_client());
+            };
+            let provided_hash = sha256_token(&credentials.secret);
+            if credentials.client_id != body_client_id
+                || !constant_time_eq(expected_hash.as_bytes(), provided_hash.as_bytes())
+            {
+                return Err(TokenError::invalid_client());
+            }
+        }
+        OAuthClientType::Desktop => {
+            if !matches!(authentication, ClientAuthentication::None)
+                || client.client_secret_hash.is_some()
+            {
+                return Err(TokenError::invalid_client());
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn userinfo(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -605,6 +812,102 @@ impl AuthorizationRequest {
     }
 }
 
+struct TokenRequest {
+    grant_type: String,
+    client_id: String,
+    redirect_uri: String,
+    code: String,
+    code_verifier: String,
+}
+
+impl TokenRequest {
+    fn parse(encoded: &[u8]) -> Result<Self, TokenError> {
+        if encoded.len() > OIDC_BODY_LIMIT_BYTES || !has_valid_form_encoding(encoded) {
+            return Err(TokenError::invalid_request(StatusCode::BAD_REQUEST));
+        }
+        let encoded = std::str::from_utf8(encoded)
+            .map_err(|_| TokenError::invalid_request(StatusCode::BAD_REQUEST))?;
+        let mut fields = HashMap::new();
+        for (name, value) in url::form_urlencoded::parse(encoded.as_bytes()) {
+            let name = name.into_owned();
+            if !matches!(
+                name.as_str(),
+                "grant_type" | "client_id" | "redirect_uri" | "code" | "code_verifier"
+            ) || fields.insert(name, value.into_owned()).is_some()
+            {
+                return Err(TokenError::invalid_request(StatusCode::BAD_REQUEST));
+            }
+        }
+        let mut required = |name: &str| {
+            fields
+                .remove(name)
+                .ok_or_else(|| TokenError::invalid_request(StatusCode::BAD_REQUEST))
+        };
+        let request = Self {
+            grant_type: required("grant_type")?,
+            client_id: required("client_id")?,
+            redirect_uri: required("redirect_uri")?,
+            code: required("code")?,
+            code_verifier: required("code_verifier")?,
+        };
+        if validate_client_id(&request.client_id).is_err() {
+            return Err(TokenError::invalid_request(StatusCode::BAD_REQUEST));
+        }
+        Ok(request)
+    }
+}
+
+enum ClientAuthentication {
+    None,
+    Basic(BasicCredentials),
+    Invalid,
+}
+
+impl ClientAuthentication {
+    fn parse(headers: &HeaderMap) -> Self {
+        let mut values = headers.get_all(header::AUTHORIZATION).iter();
+        let Some(value) = values.next() else {
+            return Self::None;
+        };
+        if values.next().is_some() {
+            return Self::Invalid;
+        }
+        let Ok(value) = value.to_str() else {
+            return Self::Invalid;
+        };
+        let Some((scheme, encoded)) = value.split_once(' ') else {
+            return Self::Invalid;
+        };
+        if !scheme.eq_ignore_ascii_case("Basic")
+            || encoded.is_empty()
+            || encoded.chars().any(char::is_whitespace)
+        {
+            return Self::Invalid;
+        }
+        let Ok(decoded) = STANDARD.decode(encoded) else {
+            return Self::Invalid;
+        };
+        let Ok(decoded) = String::from_utf8(decoded) else {
+            return Self::Invalid;
+        };
+        let Some((client_id, secret)) = decoded.split_once(':') else {
+            return Self::Invalid;
+        };
+        if client_id.is_empty() || secret.is_empty() {
+            return Self::Invalid;
+        }
+        Self::Basic(BasicCredentials {
+            client_id: client_id.to_string(),
+            secret: secret.to_string(),
+        })
+    }
+}
+
+struct BasicCredentials {
+    client_id: String,
+    secret: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthorizationDecisionForm {
@@ -767,6 +1070,17 @@ fn no_store_json<T>(value: T) -> (HeaderMap, Json<T>) {
     (headers, Json(value))
 }
 
+fn token_json<T>(value: T) -> (HeaderMap, Json<T>) {
+    let mut headers = HeaderMap::new();
+    token_cache_headers(&mut headers);
+    (headers, Json(value))
+}
+
+fn token_cache_headers(headers: &mut HeaderMap) {
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+}
+
 #[derive(Serialize)]
 struct OpenIdConfiguration {
     issuer: String,
@@ -794,6 +1108,77 @@ struct UserInfoResponse {
     email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     phone_number: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TokenResponse {
+    token_type: &'static str,
+    expires_in: u64,
+    scope: String,
+    access_token: String,
+    id_token: String,
+}
+
+struct TokenError {
+    status: StatusCode,
+    error: &'static str,
+    authenticate: bool,
+}
+
+impl TokenError {
+    fn invalid_request(status: StatusCode) -> Self {
+        Self {
+            status,
+            error: "invalid_request",
+            authenticate: false,
+        }
+    }
+
+    fn unsupported_grant_type() -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            error: "unsupported_grant_type",
+            authenticate: false,
+        }
+    }
+
+    fn invalid_client() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            error: "invalid_client",
+            authenticate: true,
+        }
+    }
+
+    fn invalid_grant() -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            error: "invalid_grant",
+            authenticate: false,
+        }
+    }
+
+    fn server_error() -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: "server_error",
+            authenticate: false,
+        }
+    }
+}
+
+impl IntoResponse for TokenError {
+    fn into_response(self) -> Response {
+        let mut response =
+            (self.status, Json(OidcErrorResponse { error: self.error })).into_response();
+        token_cache_headers(response.headers_mut());
+        if self.authenticate {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic"));
+        }
+        response
+    }
 }
 
 #[derive(Clone, Copy)]

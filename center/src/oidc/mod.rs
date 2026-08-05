@@ -38,6 +38,22 @@ pub struct IdTokenClaims {
     pub exp: u64,
     pub auth_time: u64,
     pub nonce: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phone_number: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct IdTokenUserClaims {
+    pub preferred_username: Option<String>,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub phone_number: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +144,23 @@ impl OidcService {
         auth_time: u64,
         nonce: &str,
     ) -> anyhow::Result<String> {
+        self.issue_id_token_with_user_claims(
+            subject,
+            audience,
+            auth_time,
+            nonce,
+            IdTokenUserClaims::default(),
+        )
+    }
+
+    pub(crate) fn issue_id_token_with_user_claims(
+        &self,
+        subject: &str,
+        audience: &str,
+        auth_time: u64,
+        nonce: &str,
+        user_claims: IdTokenUserClaims,
+    ) -> anyhow::Result<String> {
         let iat = current_unix_seconds()?;
         let exp = iat
             .checked_add(self.config.token_ttl().as_secs())
@@ -140,6 +173,10 @@ impl OidcService {
             exp,
             auth_time,
             nonce: nonce.to_string(),
+            preferred_username: user_claims.preferred_username,
+            name: user_claims.name,
+            email: user_claims.email,
+            phone_number: user_claims.phone_number,
         };
         self.encode_claims(&claims)
     }

@@ -1,4 +1,8 @@
-use adss_store::{AuthorizationCodeRecord, OAuthClientRecord, OAuthClientType, Repository};
+use adss_protocol::UserStatus;
+use adss_store::{
+    AuthorizationCodeExchange, AuthorizationCodeRecord, OAuthClientRecord, OAuthClientType,
+    Repository, UserDirectoryPatch,
+};
 use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
 use std::{
     path::PathBuf,
@@ -168,6 +172,191 @@ async fn authorization_code_is_consumed_once_and_expired_code_is_destroyed() {
 }
 
 #[tokio::test]
+async fn authorization_code_exchange_returns_bound_client_and_user_snapshot() {
+    let repository = sqlite_repository().await;
+    let mut client = oauth_client("client", OAuthClientType::Web);
+    client.client_secret_hash = Some("secret-hash-that-must-not-leak".to_string());
+    repository
+        .create_oauth_client(client.clone())
+        .await
+        .unwrap();
+    seed_user(&repository, "1001").await;
+    let code = authorization_code("exchange", 2_000);
+    repository
+        .store_authorization_code(code.clone())
+        .await
+        .unwrap();
+
+    let exchange: AuthorizationCodeExchange = repository
+        .consume_authorization_code_for_exchange("exchange", 1_999)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(exchange.code, code);
+    assert_eq!(exchange.client, Some(client));
+    assert_eq!(exchange.user.as_ref().unwrap().employee_id, "1001");
+    assert!(!format!("{exchange:?}").contains("secret-hash-that-must-not-leak"));
+}
+
+#[tokio::test]
+async fn expired_authorization_code_exchange_destroys_code() {
+    let repository = sqlite_repository().await;
+    repository
+        .store_authorization_code(authorization_code("expired-exchange", 2_000))
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("expired-exchange", 2_000)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("expired-exchange", 1_999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn authorization_code_exchange_succeeds_only_once() {
+    let repository = sqlite_repository().await;
+    repository
+        .store_authorization_code(authorization_code("repeat-exchange", 2_000))
+        .await
+        .unwrap();
+
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("repeat-exchange", 1_999)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("repeat-exchange", 1_999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn authorization_code_exchange_returns_missing_related_records_as_none() {
+    let repository = sqlite_repository().await;
+    repository
+        .store_authorization_code(authorization_code("orphaned-exchange", 2_000))
+        .await
+        .unwrap();
+
+    let exchange = repository
+        .consume_authorization_code_for_exchange("orphaned-exchange", 1_999)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(exchange.client.is_none());
+    assert!(exchange.user.is_none());
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("orphaned-exchange", 1_999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn authorization_code_exchange_conversion_errors_do_not_restore_code() {
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let repository = Repository::from_connection(db.clone());
+    repository.initialize_schema().await.unwrap();
+    repository
+        .create_oauth_client(oauth_client("client", OAuthClientType::Web))
+        .await
+        .unwrap();
+    seed_user(&repository, "1001").await;
+
+    repository
+        .store_authorization_code(authorization_code("invalid-code-json", 2_000))
+        .await
+        .unwrap();
+    db.execute_unprepared(
+        "UPDATE oauth_authorization_codes SET scopes = 'not-json' WHERE code_hash = 'invalid-code-json'",
+    )
+    .await
+    .unwrap();
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("invalid-code-json", 1_999)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("invalid-code-json", 1_999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    repository
+        .store_authorization_code(authorization_code("invalid-client-json", 2_000))
+        .await
+        .unwrap();
+    db.execute_unprepared(
+        "UPDATE oauth_clients SET redirect_uris = 'not-json' WHERE client_id = 'client'",
+    )
+    .await
+    .unwrap();
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("invalid-client-json", 1_999)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("invalid-client-json", 1_999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    db.execute_unprepared(
+        "UPDATE oauth_clients SET redirect_uris = '[]' WHERE client_id = 'client'",
+    )
+    .await
+    .unwrap();
+    repository
+        .store_authorization_code(authorization_code("invalid-user-status", 2_000))
+        .await
+        .unwrap();
+    db.execute_unprepared("UPDATE users SET status = 'invalid' WHERE employee_id = '1001'")
+        .await
+        .unwrap();
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("invalid-user-status", 1_999)
+            .await
+            .is_err()
+    );
+    assert!(
+        repository
+            .consume_authorization_code_for_exchange("invalid-user-status", 1_999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn concurrent_authorization_code_consumers_have_exactly_one_winner() {
     let (database_url, database_path) = sqlite_file_database_url("oauth-concurrent-consume");
     let repository = Repository::connect(&database_url).await.unwrap();
@@ -182,6 +371,39 @@ async fn concurrent_authorization_code_consumers_have_exactly_one_winner() {
     let (first_result, second_result) = tokio::join!(
         first.consume_authorization_code("single-use", 1_000),
         second.consume_authorization_code("single-use", 1_000),
+    );
+    let success_count = [first_result.unwrap(), second_result.unwrap()]
+        .into_iter()
+        .filter(Option::is_some)
+        .count();
+
+    assert_eq!(success_count, 1);
+    drop(first);
+    drop(second);
+    drop(repository);
+    let _ = std::fs::remove_file(database_path);
+}
+
+#[tokio::test]
+async fn concurrent_authorization_code_exchanges_have_exactly_one_winner() {
+    let (database_url, database_path) = sqlite_file_database_url("oauth-concurrent-exchange");
+    let repository = Repository::connect(&database_url).await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository
+        .create_oauth_client(oauth_client("client", OAuthClientType::Web))
+        .await
+        .unwrap();
+    seed_user(&repository, "1001").await;
+    repository
+        .store_authorization_code(authorization_code("single-exchange", 2_000))
+        .await
+        .unwrap();
+    let first = Repository::connect(&database_url).await.unwrap();
+    let second = Repository::connect(&database_url).await.unwrap();
+
+    let (first_result, second_result) = tokio::join!(
+        first.consume_authorization_code_for_exchange("single-exchange", 1_000),
+        second.consume_authorization_code_for_exchange("single-exchange", 1_000),
     );
     let success_count = [first_result.unwrap(), second_result.unwrap()]
         .into_iter()
@@ -259,6 +481,26 @@ fn authorization_code(code_hash: &str, expires_at: i64) -> AuthorizationCodeReco
         auth_time: 1_000,
         expires_at,
     }
+}
+
+async fn seed_user(repository: &Repository, employee_id: &str) {
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![UserDirectoryPatch {
+                employee_id: employee_id.to_string(),
+                username: format!("user-{employee_id}"),
+                display_name: format!("User {employee_id}"),
+                email: Some(format!("user-{employee_id}@example.com")),
+                mobile: None,
+                telephone: None,
+                organizational_unit_id: "ou-rd".to_string(),
+                status: UserStatus::Active,
+            }],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
 }
 
 async fn sqlite_repository() -> Repository {

@@ -8,9 +8,9 @@ use crate::{
     entities,
     mapping::{domain_active_model, user_status_from_storage, user_status_to_storage},
     models::{
-        AuthorizationCodeRecord, CredentialCiphertextBatch, CredentialCiphertextEntry,
-        CredentialRecord, DomainPatch, DomainRecord, OAuthClientRecord, UserContactPatch,
-        UserCredentialInput, UserDirectoryPatch, UserListFilter,
+        AuthorizationCodeExchange, AuthorizationCodeRecord, CredentialCiphertextBatch,
+        CredentialCiphertextEntry, CredentialRecord, DomainPatch, DomainRecord, OAuthClientRecord,
+        UserContactPatch, UserCredentialInput, UserDirectoryPatch, UserListFilter,
     },
     oauth::{authorization_code_active_model, oauth_client_active_model},
     revision::{
@@ -256,6 +256,47 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             return Ok(None);
         }
         Ok(Some(AuthorizationCodeRecord::try_from(code)?))
+    }
+
+    pub async fn consume_authorization_code_for_exchange(
+        &self,
+        code_hash: &str,
+        now: i64,
+    ) -> anyhow::Result<Option<AuthorizationCodeExchange>> {
+        use entities::{oauth_authorization_code, oauth_client, user};
+
+        let transaction = self.db.begin().await?;
+        let Some(code) = oauth_authorization_code::Entity::delete_by_id(code_hash)
+            .exec_with_returning(&transaction)
+            .await?
+        else {
+            transaction.commit().await?;
+            return Ok(None);
+        };
+        if code.expires_at <= now {
+            transaction.commit().await?;
+            return Ok(None);
+        }
+
+        let client_query = oauth_client::Entity::find_by_id(code.client_id.as_str());
+        let client = if transaction.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
+            client_query.lock_exclusive().one(&transaction).await?
+        } else {
+            client_query.one(&transaction).await?
+        };
+        let user_query = user::Entity::find_by_id(code.employee_id.as_str());
+        let user = if transaction.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
+            user_query.lock_exclusive().one(&transaction).await?
+        } else {
+            user_query.one(&transaction).await?
+        };
+        transaction.commit().await?;
+
+        Ok(Some(AuthorizationCodeExchange {
+            code: AuthorizationCodeRecord::try_from(code)?,
+            client: client.map(OAuthClientRecord::try_from).transpose()?,
+            user: user.map(User::try_from).transpose()?,
+        }))
     }
 
     pub async fn delete_expired_authorization_codes(

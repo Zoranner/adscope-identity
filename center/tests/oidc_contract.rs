@@ -13,8 +13,12 @@ use axum::{
     http::{Method, Request, Response, StatusCode, header},
 };
 use axum_extra::extract::cookie::Cookie;
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use http_body_util::BodyExt;
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, decode_header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, pkcs8::DecodePrivateKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -29,11 +33,968 @@ const OIDC_REDIRECT_URI: &str = "https://client.example.test/callback?source=ads
 const OIDC_STATE: &str = "state-original";
 const OIDC_NONCE: &str = "nonce-original";
 const OIDC_CODE_CHALLENGE: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const TOKEN_WEB_CLIENT_ID: &str = "client_token_web";
+const TOKEN_WEB_SECRET: &str = "token-web-secret";
+const TOKEN_DESKTOP_CLIENT_ID: &str = "client_token_desktop";
+const TOKEN_DESKTOP_REDIRECT_URI: &str = "http://127.0.0.1:51000/callback";
+const TOKEN_CODE_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const TOKEN_CODE_CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
 struct TestApp {
     app: axum::Router,
     repository: Repository,
     oidc: OidcService,
+}
+
+#[tokio::test]
+async fn token_endpoint_exchanges_web_code_and_issues_bound_rs256_tokens() {
+    let TestApp {
+        app,
+        repository,
+        oidc,
+    } = test_app().await;
+    seed_user_profile(
+        &repository,
+        Some("user@example.test"),
+        Some("13800000000"),
+        None,
+        UserStatus::Active,
+    )
+    .await;
+    seed_token_client(&repository, OAuthClientType::Web).await;
+    seed_token_code(
+        &repository,
+        "web-code",
+        TOKEN_WEB_CLIENT_ID,
+        OIDC_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+
+    let response = app
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "web-code",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+
+    assert_token_headers(&response, StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["token_type"], "Bearer");
+    assert_eq!(body["expires_in"], 300);
+    assert_eq!(body["scope"], "openid profile email phone");
+    assert!(body.get("refresh_token").is_none());
+    let access_token = body["access_token"].as_str().unwrap();
+    let id_token = body["id_token"].as_str().unwrap();
+    for token in [access_token, id_token] {
+        let header = decode_header(token).unwrap();
+        assert_eq!(header.alg, Algorithm::RS256);
+        assert_eq!(header.kid.as_deref(), Some(oidc.key_id()));
+    }
+    let access_claims = oidc.verify_access_token(access_token).unwrap();
+    assert_eq!(access_claims.sub, "1001");
+    assert_eq!(access_claims.client_id, TOKEN_WEB_CLIENT_ID);
+    assert_eq!(access_claims.scope, "openid profile email phone");
+    assert_eq!(
+        access_claims.aud,
+        format!("{TEST_OIDC_ISSUER}/oauth2/userinfo")
+    );
+    assert_eq!(access_claims.exp - access_claims.iat, 300);
+    let id_claims = oidc.verify_id_token(id_token, TOKEN_WEB_CLIENT_ID).unwrap();
+    assert_eq!(id_claims.sub, "1001");
+    assert_eq!(id_claims.nonce, OIDC_NONCE);
+    assert_eq!(id_claims.auth_time, 1_700_000_000);
+    assert_eq!(id_claims.exp - id_claims.iat, 300);
+    let id_payload = jwt_payload(id_token);
+    assert_eq!(id_payload["preferred_username"], "test-user");
+    assert_eq!(id_payload["name"], "Test User");
+    assert_eq!(id_payload["email"], "user@example.test");
+    assert_eq!(id_payload["phone_number"], "13800000000");
+}
+
+#[tokio::test]
+async fn token_endpoint_exchanges_public_desktop_code_without_client_secret() {
+    let TestApp {
+        app,
+        repository,
+        oidc,
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+    seed_token_code(
+        &repository,
+        "desktop-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+
+    let response = app
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "desktop-code",
+            None,
+        ))
+        .await
+        .unwrap();
+
+    assert_token_headers(&response, StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["token_type"], "Bearer");
+    assert_eq!(body["expires_in"], 300);
+    assert_eq!(body["scope"], "openid profile email phone");
+    let id_token = body["id_token"].as_str().unwrap();
+    oidc.verify_id_token(id_token, TOKEN_DESKTOP_CLIENT_ID)
+        .unwrap();
+    let id_payload = jwt_payload(id_token);
+    assert!(id_payload.get("email").is_none());
+    assert!(id_payload.get("phone_number").is_none());
+}
+
+#[tokio::test]
+async fn token_endpoint_rejects_request_shape_and_unsupported_grant_without_consuming_code() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+
+    let invalid_shapes = [
+        format!(
+            "grant_type=authorization_code&client_id={TOKEN_DESKTOP_CLIENT_ID}&redirect_uri={TOKEN_DESKTOP_REDIRECT_URI}&code=shape-code&code_verifier={TOKEN_CODE_VERIFIER}&extra=value"
+        ),
+        format!(
+            "grant_type=authorization_code&client_id={TOKEN_DESKTOP_CLIENT_ID}&client_id=duplicate&redirect_uri={TOKEN_DESKTOP_REDIRECT_URI}&code=shape-code&code_verifier={TOKEN_CODE_VERIFIER}"
+        ),
+        format!(
+            "grant_type=authorization_code&client_id={TOKEN_DESKTOP_CLIENT_ID}&redirect_uri={TOKEN_DESKTOP_REDIRECT_URI}&code=shape-code&code_verifier=%FF"
+        ),
+    ];
+    for body in invalid_shapes {
+        let response = app
+            .clone()
+            .oneshot(raw_token_request(
+                Body::from(body),
+                "application/x-www-form-urlencoded",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_token_error(response, StatusCode::BAD_REQUEST, "invalid_request", None).await;
+    }
+    let wrong_content_type = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from("{}"),
+            "application/json",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        wrong_content_type,
+        StatusCode::BAD_REQUEST,
+        "invalid_request",
+        None,
+    )
+    .await;
+    let oversized = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from("x".repeat(16 * 1024 + 1)),
+            "application/x-www-form-urlencoded",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        oversized,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "invalid_request",
+        None,
+    )
+    .await;
+
+    seed_token_code(
+        &repository,
+        "grant-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let unsupported = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from(token_form(
+                "refresh_token",
+                TOKEN_DESKTOP_CLIENT_ID,
+                TOKEN_DESKTOP_REDIRECT_URI,
+                "grant-code",
+                TOKEN_CODE_VERIFIER,
+            )),
+            "application/x-www-form-urlencoded",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        unsupported,
+        StatusCode::BAD_REQUEST,
+        "unsupported_grant_type",
+        None,
+    )
+    .await;
+    let success = app
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "grant-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_headers(&success, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn token_endpoint_requires_client_authentication_before_grant_validation() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Web).await;
+
+    for authorization in [
+        None,
+        Some(web_basic(TOKEN_WEB_CLIENT_ID, "wrong-secret")),
+        Some("Basic !!!".to_string()),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(raw_token_request(
+                Body::from(token_form(
+                    "refresh_token",
+                    TOKEN_WEB_CLIENT_ID,
+                    OIDC_REDIRECT_URI,
+                    "unknown-priority-code",
+                    TOKEN_CODE_VERIFIER,
+                )),
+                "application/x-www-form-urlencoded",
+                authorization,
+            ))
+            .await
+            .unwrap();
+        assert_token_error(
+            response,
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            Some("Basic"),
+        )
+        .await;
+    }
+
+    seed_token_code(
+        &repository,
+        "unsupported-web-code",
+        TOKEN_WEB_CLIENT_ID,
+        OIDC_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let unsupported = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from(token_form(
+                "refresh_token",
+                TOKEN_WEB_CLIENT_ID,
+                OIDC_REDIRECT_URI,
+                "unsupported-web-code",
+                TOKEN_CODE_VERIFIER,
+            )),
+            "application/x-www-form-urlencoded",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        unsupported,
+        StatusCode::BAD_REQUEST,
+        "unsupported_grant_type",
+        None,
+    )
+    .await;
+    let success = app
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "unsupported-web-code",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+    assert_token_headers(&success, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn token_endpoint_rejects_unknown_and_authenticates_disabled_clients() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_token_client(&repository, OAuthClientType::Web).await;
+
+    let unknown = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from(token_form(
+                "refresh_token",
+                "client_unknown",
+                OIDC_REDIRECT_URI,
+                "unknown-code",
+                TOKEN_CODE_VERIFIER,
+            )),
+            "application/x-www-form-urlencoded",
+            Some(web_basic("client_unknown", "unknown-secret")),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        unknown,
+        StatusCode::UNAUTHORIZED,
+        "invalid_client",
+        Some("Basic"),
+    )
+    .await;
+
+    let mut client = repository
+        .get_oauth_client(TOKEN_WEB_CLIENT_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    client.enabled = false;
+    repository
+        .update_oauth_client(client.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let missing_auth = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "unknown-disabled-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        missing_auth,
+        StatusCode::UNAUTHORIZED,
+        "invalid_client",
+        Some("Basic"),
+    )
+    .await;
+
+    seed_token_code(
+        &repository,
+        "disabled-client-priority-code",
+        TOKEN_WEB_CLIENT_ID,
+        OIDC_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let unsupported = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from(token_form(
+                "refresh_token",
+                TOKEN_WEB_CLIENT_ID,
+                OIDC_REDIRECT_URI,
+                "disabled-client-priority-code",
+                TOKEN_CODE_VERIFIER,
+            )),
+            "application/x-www-form-urlencoded",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        unsupported,
+        StatusCode::BAD_REQUEST,
+        "unsupported_grant_type",
+        None,
+    )
+    .await;
+    let disabled = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "disabled-client-priority-code",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(disabled, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+
+    client.enabled = true;
+    repository
+        .update_oauth_client(client)
+        .await
+        .unwrap()
+        .unwrap();
+    let retry = app
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "disabled-client-priority-code",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(retry, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+}
+
+#[tokio::test]
+async fn token_endpoint_returns_controlled_json_for_non_post_methods() {
+    let TestApp { app, .. } = test_app().await;
+    for method in [Method::GET, Method::PUT, Method::PATCH, Method::DELETE] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/oauth2/token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_token_error(
+            response,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "invalid_request",
+            None,
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn token_endpoint_structurally_validates_one_content_type_header() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+    seed_token_code(
+        &repository,
+        "charset-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+
+    let charset = app
+        .clone()
+        .oneshot(raw_token_request(
+            Body::from(token_form(
+                "authorization_code",
+                TOKEN_DESKTOP_CLIENT_ID,
+                TOKEN_DESKTOP_REDIRECT_URI,
+                "charset-code",
+                TOKEN_CODE_VERIFIER,
+            )),
+            "application/x-www-form-urlencoded; charset=UTF-8",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_headers(&charset, StatusCode::OK);
+
+    let form = token_form(
+        "authorization_code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        "content-type-code",
+        TOKEN_CODE_VERIFIER,
+    );
+    for content_type in [
+        "application/x-www-form-urlencoded; charset",
+        "application/x-www-form-urlencoded-extra",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(raw_token_request(
+                Body::from(form.clone()),
+                content_type,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_token_error(response, StatusCode::BAD_REQUEST, "invalid_request", None).await;
+    }
+    let duplicate = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/oauth2/token")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(
+                    header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded; charset=UTF-8",
+                )
+                .body(Body::from(form))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_token_error(duplicate, StatusCode::BAD_REQUEST, "invalid_request", None).await;
+}
+
+#[tokio::test]
+async fn token_endpoint_enforces_web_basic_and_rejects_desktop_authentication() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Web).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+
+    let malformed_basic = [
+        "Basic !!!".to_string(),
+        format!("Basic {}", STANDARD.encode([0xff, b':', b'x'])),
+        format!("Basic {}", STANDARD.encode("missing-colon")),
+        format!("Basic {}", STANDARD.encode(":secret")),
+        format!("Basic {}", STANDARD.encode("client:")),
+    ];
+    for (index, authorization) in malformed_basic.into_iter().enumerate() {
+        let code = format!("malformed-basic-{index}");
+        seed_token_code(
+            &repository,
+            &code,
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            unix_seconds() as i64 + 120,
+        )
+        .await;
+        let response = app
+            .clone()
+            .oneshot(token_request(
+                TOKEN_WEB_CLIENT_ID,
+                OIDC_REDIRECT_URI,
+                &code,
+                Some(authorization),
+            ))
+            .await
+            .unwrap();
+        assert_token_error(
+            response,
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            Some("Basic"),
+        )
+        .await;
+    }
+
+    for (code, authorization) in [
+        ("missing-basic", None),
+        (
+            "wrong-secret",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, "wrong-secret")),
+        ),
+        (
+            "wrong-basic-client",
+            Some(web_basic("other-client", TOKEN_WEB_SECRET)),
+        ),
+    ] {
+        seed_token_code(
+            &repository,
+            code,
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            unix_seconds() as i64 + 120,
+        )
+        .await;
+        let response = app
+            .clone()
+            .oneshot(token_request(
+                TOKEN_WEB_CLIENT_ID,
+                OIDC_REDIRECT_URI,
+                code,
+                authorization,
+            ))
+            .await
+            .unwrap();
+        assert_token_error(
+            response,
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            Some("Basic"),
+        )
+        .await;
+    }
+
+    seed_token_code(
+        &repository,
+        "desktop-basic",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let desktop_basic = app
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "desktop-basic",
+            Some(web_basic(TOKEN_DESKTOP_CLIENT_ID, "not-allowed")),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        desktop_basic,
+        StatusCode::UNAUTHORIZED,
+        "invalid_client",
+        Some("Basic"),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn token_endpoint_authenticates_web_before_grant_result_and_burns_failed_code() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Web).await;
+
+    let missing_auth_unknown_code = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "unknown-web-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        missing_auth_unknown_code,
+        StatusCode::UNAUTHORIZED,
+        "invalid_client",
+        Some("Basic"),
+    )
+    .await;
+
+    seed_token_code(
+        &repository,
+        "failed-auth-code",
+        TOKEN_WEB_CLIENT_ID,
+        OIDC_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let failed_auth = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "failed-auth-code",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, "wrong-secret")),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        failed_auth,
+        StatusCode::UNAUTHORIZED,
+        "invalid_client",
+        Some("Basic"),
+    )
+    .await;
+    let retry = app
+        .oneshot(token_request(
+            TOKEN_WEB_CLIENT_ID,
+            OIDC_REDIRECT_URI,
+            "failed-auth-code",
+            Some(web_basic(TOKEN_WEB_CLIENT_ID, TOKEN_WEB_SECRET)),
+        ))
+        .await
+        .unwrap();
+    assert_token_error(retry, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+}
+
+#[tokio::test]
+async fn token_endpoint_maps_grant_failures_and_consumes_failed_redemptions() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+
+    let now = unix_seconds() as i64;
+    for (
+        code,
+        client_id,
+        redirect_uri,
+        verifier,
+        expires_at,
+        expected_status,
+        expected_error,
+        authenticate,
+    ) in [
+        (
+            "expired-code",
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            TOKEN_CODE_VERIFIER,
+            now,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            None,
+        ),
+        (
+            "wrong-client-code",
+            "other-client",
+            TOKEN_DESKTOP_REDIRECT_URI,
+            TOKEN_CODE_VERIFIER,
+            now + 120,
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            Some("Basic"),
+        ),
+        (
+            "wrong-redirect-code",
+            TOKEN_DESKTOP_CLIENT_ID,
+            "http://127.0.0.1:52000/other",
+            TOKEN_CODE_VERIFIER,
+            now + 120,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            None,
+        ),
+        (
+            "wrong-pkce-code",
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            &"x".repeat(43),
+            now + 120,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            None,
+        ),
+    ] {
+        seed_token_code(
+            &repository,
+            code,
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            expires_at,
+        )
+        .await;
+        let response = app
+            .clone()
+            .oneshot(raw_token_request(
+                Body::from(token_form(
+                    "authorization_code",
+                    client_id,
+                    redirect_uri,
+                    code,
+                    verifier,
+                )),
+                "application/x-www-form-urlencoded",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_token_error(response, expected_status, expected_error, authenticate).await;
+    }
+
+    seed_token_code(
+        &repository,
+        "destroyed-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        now + 120,
+    )
+    .await;
+    let wrong_redirect = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            "http://127.0.0.1:52000/callback",
+            "destroyed-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        wrong_redirect,
+        StatusCode::BAD_REQUEST,
+        "invalid_grant",
+        None,
+    )
+    .await;
+    let retry = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "destroyed-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(retry, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+
+    let missing = app
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "unknown-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(missing, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+}
+
+#[tokio::test]
+async fn token_endpoint_rechecks_client_and_user_state_after_code_issue() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+
+    seed_token_code(
+        &repository,
+        "disabled-client-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let mut client = repository
+        .get_oauth_client(TOKEN_DESKTOP_CLIENT_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    client.enabled = false;
+    repository
+        .update_oauth_client(client.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let disabled_client = app
+        .clone()
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "disabled-client-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        disabled_client,
+        StatusCode::BAD_REQUEST,
+        "invalid_grant",
+        None,
+    )
+    .await;
+
+    client.enabled = true;
+    repository
+        .update_oauth_client(client)
+        .await
+        .unwrap()
+        .unwrap();
+    seed_user_profile(&repository, None, None, None, UserStatus::Disabled).await;
+    seed_token_code(
+        &repository,
+        "disabled-user-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+    let disabled_user = app
+        .oneshot(token_request(
+            TOKEN_DESKTOP_CLIENT_ID,
+            TOKEN_DESKTOP_REDIRECT_URI,
+            "disabled-user-code",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(
+        disabled_user,
+        StatusCode::BAD_REQUEST,
+        "invalid_grant",
+        None,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn token_endpoint_allows_only_one_concurrent_exchange() {
+    let TestApp {
+        app, repository, ..
+    } = test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+    seed_token_code(
+        &repository,
+        "concurrent-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+    )
+    .await;
+
+    let first = app.clone().oneshot(token_request(
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        "concurrent-code",
+        None,
+    ));
+    let second = app.oneshot(token_request(
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        "concurrent-code",
+        None,
+    ));
+    let (first, second) = tokio::join!(first, second);
+    let first = first.unwrap();
+    let second = second.unwrap();
+    let statuses = [first.status(), second.status()];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::BAD_REQUEST)
+            .count(),
+        1
+    );
+    let failure = if first.status() == StatusCode::BAD_REQUEST {
+        first
+    } else {
+        second
+    };
+    assert_token_error(failure, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
 }
 
 #[tokio::test]
@@ -1331,6 +2292,92 @@ fn form_request(uri: &str, form: &str, cookie: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn token_request(
+    client_id: &str,
+    redirect_uri: &str,
+    code: &str,
+    authorization: Option<String>,
+) -> Request<Body> {
+    raw_token_request(
+        Body::from(token_form(
+            "authorization_code",
+            client_id,
+            redirect_uri,
+            code,
+            TOKEN_CODE_VERIFIER,
+        )),
+        "application/x-www-form-urlencoded",
+        authorization,
+    )
+}
+
+fn raw_token_request(
+    body: Body,
+    content_type: &str,
+    authorization: Option<String>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/oauth2/token")
+        .header(header::CONTENT_TYPE, content_type);
+    if let Some(authorization) = authorization {
+        request = request.header(header::AUTHORIZATION, authorization);
+    }
+    request.body(body).unwrap()
+}
+
+fn token_form(
+    grant_type: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    code: &str,
+    code_verifier: &str,
+) -> String {
+    url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("grant_type", grant_type)
+        .append_pair("client_id", client_id)
+        .append_pair("redirect_uri", redirect_uri)
+        .append_pair("code", code)
+        .append_pair("code_verifier", code_verifier)
+        .finish()
+}
+
+fn web_basic(client_id: &str, secret: &str) -> String {
+    format!("Basic {}", STANDARD.encode(format!("{client_id}:{secret}")))
+}
+
+fn jwt_payload(token: &str) -> Value {
+    let payload = token.split('.').nth(1).unwrap();
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+}
+
+fn assert_token_headers(response: &Response<Body>, expected_status: StatusCode) {
+    assert_eq!(response.status(), expected_status);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.headers()[header::PRAGMA], "no-cache");
+    assert!(response.headers().get(header::LOCATION).is_none());
+}
+
+async fn assert_token_error(
+    response: Response<Body>,
+    expected_status: StatusCode,
+    expected_error: &str,
+    authenticate: Option<&str>,
+) {
+    assert_token_headers(&response, expected_status);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|value| value.to_str().ok()),
+        authenticate
+    );
+    assert_eq!(
+        json_body(response).await,
+        json!({ "error": expected_error })
+    );
+}
+
 fn cookie_request(method: Method, uri: &str, cookie: &str) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -1434,6 +2481,67 @@ async fn test_app() -> TestApp {
         repository,
         oidc,
     }
+}
+
+async fn seed_token_client(repository: &Repository, client_type: OAuthClientType) {
+    let (client_id, client_secret_hash, redirect_uris) = match client_type {
+        OAuthClientType::Web => (
+            TOKEN_WEB_CLIENT_ID,
+            Some(sha256_token(TOKEN_WEB_SECRET)),
+            vec![OIDC_REDIRECT_URI.to_string()],
+        ),
+        OAuthClientType::Desktop => (
+            TOKEN_DESKTOP_CLIENT_ID,
+            None,
+            vec!["http://127.0.0.1:41000/callback".to_string()],
+        ),
+    };
+    repository
+        .create_oauth_client(OAuthClientRecord {
+            client_id: client_id.to_string(),
+            name: format!("Token {client_type:?} Client"),
+            client_type,
+            client_secret_hash,
+            redirect_uris,
+            allowed_scopes: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "email".to_string(),
+                "phone".to_string(),
+            ],
+            enabled: true,
+        })
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+async fn seed_token_code(
+    repository: &Repository,
+    code: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    expires_at: i64,
+) {
+    repository
+        .store_authorization_code(adss_store::AuthorizationCodeRecord {
+            code_hash: sha256_token(code),
+            client_id: client_id.to_string(),
+            employee_id: "1001".to_string(),
+            redirect_uri: redirect_uri.to_string(),
+            scopes: vec![
+                "openid".to_string(),
+                "profile".to_string(),
+                "email".to_string(),
+                "phone".to_string(),
+            ],
+            nonce: OIDC_NONCE.to_string(),
+            code_challenge: TOKEN_CODE_CHALLENGE.to_string(),
+            auth_time: 1_700_000_000,
+            expires_at,
+        })
+        .await
+        .unwrap();
 }
 
 async fn seed_user(repository: &Repository) {
