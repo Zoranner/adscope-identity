@@ -1,5 +1,6 @@
 use adss_protocol::UserStatus;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OAuthClientType {
@@ -7,7 +8,7 @@ pub enum OAuthClientType {
     Desktop,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OAuthClientRecord {
     pub client_id: String,
     pub name: String,
@@ -16,6 +17,24 @@ pub struct OAuthClientRecord {
     pub redirect_uris: Vec<String>,
     pub allowed_scopes: Vec<String>,
     pub enabled: bool,
+}
+
+impl fmt::Debug for OAuthClientRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OAuthClientRecord")
+            .field("client_id", &self.client_id)
+            .field("name", &self.name)
+            .field("client_type", &self.client_type)
+            .field(
+                "client_secret_hash_present",
+                &self.client_secret_hash.is_some(),
+            )
+            .field("redirect_uris", &self.redirect_uris)
+            .field("allowed_scopes", &self.allowed_scopes)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

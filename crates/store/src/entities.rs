@@ -126,8 +126,9 @@ pub(crate) mod domain {
 
 pub(crate) mod oauth_client {
     use sea_orm::entity::prelude::*;
+    use std::fmt;
 
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[derive(Clone, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "oauth_clients")]
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false)]
@@ -138,6 +139,24 @@ pub(crate) mod oauth_client {
         pub redirect_uris: String,
         pub allowed_scopes: String,
         pub enabled: bool,
+    }
+
+    impl fmt::Debug for Model {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("Model")
+                .field("client_id", &self.client_id)
+                .field("name", &self.name)
+                .field("client_type", &self.client_type)
+                .field(
+                    "client_secret_hash_present",
+                    &self.client_secret_hash.is_some(),
+                )
+                .field("redirect_uris", &self.redirect_uris)
+                .field("allowed_scopes", &self.allowed_scopes)
+                .field("enabled", &self.enabled)
+                .finish()
+        }
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

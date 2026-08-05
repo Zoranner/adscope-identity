@@ -83,3 +83,48 @@ impl TryFrom<oauth_authorization_code::Model> for AuthorizationCodeRecord {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET_HASH: &str = "argon2id-secret-hash-that-must-not-leak";
+
+    #[test]
+    fn oauth_client_record_debug_redacts_secret_hash() {
+        let record = OAuthClientRecord {
+            client_id: "client-record".to_string(),
+            name: "Client record".to_string(),
+            client_type: OAuthClientType::Web,
+            client_secret_hash: Some(SECRET_HASH.to_string()),
+            redirect_uris: vec!["https://client.example.com/callback".to_string()],
+            allowed_scopes: vec!["openid".to_string()],
+            enabled: true,
+        };
+
+        let debug = format!("{record:?}");
+
+        assert!(debug.contains("client-record"));
+        assert!(!debug.contains(SECRET_HASH));
+        assert!(debug.contains("client_secret_hash_present: true"));
+    }
+
+    #[test]
+    fn oauth_client_entity_debug_redacts_secret_hash() {
+        let model = oauth_client::Model {
+            client_id: "client-entity".to_string(),
+            name: "Client entity".to_string(),
+            client_type: "web".to_string(),
+            client_secret_hash: Some(SECRET_HASH.to_string()),
+            redirect_uris: "[\"https://client.example.com/callback\"]".to_string(),
+            allowed_scopes: "[\"openid\"]".to_string(),
+            enabled: true,
+        };
+
+        let debug = format!("{model:?}");
+
+        assert!(debug.contains("client-entity"));
+        assert!(!debug.contains(SECRET_HASH));
+        assert!(debug.contains("client_secret_hash_present: true"));
+    }
+}

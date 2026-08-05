@@ -66,7 +66,7 @@ impl OidcService {
             })?;
         let public_key = RsaPublicKey::from(&private_key);
         anyhow::ensure!(
-            public_key.size() >= 256,
+            public_key.n().bits() >= 2048,
             "OIDC RSA private key must be at least 2048 bits"
         );
         let n = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
@@ -208,21 +208,13 @@ mod tests {
     }
 
     #[test]
-    fn rsa_private_key_must_be_at_least_2048_bits() {
-        let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 1024).unwrap();
-        let pkcs1_pem = private_key.to_pkcs1_pem(Default::default()).unwrap();
-        let config = OidcConfig::new(
-            "https://center.example.test",
-            pkcs1_pem.as_bytes().to_vec(),
-            false,
-        )
-        .unwrap();
-
-        let error = match OidcService::new(config) {
+    fn rsa_private_key_rejects_2047_bits_and_accepts_2048_bits() {
+        let error = match service_with_generated_rsa_key(2047) {
             Ok(_) => panic!("RSA private keys below 2048 bits must be rejected"),
             Err(error) => error,
         };
         assert!(error.to_string().contains("at least 2048 bits"));
+        assert!(service_with_generated_rsa_key(2048).is_ok());
     }
 
     #[test]
@@ -285,5 +277,16 @@ mod tests {
             OidcConfig::new("https://center.example.test", PRIVATE_KEY.to_vec(), false).unwrap(),
         )
         .unwrap()
+    }
+
+    fn service_with_generated_rsa_key(bits: usize) -> anyhow::Result<OidcService> {
+        let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, bits)?;
+        let pkcs1_pem = private_key.to_pkcs1_pem(Default::default())?;
+        let config = OidcConfig::new(
+            "https://center.example.test",
+            pkcs1_pem.as_bytes().to_vec(),
+            false,
+        )?;
+        OidcService::new(config)
     }
 }
