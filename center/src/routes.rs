@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{authorize_domain_connector, connector_key_from_headers},
     error::ApiError,
+    oidc,
     password::PasswordEncryption,
     state::AppState,
     web,
@@ -34,6 +35,7 @@ pub fn build_router_with_web_root(
 ) -> Router {
     Router::new()
         .nest("/api", api_routes())
+        .merge(oidc::routes::routes())
         .fallback_service(web::static_service(web_root))
         .with_state(state)
 }

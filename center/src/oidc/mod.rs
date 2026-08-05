@@ -1,5 +1,6 @@
 pub mod config;
 pub mod crypto;
+pub(crate) mod routes;
 pub mod validation;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,6 +38,17 @@ pub struct IdTokenClaims {
     pub exp: u64,
     pub auth_time: u64,
     pub nonce: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccessTokenClaims {
+    pub iss: String,
+    pub sub: String,
+    pub aud: String,
+    pub client_id: String,
+    pub scope: String,
+    pub iat: u64,
+    pub exp: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +171,71 @@ impl OidcService {
             "ID token auth_time is invalid"
         );
         Ok(claims)
+    }
+
+    pub fn issue_access_token(
+        &self,
+        subject: &str,
+        client_id: &str,
+        scope: &str,
+    ) -> anyhow::Result<String> {
+        self.issue_access_token_at(subject, client_id, scope, current_unix_seconds()?)
+    }
+
+    pub fn issue_access_token_at(
+        &self,
+        subject: &str,
+        client_id: &str,
+        scope: &str,
+        issued_at: u64,
+    ) -> anyhow::Result<String> {
+        validation::validate_scopes(scope)?;
+        let exp = issued_at
+            .checked_add(self.config.token_ttl().as_secs())
+            .ok_or_else(|| anyhow::anyhow!("OIDC access token expiration overflow"))?;
+        self.encode_claims(&AccessTokenClaims {
+            iss: self.config.issuer().to_string(),
+            sub: subject.to_string(),
+            aud: self.userinfo_audience(),
+            client_id: client_id.to_string(),
+            scope: scope.to_string(),
+            iat: issued_at,
+            exp,
+        })
+    }
+
+    pub fn verify_access_token(&self, token: &str) -> anyhow::Result<AccessTokenClaims> {
+        let header = decode_header(token)?;
+        anyhow::ensure!(
+            header.alg == Algorithm::RS256,
+            "OIDC access token must use RS256"
+        );
+        anyhow::ensure!(
+            header.kid.as_deref() == Some(self.key_id()),
+            "OIDC access token kid is not active"
+        );
+        let audience = self.userinfo_audience();
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.leeway = MAX_CLOCK_SKEW_SECONDS;
+        validation.set_issuer(&[self.config.issuer()]);
+        validation.set_audience(&[audience.as_str()]);
+        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+        let claims = decode::<AccessTokenClaims>(token, &self.decoding_key, &validation)?.claims;
+        let now = current_unix_seconds()?;
+        anyhow::ensure!(
+            claims.exp.checked_sub(claims.iat) == Some(self.config.token_ttl().as_secs()),
+            "OIDC access token TTL is invalid"
+        );
+        anyhow::ensure!(
+            claims.iat <= now.saturating_add(MAX_CLOCK_SKEW_SECONDS),
+            "OIDC access token was issued too far in the future"
+        );
+        validation::validate_scopes(&claims.scope)?;
+        Ok(claims)
+    }
+
+    fn userinfo_audience(&self) -> String {
+        format!("{}/oauth2/userinfo", self.config.issuer())
     }
 
     fn encode_claims<T: Serialize>(&self, claims: &T) -> anyhow::Result<String> {
