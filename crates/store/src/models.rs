@@ -1,6 +1,36 @@
 use adss_protocol::UserStatus;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OAuthClientType {
+    Web,
+    Desktop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OAuthClientRecord {
+    pub client_id: String,
+    pub name: String,
+    pub client_type: OAuthClientType,
+    pub client_secret_hash: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub allowed_scopes: Vec<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuthorizationCodeRecord {
+    pub code_hash: String,
+    pub client_id: String,
+    pub employee_id: String,
+    pub redirect_uri: String,
+    pub scopes: Vec<String>,
+    pub nonce: String,
+    pub code_challenge: String,
+    pub auth_time: i64,
+    pub expires_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DomainRecord {
     pub id: String,

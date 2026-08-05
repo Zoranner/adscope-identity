@@ -123,3 +123,49 @@ pub(crate) mod domain {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+pub(crate) mod oauth_client {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "oauth_clients")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub client_id: String,
+        pub name: String,
+        pub client_type: String,
+        pub client_secret_hash: Option<String>,
+        pub redirect_uris: String,
+        pub allowed_scopes: String,
+        pub enabled: bool,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub(crate) mod oauth_authorization_code {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "oauth_authorization_codes")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub code_hash: String,
+        pub client_id: String,
+        pub employee_id: String,
+        pub redirect_uri: String,
+        pub scopes: String,
+        pub nonce: String,
+        pub code_challenge: String,
+        pub auth_time: i64,
+        pub expires_at: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}

@@ -1,16 +1,18 @@
 use adss_protocol::{DirectoryBatch, Group, OrganizationalUnit, User, UserStatus};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbErr,
-    EntityTrait, QueryFilter, QueryOrder, Set, SqlErr, Statement, TransactionTrait,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlErr, Statement, TransactionTrait,
 };
 
 use crate::{
     entities,
     mapping::{domain_active_model, user_status_from_storage, user_status_to_storage},
     models::{
-        CredentialCiphertextBatch, CredentialCiphertextEntry, CredentialRecord, DomainPatch,
-        DomainRecord, UserContactPatch, UserCredentialInput, UserDirectoryPatch, UserListFilter,
+        AuthorizationCodeRecord, CredentialCiphertextBatch, CredentialCiphertextEntry,
+        CredentialRecord, DomainPatch, DomainRecord, OAuthClientRecord, UserContactPatch,
+        UserCredentialInput, UserDirectoryPatch, UserListFilter,
     },
+    oauth::{authorization_code_active_model, oauth_client_active_model},
     revision::{
         MAX_REVISION_ALLOCATION_ATTEMPTS, METADATA_KEY, SyncRevisionChannel,
         confirm_revision_update_sql, i64_to_u64_revision, load_metadata,
@@ -131,8 +133,159 @@ CREATE TABLE IF NOT EXISTS domains (
 "#,
             )
             .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    client_type TEXT NOT NULL,
+    client_secret_hash TEXT NULL,
+    redirect_uris TEXT NOT NULL,
+    allowed_scopes TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL
+)
+"#,
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+    code_hash TEXT PRIMARY KEY NOT NULL,
+    client_id TEXT NOT NULL,
+    employee_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    auth_time BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL
+)
+"#,
+            )
+            .await?;
         self.ensure_metadata().await?;
         Ok(())
+    }
+
+    pub async fn list_oauth_clients(&self) -> anyhow::Result<Vec<OAuthClientRecord>> {
+        use entities::oauth_client;
+
+        oauth_client::Entity::find()
+            .order_by_asc(oauth_client::Column::ClientId)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(OAuthClientRecord::try_from)
+            .collect()
+    }
+
+    pub async fn get_oauth_client(
+        &self,
+        client_id: &str,
+    ) -> anyhow::Result<Option<OAuthClientRecord>> {
+        use entities::oauth_client;
+
+        oauth_client::Entity::find_by_id(client_id)
+            .one(&self.db)
+            .await?
+            .map(OAuthClientRecord::try_from)
+            .transpose()
+    }
+
+    pub async fn create_oauth_client(
+        &self,
+        client: OAuthClientRecord,
+    ) -> anyhow::Result<Option<OAuthClientRecord>> {
+        let client = oauth_client_active_model(client)?;
+        match client.insert(&self.db).await {
+            Ok(client) => Ok(Some(OAuthClientRecord::try_from(client)?)),
+            Err(error) if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) => {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn update_oauth_client(
+        &self,
+        client: OAuthClientRecord,
+    ) -> anyhow::Result<Option<OAuthClientRecord>> {
+        match oauth_client_active_model(client)?.update(&self.db).await {
+            Ok(client) => Ok(Some(OAuthClientRecord::try_from(client)?)),
+            Err(DbErr::RecordNotUpdated) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn delete_oauth_client(&self, client_id: &str) -> anyhow::Result<bool> {
+        use entities::oauth_client;
+
+        Ok(oauth_client::Entity::delete_by_id(client_id)
+            .exec(&self.db)
+            .await?
+            .rows_affected
+            == 1)
+    }
+
+    pub async fn store_authorization_code(
+        &self,
+        record: AuthorizationCodeRecord,
+    ) -> anyhow::Result<()> {
+        authorization_code_active_model(record)?
+            .insert(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn consume_authorization_code(
+        &self,
+        code_hash: &str,
+        now: i64,
+    ) -> anyhow::Result<Option<AuthorizationCodeRecord>> {
+        use entities::oauth_authorization_code;
+
+        let Some(code) = oauth_authorization_code::Entity::delete_by_id(code_hash)
+            .exec_with_returning(&self.db)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if code.expires_at <= now {
+            return Ok(None);
+        }
+        Ok(Some(AuthorizationCodeRecord::try_from(code)?))
+    }
+
+    pub async fn delete_expired_authorization_codes(
+        &self,
+        now: i64,
+        limit: u64,
+    ) -> anyhow::Result<u64> {
+        use entities::oauth_authorization_code;
+
+        if limit == 0 {
+            return Ok(0);
+        }
+        let code_hashes = oauth_authorization_code::Entity::find()
+            .filter(oauth_authorization_code::Column::ExpiresAt.lte(now))
+            .order_by_asc(oauth_authorization_code::Column::ExpiresAt)
+            .order_by_asc(oauth_authorization_code::Column::CodeHash)
+            .limit(limit)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|code| code.code_hash)
+            .collect::<Vec<_>>();
+        if code_hashes.is_empty() {
+            return Ok(0);
+        }
+        Ok(oauth_authorization_code::Entity::delete_many()
+            .filter(oauth_authorization_code::Column::CodeHash.is_in(code_hashes))
+            .exec(&self.db)
+            .await?
+            .rows_affected)
     }
 
     pub async fn list_domains(&self) -> anyhow::Result<Vec<DomainRecord>> {
