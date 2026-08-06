@@ -1,8 +1,14 @@
 import type {
+  CreateOAuthClientRequest,
   Domain,
   GroupRecord,
+  OAuthClient,
+  OAuthClientCreateResponse,
+  OAuthClientSecretResponse,
+  OAuthClientUpdateResponse,
   OrganizationalUnit,
   SyncDomain,
+  UpdateOAuthClientRequest,
   UserRecord,
 } from '~/types/admin'
 
@@ -19,6 +25,7 @@ export function useAdminApi() {
   const users = useState<UserRecord[]>('admin-users', () => [])
   const groups = useState<GroupRecord[]>('admin-groups', () => [])
   const syncDomains = useState<SyncDomain[]>('admin-sync-domains', () => [])
+  const oauthClients = useState<OAuthClient[]>('admin-oauth-clients', () => [])
   const tokenReady = computed(
     () => authenticated.value && managementToken.value.trim().length > 0,
   )
@@ -30,6 +37,7 @@ export function useAdminApi() {
     users.value = []
     groups.value = []
     syncDomains.value = []
+    oauthClients.value = []
   }
 
   function loadToken(): string {
@@ -92,7 +100,13 @@ export function useAdminApi() {
       if (import.meta.client) {
         window.localStorage.setItem('adss.managementToken', trimmedToken)
       }
-      await Promise.all([loadOus(), loadUsers(), loadGroups(), loadSyncDomains()])
+      await Promise.all([
+        loadOus(),
+        loadUsers(),
+        loadGroups(),
+        loadSyncDomains(),
+        loadOAuthClients(),
+      ])
       if (showSuccess) {
         setStatus('已进入管理台')
       }
@@ -175,6 +189,55 @@ export function useAdminApi() {
     syncDomains.value = response.domains
   }
 
+  async function loadOAuthClients() {
+    const response = await adminFetch<{ clients: OAuthClient[] }>('/api/admin/oauth-clients')
+    oauthClients.value = response.clients
+  }
+
+  async function createOAuthClient(
+    request: CreateOAuthClientRequest,
+  ): Promise<OAuthClientCreateResponse> {
+    const response = await adminFetch<OAuthClientCreateResponse>('/api/admin/oauth-clients', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+    oauthClients.value = [...oauthClients.value, response.client]
+    return response
+  }
+
+  async function updateOAuthClient(
+    clientId: string,
+    request: UpdateOAuthClientRequest,
+  ): Promise<OAuthClientUpdateResponse> {
+    const response = await adminFetch<OAuthClientUpdateResponse>(
+      `/api/admin/oauth-clients/${encodeURIComponent(clientId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(request),
+      },
+    )
+    oauthClients.value = oauthClients.value.map((client) =>
+      client.client_id === response.client_id ? response : client,
+    )
+    return response
+  }
+
+  async function deleteOAuthClient(clientId: string): Promise<void> {
+    await adminFetch<void>(`/api/admin/oauth-clients/${encodeURIComponent(clientId)}`, {
+      method: 'DELETE',
+    })
+    oauthClients.value = oauthClients.value.filter((client) => client.client_id !== clientId)
+  }
+
+  async function regenerateOAuthClientSecret(
+    clientId: string,
+  ): Promise<OAuthClientSecretResponse> {
+    return await adminFetch<OAuthClientSecretResponse>(
+      `/api/admin/oauth-clients/${encodeURIComponent(clientId)}/secret`,
+      { method: 'POST' },
+    )
+  }
+
   async function refreshDirectory() {
     await runAction(async () => {
       await Promise.all([loadOus(), loadUsers(), loadGroups(), loadSyncDomains()])
@@ -183,7 +246,14 @@ export function useAdminApi() {
 
   async function refreshAll() {
     await runAction(async () => {
-      await Promise.all([loadDomains(), loadOus(), loadUsers(), loadGroups(), loadSyncDomains()])
+      await Promise.all([
+        loadDomains(),
+        loadOus(),
+        loadUsers(),
+        loadGroups(),
+        loadSyncDomains(),
+        loadOAuthClients(),
+      ])
     }, { successMessage: '数据已刷新' })
   }
 
@@ -196,6 +266,7 @@ export function useAdminApi() {
     users,
     groups,
     syncDomains,
+    oauthClients,
     loadToken,
     rememberToken,
     clearToken,
@@ -207,6 +278,11 @@ export function useAdminApi() {
     loadUsers,
     loadGroups,
     loadSyncDomains,
+    loadOAuthClients,
+    createOAuthClient,
+    updateOAuthClient,
+    deleteOAuthClient,
+    regenerateOAuthClientSecret,
     refreshDirectory,
     refreshAll,
   }

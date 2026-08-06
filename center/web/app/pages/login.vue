@@ -1,12 +1,23 @@
 <script setup lang="ts">
 import { Database, LogIn } from 'lucide-vue-next'
+import { resolveAuthorizationContinue } from '~/utils/oidc'
 
 const { loading, loadToken, loadMe, login } = useUserApi()
+const route = useRoute()
 
 const username = ref('')
 const password = ref('')
+const authorizationContinue = computed(() => {
+  if (!import.meta.client) {
+    return null
+  }
+  return resolveAuthorizationContinue(route.query.continue, window.location.origin)
+})
 
 onMounted(async () => {
+  if (authorizationContinue.value) {
+    return
+  }
   const storedToken = loadToken()
   if (!storedToken) {
     return
@@ -21,6 +32,10 @@ async function submitLogin() {
   const ok = await login(username.value, password.value)
   if (ok) {
     password.value = ''
+    if (authorizationContinue.value) {
+      window.location.assign(authorizationContinue.value)
+      return
+    }
     await navigateTo('/me', { replace: true })
   }
 }

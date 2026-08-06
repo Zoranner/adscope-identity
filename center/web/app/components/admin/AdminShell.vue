@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { Building2, Database, FolderTree, LogOut, RefreshCw, Workflow } from 'lucide-vue-next'
+import {
+  Building2,
+  Database,
+  FolderTree,
+  KeyRound,
+  LogOut,
+  RefreshCw,
+  Workflow,
+} from 'lucide-vue-next'
 
 const props = defineProps<{
   busy?: boolean
@@ -20,6 +28,7 @@ const navItems = [
   { to: '/admin', label: '目录', icon: FolderTree },
   { to: '/admin/domains', label: '域', icon: Building2 },
   { to: '/admin/sync', label: '同步', icon: Workflow },
+  { to: '/admin/clients', label: '登录客户端', icon: KeyRound },
 ]
 
 const activeTitle = computed(

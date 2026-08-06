@@ -29,10 +29,16 @@ export function useUserApi() {
     }
   }
 
-  function logout(showMessage = true) {
-    clearToken()
-    if (showMessage) {
-      setStatus('已退出登录')
+  async function logout(showMessage = true) {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // Local credentials must still be cleared when the server cannot be reached.
+    } finally {
+      clearToken()
+      if (showMessage) {
+        setStatus('已退出登录')
+      }
     }
   }
 

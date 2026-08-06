@@ -75,7 +75,7 @@ async function savePassword() {
 }
 
 async function exitUser() {
-  logout()
+  await logout()
   await navigateTo('/login', { replace: true })
 }
 </script>

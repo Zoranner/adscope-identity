@@ -1,5 +1,45 @@
 export type UserStatus = 'active' | 'disabled'
 
+export type OAuthClientType = 'web' | 'desktop'
+
+export type OAuthScope = 'openid' | 'profile' | 'email' | 'phone'
+
+export interface OAuthClient {
+  client_id: string
+  name: string
+  client_type: OAuthClientType
+  redirect_uris: string[]
+  allowed_scopes: OAuthScope[]
+  enabled: boolean
+}
+
+export interface CreateOAuthClientRequest {
+  name: string
+  client_type: OAuthClientType
+  redirect_uris: string[]
+  allowed_scopes: OAuthScope[]
+  enabled: boolean
+}
+
+export interface UpdateOAuthClientRequest {
+  name: string
+  redirect_uris: string[]
+  allowed_scopes: OAuthScope[]
+  enabled: boolean
+}
+
+export interface OAuthClientCreateResponse {
+  client: OAuthClient
+  client_secret: string | null
+}
+
+export type OAuthClientUpdateResponse = OAuthClient
+
+export interface OAuthClientSecretResponse {
+  client_id: string
+  client_secret: string
+}
+
 export interface Domain {
   id: string
   name: string

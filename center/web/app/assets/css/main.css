@@ -514,6 +514,43 @@ strong {
   margin: 0;
   color: #17202c;
   font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.authorization-card {
+  width: min(600px, 100%);
+  gap: 20px;
+}
+
+.authorization-card > div:first-child {
+  min-width: 0;
+}
+
+.authorization-card h1 {
+  overflow-wrap: anywhere;
+}
+
+.authorization-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.authorization-section h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.authorization-section .profile-list {
+  border: 1px solid #e4e9f0;
+  border-radius: 8px;
+  padding: 2px 12px;
+  background: #fbfcfd;
+}
+
+.authorization-claims-list dt {
+  overflow-wrap: anywhere;
 }
 
 .pagination-bar {
@@ -629,6 +666,82 @@ strong {
   resize: vertical;
 }
 
+.segmented-control {
+  display: inline-grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 0;
+  width: min(320px, 100%);
+  border: 1px solid #cfd7e2;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented-control .segmented-option {
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid #cfd7e2;
+  border-radius: 0;
+}
+
+.segmented-control .segmented-option:last-child {
+  border-right: 0;
+}
+
+.checkbox-group {
+  gap: 8px 18px;
+}
+
+.checkbox-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  color: #3f4e5f;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.field .checkbox-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: #1e6472;
+}
+
+.checkbox-option:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.oauth-client-name {
+  min-width: 150px;
+  max-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.oauth-client-id {
+  min-width: 180px;
+  max-width: 280px;
+  font-family: Consolas, "Courier New", monospace;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.oauth-client-redirect {
+  min-width: 180px;
+  max-width: 340px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.oauth-client-scopes {
+  overflow-wrap: anywhere;
+}
+
 .connector-key-result h3 {
   margin: 0;
   font-size: 15px;
@@ -638,6 +751,7 @@ strong {
   margin: 5px 0 0;
   color: #647384;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .connector-key-row {
@@ -820,7 +934,7 @@ strong {
   }
 
   .nav-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .nav-button {
@@ -843,6 +957,14 @@ strong {
     padding: 14px;
   }
 
+  .credential-screen {
+    padding: 14px;
+  }
+
+  .nav-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .view-header,
   .selection-summary,
   .panel-header,
@@ -861,6 +983,10 @@ strong {
 
   .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .authorization-section .profile-list > div {
+    grid-template-columns: minmax(88px, 108px) minmax(0, 1fr);
   }
 
   .topbar-actions {
