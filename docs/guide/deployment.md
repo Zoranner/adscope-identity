@@ -2,25 +2,20 @@
 
 ## 配置文件
 
-`adss-center` 和 `adss-connector` 是两个独立部署单元。每个进程启动时读取当前运行目录下的 `.env`；运行目录是进程启动时的工作目录，不要求放在仓库根目录。部署时分别复制对应示例文件：
+Center 和 Connector 是两个独立部署单元，部署方式不同：
 
-```text
-cp center/.env.example <center-runtime-dir>/.env
-cp connector/.env.example <connector-runtime-dir>/.env
-```
+- Center 使用 [deploy/center/compose.yaml](../../deploy/center/compose.yaml) 作为 Docker 服务。复制 [deploy/center/center.env.example](../../deploy/center/center.env.example) 为 `deploy/center/center.env`，替换所有占位值后通过 Compose 启动。
+- Connector 作为原生 Windows 服务运行。复制 [connector/.env.example](../../connector/.env.example) 到 Connector 运行目录并命名为 `.env`，再使用发布包中的服务安装脚本安装。
 
-示例文件：
+[center/.env.example](../../center/.env.example) 可用于查阅 Center 变量说明，不是 Docker 部署使用的配置文件。
 
-- [adss-center .env 示例](../../center/.env.example)
-- [adss-connector .env 示例](../../connector/.env.example)
-
-系统环境变量优先级高于运行目录下的 `.env`。生产环境可以由进程管理器、容器平台或 Secret 管理系统注入环境变量；不要把生产密钥写入仓库。
+系统环境变量优先级高于进程读取的配置文件。生产环境可以由容器平台、Windows 服务环境或 Secret 管理系统注入普通密钥变量；OIDC RSA 私钥仍通过受限文件挂载。生产密钥不得写入仓库。
 
 示例文件已说明每个变量的用途和是否必填。本文档只说明启动方式和部署边界，避免重复维护变量说明。
 
 ## 主服务
 
-主服务是中心 API 和同步控制面。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_PASSWORD_HASH_PROVIDER`、`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN`。
+主服务是中心 API 和同步控制面。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_PASSWORD_HASH_PROVIDER`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、`ADSS_OIDC_ISSUER` 和 `ADSS_OIDC_PRIVATE_KEY_FILE`。生产部署还应显式设置 `ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false`。
 
 `ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
@@ -34,6 +29,49 @@ bun run build
 构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `ADSS_WEB_ROOT` 指定静态文件目录。
 
 主服务会优先匹配 `/api/*`，非 API 请求由 Web 静态文件处理。普通用户入口为 `/login`，管理入口为 `/admin`。未知 `/api/*` 返回 API 404，不会回退到前端页面。
+
+## OIDC 私钥
+
+OIDC 使用至少 2048 位的 RSA 私钥签发 RS256 token。以下命令适用于使用普通 rootful Docker、已安装 OpenSSL 的 Linux 主机。示例生成 3072 位 PKCS#8 PEM 私钥，再把文件设为 Center 容器用户 `10001:10001` 只读：
+
+```sh
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out oidc-private-key.pem
+sudo chown 10001:10001 oidc-private-key.pem
+sudo chmod 0400 oidc-private-key.pem
+```
+
+将 `oidc-private-key.pem` 放在 Center 部署目录，并限制为 Center 容器用户可读。镜像固定以 UID/GID `10001:10001` 运行；如部署镜像修改了运行 UID/GID，应同步调整私钥文件属主。rootless Docker 或启用用户命名空间映射时，应使用映射后的宿主机 UID 和 GID。私钥正文不得进入仓库、`.env`、环境变量或镜像。Compose 只读挂载该文件，环境变量只保存容器内路径：
+
+```yaml
+services:
+  center:
+    env_file:
+      - center.env
+    volumes:
+      - ./oidc-private-key.pem:/run/secrets/oidc-private-key.pem:ro
+    expose:
+      - "8080"
+```
+
+`center.env` 中的 OIDC 配置如下：
+
+```text
+ADSS_OIDC_ISSUER=https://center.example.com
+ADSS_OIDC_PRIVATE_KEY_FILE=/run/secrets/oidc-private-key.pem
+ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false
+```
+
+`ADSS_OIDC_ISSUER` 必须填写反向代理对外提供的 HTTPS 地址，并与客户端访问的 Center 地址一致。该值只能是 HTTPS origin，不能包含路径、查询参数或片段。
+
+Compose 只通过 `expose` 提供 Center 内部 HTTP 端口，由同一容器网络中的反向代理终止 TLS 并转发请求。Center 不管理 TLS 证书，OIDC RSA 私钥也不是 TLS 证书，两类密钥应分别生成和保管。
+
+更换 `oidc-private-key.pem` 后，在 `deploy/center` 目录重建 Center 容器，使只读 bind mount 指向新文件并重新加载私钥。私钥可能通过原子替换写入，单独执行 `docker compose restart` 不保证容器重新挂载新文件。
+
+```text
+docker compose up -d --force-recreate center
+```
+
+Center 只发布一个活动公钥，不提供新旧密钥并行验证窗口。旧 ID token 和 access token 自签发起固定有效 300 秒：Center 载入新密钥后会立即拒绝旧 access token，仍缓存旧公钥的客户端也会在 token 自签发起 5 分钟到期后拒绝。私钥更换应安排维护窗口，并通知接入系统重新发起 OIDC 授权。
 
 ## 域配置初始化
 
@@ -75,7 +113,7 @@ Connector 在运行目录下自动维护 `adss-connector-state.json`。文件无
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境配置本机高熵密码加密密钥。
-- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、Connector key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入。
+- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、Connector key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 管理 Web 静态文件由主服务托管，不单独开放 Nuxt 开发服务。
 - 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。

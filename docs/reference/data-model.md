@@ -9,7 +9,10 @@
 - 目录事实只保存 OU、用户和组的当前状态。
 - 凭据事实只保存用户当前 verifier 和 ciphertext。
 - 域记录保存该域已确认的目录和凭据 revision。
+- OAuth 客户端表保存预登记客户端的当前配置；授权码表只保存等待兑换的短期一次性记录。
 - 对象多次变更后，Connector 只拉取最新完整状态。
+
+浏览器 SSO 登录状态保存在签名 Cookie 中，ID Token 和 access token 是无状态 JWT。数据库不增加浏览器会话、历史同意、授权历史或 token 表。
 
 数据库 schema 由主服务初始化逻辑创建基础表。
 
@@ -79,6 +82,44 @@
 
 `password_verifier` 不能还原密码。`password_ciphertext` 只能由主服务通过密码加密方式解封，并只在响应 Connector 凭据同步时短暂进入内存。
 
+### `oauth_clients`
+
+保存预登记 OIDC 客户端的当前配置。
+
+| 字段 | 含义 |
+| --- | --- |
+| `client_id` | Center 生成的客户端主键，创建后不可修改。 |
+| `name` | 管理端和授权确认页使用的显示名称。 |
+| `client_type` | 客户端类型，存储值为 `web` 或 `desktop`。 |
+| `client_secret_hash` | Web 客户端 secret 的 `sha256:` 摘要；Desktop 客户端为空。 |
+| `redirect_uris` | 登记回调地址数组，以 JSON 文本保存。 |
+| `allowed_scopes` | 客户端可申请的 scope 数组，以 JSON 文本保存。 |
+| `enabled` | 客户端能否发起授权、兑换授权码和调用 UserInfo。 |
+
+Web 客户端创建或重新生成 secret 时，明文只通过带 `Cache-Control: no-store` 的管理响应返回。数据库只保存新 secret 的摘要，重新生成时直接替换旧摘要，不保存 secret 版本或并行有效期。Desktop 客户端不生成 secret。
+
+删除客户端会移除该客户端配置。授权码兑换时仍会读取客户端记录；客户端不存在或已停用时，授权码不能换取令牌。
+
+### `oauth_authorization_codes`
+
+保存用户确认后生成、等待 Token 端点兑换的一次性授权码记录。
+
+| 字段 | 含义 |
+| --- | --- |
+| `code_hash` | 授权码的 `sha256:` 摘要，也是表主键。 |
+| `client_id` | 授权码绑定的客户端 ID。 |
+| `employee_id` | 授权用户的稳定标识，对应 OIDC `sub`。 |
+| `redirect_uri` | 授权请求实际使用的回调地址，Token 请求必须完全一致。 |
+| `scopes` | 用户本次确认的 scope 数组，以 JSON 文本保存。 |
+| `nonce` | 授权请求中的 nonce，用于签发 ID Token。 |
+| `code_challenge` | 授权请求中的 S256 PKCE challenge。 |
+| `auth_time` | 浏览器登录发生时间的 Unix 秒数。 |
+| `expires_at` | 授权码到期时间的 Unix 秒数。 |
+
+授权码明文只通过已验证的 `redirect_uri` 返回，不写入数据库。记录有效期为 120 秒；Token 端点按 `code_hash` 原子删除记录后再完成兑换校验，所以同一授权码最多只有一个并发请求能够取得记录。未知、过期、已兑换或绑定信息不匹配的授权码都不能产生令牌。
+
+授权码没有已使用状态字段。兑换会删除目标记录；生成新授权码前会按到期时间有限批量清理过期记录，不保存兑换结果、历史同意或授权事件。
+
 ### `domains`
 
 保存域配置和同步进度。
@@ -112,6 +153,10 @@
 - 分配新的 `credential_revision`。
 - 写入新的 `password_verifier` 和 `password_ciphertext`。
 - 将该用户凭据的 `changed_revision` 设置为该 revision。
+
+OAuth 客户端写入不推进目录或凭据 revision。创建客户端时生成稳定 `client_id`，客户端类型和 ID 在普通更新中保持不变；Web secret 只能通过创建或 secret 重新生成接口写入摘要。
+
+授权确认只写入一条短期 `oauth_authorization_codes` 记录。授权码兑换在数据库事务内删除目标记录，并在同一事务中读取绑定的客户端和用户；数据库不写入 token、会话或授权历史。
 
 Connector 确认只更新 `domains` 中目标通道的 applied revision。服务端必须拒绝倒退确认，也必须拒绝超过全局 revision 的确认。
 

@@ -6,6 +6,7 @@ services:
       - center.env
     volumes:
       - adss-center-data:/data
+      - ./oidc-private-key.pem:/run/secrets/oidc-private-key.pem:ro
     expose:
       - "8080"
     read_only: true

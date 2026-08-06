@@ -6,6 +6,8 @@ API 按调用身份分组：
 
 - `/api/auth/*` 用于普通用户登录。
 - `/api/me/*` 用于普通用户自助，只能操作 token 对应的本人账号。
+- `/.well-known/openid-configuration` 和 `/oauth2/*` 用于预登记客户端发起 OIDC 登录。
+- `/api/oauth2/authorize/context` 只向持有有效 SSO Cookie 的确认页返回本次授权上下文。
 - `/api/admin/*` 用于受保护管理入口，写入中心目录和域配置事实。
 - `/api/connector/*` 用于域内 Connector 同步，必须通过域绑定的 Connector key 鉴权。
 
@@ -48,6 +50,7 @@ API 按调用身份分组：
 - 根据 `users.username` 定位用户。用户名必须唯一，不能用工号代替登录名。
 - 使用 `user_credentials.password_verifier` 验证用户提交的密码。
 - 登录成功后签发普通用户自助接口使用的 Bearer token。
+- 登录响应同时把同一个 token 写入 `adss_sso` Cookie，供浏览器 OIDC 授权流程识别登录状态。Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`。
 - 登录失败返回 `401 Unauthorized`。
 
 响应：
@@ -55,9 +58,15 @@ API 按调用身份分组：
 ```json
 {
   "employee_id": "1001",
-  "access_token": "adss-user-session:v1:1001:..."
+  "access_token": "adss-user-session:v2.<payload>.<signature>"
 }
 ```
+
+### 退出浏览器登录
+
+`POST /api/auth/logout`
+
+服务端返回 `204 No Content`，并通过 `Max-Age=0` 的 `adss_sso` Cookie 清除当前浏览器登录状态。该接口不接受会话 ID，也不撤销其他浏览器中的无状态登录凭证。
 
 ### 本人资料
 
@@ -156,6 +165,239 @@ Authorization: Bearer <access_token>
 }
 ```
 
+## OIDC 统一登录
+
+Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `sub` 直接使用用户 `employee_id`，OIDC access token 只用于 UserInfo，不能用于 `/api/me/*`。
+
+### Discovery
+
+`GET /.well-known/openid-configuration`
+
+响应由配置的外部 issuer 生成，不根据请求 `Host` 或代理头推导：
+
+```json
+{
+  "issuer": "https://center.example.com",
+  "authorization_endpoint": "https://center.example.com/oauth2/authorize",
+  "token_endpoint": "https://center.example.com/oauth2/token",
+  "userinfo_endpoint": "https://center.example.com/oauth2/userinfo",
+  "jwks_uri": "https://center.example.com/oauth2/jwks",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code"],
+  "subject_types_supported": ["public"],
+  "id_token_signing_alg_values_supported": ["RS256"],
+  "scopes_supported": ["openid", "profile", "email", "phone"],
+  "token_endpoint_auth_methods_supported": ["client_secret_basic", "none"],
+  "code_challenge_methods_supported": ["S256"]
+}
+```
+
+响应包含 `Cache-Control: public, max-age=300`。
+
+### JWKS
+
+`GET /oauth2/jwks`
+
+响应只发布签发令牌所用 RSA 公钥：
+
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "sha256:...",
+      "n": "...",
+      "e": "AQAB"
+    }
+  ]
+}
+```
+
+响应不包含私钥参数，并包含 `Cache-Control: public, max-age=300`。
+
+### 发起授权
+
+`GET /oauth2/authorize`
+
+查询参数：
+
+| 字段 | 约束 |
+| --- | --- |
+| `response_type` | 固定为 `code`。 |
+| `client_id` | 已登记且启用的客户端 ID。 |
+| `redirect_uri` | 必须符合该客户端登记的回调规则。 |
+| `scope` | 空格分隔，必须包含 `openid`，可选 `profile`、`email`、`phone`，且不得超出客户端 `allowed_scopes`。 |
+| `state` | 必填，长度为 1 至 512 个字符。 |
+| `nonce` | 必填，长度为 1 至 256 个字符。 |
+| `code_challenge` | 必填，43 个 base64url 字符。 |
+| `code_challenge_method` | 固定为 `S256`。 |
+| `response_mode` | 可省略；提供时只能为 `query`。 |
+| `prompt` | 可省略；`none` 不跳过确认，返回 `interaction_required`。 |
+
+参数缺失、重复、未定义、编码非法或总查询长度超过 16 KiB 时，服务端拒绝请求。
+
+服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adss_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 Center 的 `/authorize` 确认页。`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
+
+### 授权确认上下文
+
+`GET /api/oauth2/authorize/context`
+
+查询参数与 `GET /oauth2/authorize` 相同。请求必须携带有效 `adss_sso` Cookie，服务端再次检查客户端、用户和全部授权参数。
+
+响应包含本次确认所需的客户端、用户、声明预览、授权参数和短期 CSRF token：
+
+```json
+{
+  "client_name": "业务门户",
+  "user": {
+    "employee_id": "1001",
+    "username": "zhangsan",
+    "display_name": "张三"
+  },
+  "claims": {
+    "sub": "1001",
+    "preferred_username": "zhangsan",
+    "name": "张三",
+    "email": "zhangsan@example.com"
+  },
+  "csrf_token": "adss-csrf:v1....",
+  "authorization": {
+    "response_type": "code",
+    "client_id": "client_...",
+    "redirect_uri": "https://client.example.com/callback",
+    "scope": "openid profile email",
+    "state": "random-state",
+    "nonce": "random-nonce",
+    "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    "code_challenge_method": "S256",
+    "response_mode": "query",
+    "prompt": null
+  }
+}
+```
+
+`claims` 只包含本次 scope 允许且有值的字段。响应包含 `Cache-Control: no-store`。缺少有效登录状态或用户已禁用时返回 `401 Unauthorized` 和 `{"error":"invalid_session"}`。
+
+### 提交授权确认
+
+`POST /oauth2/authorize`
+
+请求使用 `application/x-www-form-urlencoded`，提交与原授权请求相同的全部字段，并增加：
+
+| 字段 | 约束 |
+| --- | --- |
+| `decision` | `approve` 或 `cancel`。 |
+| `csrf_token` | 从授权确认上下文取得，绑定当前用户和完整授权请求，有效期 300 秒。 |
+
+请求体上限为 16 KiB。服务端重新检查 SSO Cookie、用户状态、客户端状态、授权参数和 CSRF token，不信任页面隐藏字段，也不保存历史同意结果。
+
+- `approve` 为本次请求生成一次性授权码，返回 `303 See Other` 到已验证的 `redirect_uri`，并追加 `code` 和原始 `state`。
+- `cancel` 返回 `303 See Other`，向已验证的 `redirect_uri` 追加 `error=access_denied` 和原始 `state`。
+- 每次授权请求都要经过确认；已有 SSO Cookie 只免去再次输入用户名和密码。
+
+授权结果跳转包含 `Cache-Control: no-store`。
+
+### Token
+
+`POST /oauth2/token`
+
+请求必须使用 `application/x-www-form-urlencoded`：
+
+```text
+grant_type=authorization_code&client_id=client_...&redirect_uri=https%3A%2F%2Fclient.example.com%2Fcallback&code=...&code_verifier=...
+```
+
+请求体上限为 16 KiB，只能包含以下字段：
+
+| 字段 | 约束 |
+| --- | --- |
+| `grant_type` | 固定为 `authorization_code`。 |
+| `client_id` | 必须与授权码绑定的客户端一致。 |
+| `redirect_uri` | 必须与发起授权时使用的实际地址一致。 |
+| `code` | 一次性授权码，有效期 120 秒。 |
+| `code_verifier` | 43 至 128 个未保留字符，S256 结果必须匹配授权码中的 `code_challenge`。 |
+
+Web 客户端必须同时发送 `Authorization: Basic <base64(client_id:client_secret)>`，使用 `client_secret_basic` 认证并校验 PKCE。Desktop 客户端不得发送客户端认证头，按 `none` 处理，只通过客户端绑定和 PKCE 保护授权码。两类客户端都必须在请求体中发送 `client_id`。
+
+成功响应：
+
+```json
+{
+  "token_type": "Bearer",
+  "expires_in": 300,
+  "scope": "openid profile email",
+  "access_token": "eyJ...",
+  "id_token": "eyJ..."
+}
+```
+
+响应不包含 `refresh_token`。ID Token 和 access token 都使用 `RS256`，JWT header 携带当前 `kid`。ID Token 包含 `iss`、`aud`、`sub`、`iat`、`exp`、`auth_time` 和授权请求中的 `nonce`，并按 scope 增加身份声明；access token 包含 `iss`、`aud`、`sub`、`client_id`、`scope`、`iat` 和 `exp`。ID Token 的 `aud` 为客户端 ID，access token 的 `aud` 为 `<issuer>/oauth2/userinfo`；两者的 `sub` 都是用户 `employee_id`。
+
+Token 成功和错误响应均包含：
+
+```text
+Cache-Control: no-store
+Pragma: no-cache
+```
+
+### UserInfo
+
+`GET /oauth2/userinfo`
+
+请求必须携带 OIDC access token：
+
+```text
+Authorization: Bearer <access_token>
+```
+
+服务端校验 JWT 签名、`kid`、issuer、UserInfo audience、有效期和 scope，并重新读取客户端与用户状态。客户端不存在或停用、用户不存在或禁用时，access token 按无效处理。
+
+响应字段由 access token 中的 scope 决定：
+
+```json
+{
+  "sub": "1001",
+  "preferred_username": "zhangsan",
+  "name": "张三",
+  "email": "zhangsan@example.com",
+  "phone_number": "13800000000"
+}
+```
+
+- `openid` 返回 `sub`。
+- `profile` 返回 `preferred_username` 和 `name`。
+- `email` 在用户邮箱非空时返回 `email`。
+- `phone` 优先使用非空 `mobile`，否则使用非空 `telephone`；两者都为空时省略 `phone_number`。
+
+成功和错误响应均包含 `Cache-Control: no-store`。
+
+### OIDC 错误
+
+未知客户端、停用客户端和未登记的 `redirect_uri` 返回 Center 本地 `400 Bad Request`，响应为 `{"error":"invalid_request"}`，不设置 `Location`。只有客户端和回调地址已验证后，授权错误才通过 `303 See Other` 返回该回调地址：
+
+| `error` | 含义 |
+| --- | --- |
+| `invalid_request` | 授权参数、确认决定或 CSRF token 非法。 |
+| `unsupported_response_type` | `response_type` 不是 `code`。 |
+| `invalid_scope` | scope 格式非法、不受支持或超出客户端允许范围。 |
+| `interaction_required` | 请求了 `prompt=none`。 |
+| `access_denied` | 用户取消授权。 |
+
+Token 端点只返回 JSON，不跳转：
+
+| 状态码 | `error` | 含义 |
+| --- | --- | --- |
+| `400 Bad Request` | `invalid_request` | Content-Type、表单结构或必填字段非法。 |
+| `405 Method Not Allowed` | `invalid_request` | 使用了非 POST 方法。 |
+| `401 Unauthorized` | `invalid_client` | Web Basic 认证失败，或客户端类型与认证方式不匹配；响应包含 `WWW-Authenticate: Basic`。 |
+| `400 Bad Request` | `unsupported_grant_type` | `grant_type` 不是 `authorization_code`。 |
+| `400 Bad Request` | `invalid_grant` | 授权码未知、过期、已使用，绑定字段或 PKCE 不匹配，或兑换时客户端、用户状态不再有效。 |
+| `500 Internal Server Error` | `server_error` | 数据库、时间或签名处理失败。 |
+
+UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 token 返回 `401 Unauthorized`、`{"error":"invalid_token"}` 和 `WWW-Authenticate: Bearer error="invalid_token"`。
+
 ## 管理入口
 
 管理入口必须携带受保护管理凭证。凭证格式由接入层决定，不能复用普通用户自助 token。
@@ -165,6 +407,92 @@ Authorization: Bearer <management_token>
 ```
 
 管理写入只维护中心当前事实，不直接访问域控。
+
+### OAuth 客户端管理
+
+`GET /api/admin/oauth-clients` 按 `client_id` 升序返回客户端列表：
+
+```json
+{
+  "clients": [
+    {
+      "client_id": "client_...",
+      "name": "业务门户",
+      "client_type": "web",
+      "redirect_uris": ["https://client.example.com/callback"],
+      "allowed_scopes": ["openid", "profile", "email"],
+      "enabled": true
+    }
+  ]
+}
+```
+
+列表和普通修改响应不返回 `client_secret` 或 `client_secret_hash`。
+
+`POST /api/admin/oauth-clients` 创建客户端：
+
+```json
+{
+  "name": "业务门户",
+  "client_type": "web",
+  "redirect_uris": ["https://client.example.com/callback"],
+  "allowed_scopes": ["openid", "profile", "email"],
+  "enabled": true
+}
+```
+
+服务端生成 `client_id`。Web 客户端同时生成 secret；Desktop 客户端的 `client_secret` 为 `null`：
+
+```json
+{
+  "client": {
+    "client_id": "client_...",
+    "name": "业务门户",
+    "client_type": "web",
+    "redirect_uris": ["https://client.example.com/callback"],
+    "allowed_scopes": ["openid", "profile", "email"],
+    "enabled": true
+  },
+  "client_secret": "one-time-secret"
+}
+```
+
+创建响应包含 `Cache-Control: no-store`。Web secret 只在该响应中显示一次。
+
+`PATCH /api/admin/oauth-clients/{client_id}` 更新显示名称、回调地址、允许的 scope 和启用状态：
+
+```json
+{
+  "name": "业务门户",
+  "redirect_uris": ["https://client.example.com/callback"],
+  "allowed_scopes": ["openid", "profile"],
+  "enabled": false
+}
+```
+
+更新不接受 `client_id` 或 `client_type`，并保留原 secret 摘要。
+
+`DELETE /api/admin/oauth-clients/{client_id}` 删除客户端，成功返回 `204 No Content`；客户端不存在时返回 `404 Not Found`。
+
+`POST /api/admin/oauth-clients/{client_id}/secret` 为 Web 客户端重新生成 secret：
+
+```json
+{
+  "client_id": "client_...",
+  "client_secret": "new-one-time-secret"
+}
+```
+
+新 secret 立即替换旧 secret，响应包含 `Cache-Control: no-store`。Desktop 客户端没有 secret，该操作返回 `409 Conflict`；客户端不存在时返回 `404 Not Found`。
+
+客户端字段遵守以下约束：
+
+- `name` 长度为 1 至 100 个字符。
+- `client_type` 只能是 `web` 或 `desktop`，创建后不可修改。
+- `redirect_uris` 包含 1 至 10 个绝对 URI，每项最长 2048 字节。
+- `allowed_scopes` 包含 1 至 4 个互不重复的值，必须包含 `openid`，其他值只能是 `profile`、`email`、`phone`。
+- Web 回调使用 HTTPS 并完整匹配登记值；只有显式开启本机开发配置时才接受 HTTP loopback IP。Desktop 回调只接受 HTTP loopback IP，授权请求必须带实际监听端口，该端口可以替换登记地址中的端口。
+- 未定义字段、无效 `client_type` 或缺少必填字段由 JSON 请求解析层拒绝；名称、scope 或回调地址等字段值校验失败返回 `400 Bad Request`。目标不存在返回 `404 Not Found`，管理凭证缺失或错误返回 `401 Unauthorized`。
 
 ### 域管理
 

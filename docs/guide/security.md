@@ -10,13 +10,27 @@
 
 主服务必须配置高熵 `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN`。这些密钥通过受限 `.env`、系统环境变量、Windows DPAPI、Secret Manager 或等价机制注入，不进入源码、日志或配置仓库。
 
+OIDC 使用独立 RSA 私钥签发 RS256 ID token 和 access token。私钥至少为 2048 位，通过受限文件提供给 Center，不写入仓库、`.env`、环境变量、容器镜像或日志。OIDC 私钥只用于 token 签名，不是反向代理使用的 TLS 证书。
+
 Connector key 和 LDAP bind password 按域独立保存。Connector key 运行时不得写入日志、错误响应或配置仓库。
+
+## SSO 会话
+
+用户登录成功后，Center 设置 `adss_sso` Cookie，用于浏览器内的 OIDC 授权流程。Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`，内容由 `ADSS_USER_SESSION_KEY` 签名。SSO Cookie 不替代普通用户 Bearer token、管理 token 或 Connector key，也不能用于 `/api/me/*`、`/api/admin/*` 或 Connector 接口。
+
+授权确认提交使用短期 CSRF token，并绑定登录用户和完整授权请求。`SameSite=Lax` 不能替代这项校验。
+
+Center 不签发 refresh token，也没有远程撤销单个浏览器 SSO 会话或已签发 OIDC token 的机制。退出登录只清除当前浏览器的 SSO Cookie，不会退出其他浏览器，也不会撤销接入系统已经建立的本地会话。OIDC ID token 和 access token 的有效期固定为 5 分钟，到期后由接入系统重新发起 OIDC 授权。
 
 ## 传输要求
 
 主服务必须位于 TLS 后面。Connector 调用 `/api/connector/sync` 获取凭据材料时，响应不能经过明文 HTTP，代理、网关、日志、tracing、错误回显和崩溃 dump 不记录响应体。
 
 Connector 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；如果域控策略要求加密密码修改，应按域策略启用 `ldaps://` 或等价受保护绑定。
+
+## 日志和诊断
+
+应用、反向代理、网关、tracing、错误回显和崩溃 dump 不得记录普通用户 token、OIDC access token、ID token、授权码、客户端 secret、SSO Cookie、CSRF token 或完整授权请求。排障日志只保留必要的请求标识、端点、结果状态和不含凭据的错误分类。
 
 ## 权限边界
 
