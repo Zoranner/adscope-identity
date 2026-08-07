@@ -7,7 +7,7 @@ use crate::password::{
     BuiltInPasswordEncryption, DeterministicPasswordHash, PasswordEncryption, PasswordHashProvider,
     password_encryption_from_env, password_hash_from_env,
 };
-use crate::session::UserSessionIssuer;
+use crate::session::{ManagementSessionIssuer, UserSessionIssuer};
 
 const DEFAULT_BATCH_LIMIT: usize = 100;
 
@@ -20,19 +20,25 @@ pub struct AppState {
     pub(crate) user_sessions: UserSessionIssuer,
     pub(crate) csrf_signer: CsrfSigner,
     pub(crate) management_token: String,
+    pub(crate) management_sessions: ManagementSessionIssuer,
     pub oidc: OidcService,
 }
 
 impl AppState {
     pub fn from_env(repository: Repository) -> anyhow::Result<Self> {
+        let password_encryption = password_encryption_from_env()?;
+        let password_hash = password_hash_from_env()?;
+        let user_sessions = UserSessionIssuer::from_env()?;
+        let management_token = management_token_from_env()?;
+        let oidc = OidcService::from_env()?;
         Ok(Self::with_password_providers(
             repository,
             DEFAULT_BATCH_LIMIT,
-            password_encryption_from_env()?,
-            password_hash_from_env()?,
-            UserSessionIssuer::from_env()?,
-            management_token_from_env()?,
-            OidcService::from_env()?,
+            password_encryption,
+            password_hash,
+            user_sessions,
+            management_token,
+            oidc,
         ))
     }
 
@@ -81,6 +87,7 @@ impl AppState {
         oidc: OidcService,
     ) -> Self {
         let csrf_signer = user_sessions.csrf_signer();
+        let management_sessions = ManagementSessionIssuer::from_management_token(&management_token);
         Self {
             repository,
             batch_limit: batch_limit.max(1),
@@ -89,6 +96,7 @@ impl AppState {
             user_sessions,
             csrf_signer,
             management_token,
+            management_sessions,
             oidc,
         }
     }

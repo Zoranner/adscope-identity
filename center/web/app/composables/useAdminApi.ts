@@ -17,7 +17,7 @@ interface AdminRequestOptions extends RequestInit {
 }
 
 export function useAdminApi() {
-  const managementToken = useState('admin-management-token', () => '')
+  const csrfToken = useState('admin-csrf-token', () => '')
   const authenticated = useState('admin-authenticated', () => false)
   const loading = useState('admin-loading', () => false)
   const domains = useState<Domain[]>('admin-domains', () => [])
@@ -26,9 +26,7 @@ export function useAdminApi() {
   const groups = useState<GroupRecord[]>('admin-groups', () => [])
   const syncDomains = useState<SyncDomain[]>('admin-sync-domains', () => [])
   const oauthClients = useState<OAuthClient[]>('admin-oauth-clients', () => [])
-  const tokenReady = computed(
-    () => authenticated.value && managementToken.value.trim().length > 0,
-  )
+  const tokenReady = computed(() => authenticated.value && csrfToken.value.length > 0)
   const { setStatus } = useAdminStatus()
 
   function resetData() {
@@ -40,49 +38,51 @@ export function useAdminApi() {
     oauthClients.value = []
   }
 
-  function loadToken(): string {
-    if (!import.meta.client) {
-      return ''
-    }
-    const storedToken = window.localStorage.getItem('adss.managementToken') ?? ''
-    managementToken.value = storedToken
-    authenticated.value = false
-    return storedToken
-  }
-
-  function rememberToken(showMessage = true) {
-    if (!import.meta.client) {
-      return
-    }
-    window.localStorage.setItem('adss.managementToken', managementToken.value.trim())
-    if (showMessage) {
-      setStatus('管理凭证已保存到当前浏览器')
-    }
-  }
-
-  function clearToken() {
-    managementToken.value = ''
+  function clearSession() {
+    csrfToken.value = ''
     authenticated.value = false
     resetData()
-    if (import.meta.client) {
-      window.localStorage.removeItem('adss.managementToken')
+  }
+
+  async function restoreSession() {
+    loading.value = true
+    try {
+      const response = await fetch('/api/admin/session', {
+        credentials: 'same-origin',
+      })
+      if (!response.ok) {
+        clearSession()
+        return false
+      }
+      const payload = (await response.json()) as { csrf_token: string }
+      csrfToken.value = payload.csrf_token
+      authenticated.value = true
+      await loadAll()
+      return true
+    } catch {
+      clearSession()
+      return false
+    } finally {
+      loading.value = false
     }
-    setStatus('管理凭证已清除')
   }
 
   async function authenticateToken(token: string, showSuccess = true) {
     const trimmedToken = token.trim()
     if (!trimmedToken) {
       setStatus('请输入管理凭证', true)
-      return
+      return false
     }
 
     loading.value = true
     try {
-      const response = await fetch('/api/admin/domains', {
+      const response = await fetch('/api/admin/session', {
+        method: 'POST',
         headers: {
-          authorization: `Bearer ${trimmedToken}`,
+          'content-type': 'application/json',
         },
+        credentials: 'same-origin',
+        body: JSON.stringify({ token: trimmedToken }),
       })
 
       if (!response.ok) {
@@ -93,31 +93,18 @@ export function useAdminApi() {
         )
       }
 
-      const payload = (await response.json()) as { domains: Domain[] }
-      managementToken.value = trimmedToken
+      const payload = (await response.json()) as { csrf_token: string }
+      csrfToken.value = payload.csrf_token
       authenticated.value = true
-      domains.value = payload.domains
-      if (import.meta.client) {
-        window.localStorage.setItem('adss.managementToken', trimmedToken)
-      }
-      await Promise.all([
-        loadOus(),
-        loadUsers(),
-        loadGroups(),
-        loadSyncDomains(),
-        loadOAuthClients(),
-      ])
+      await loadAll()
       if (showSuccess) {
         setStatus('已进入管理台')
       }
+      return true
     } catch (error) {
-      managementToken.value = ''
-      authenticated.value = false
-      resetData()
-      if (import.meta.client) {
-        window.localStorage.removeItem('adss.managementToken')
-      }
+      clearSession()
       setStatus(error instanceof Error ? error.message : '管理凭证无效', true)
+      return false
     } finally {
       loading.value = false
     }
@@ -128,16 +115,24 @@ export function useAdminApi() {
       throw new Error('请先输入管理凭证')
     }
 
+    const method = (init.method ?? 'GET').toUpperCase()
     const response = await fetch(path, {
       ...init,
+      credentials: 'same-origin',
       headers: {
-        authorization: `Bearer ${managementToken.value.trim()}`,
         ...(init.body ? { 'content-type': 'application/json' } : {}),
+        ...(method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+          ? {}
+          : { 'x-adss-csrf-token': csrfToken.value }),
         ...init.headers,
       },
     })
 
     if (!response.ok) {
+      if (response.status === 401) {
+        clearSession()
+        throw new Error('管理会话已失效，请重新登录')
+      }
       throw new Error(`${response.status} ${response.statusText}`)
     }
 
@@ -246,19 +241,50 @@ export function useAdminApi() {
 
   async function refreshAll() {
     await runAction(async () => {
-      await Promise.all([
-        loadDomains(),
-        loadOus(),
-        loadUsers(),
-        loadGroups(),
-        loadSyncDomains(),
-        loadOAuthClients(),
-      ])
+      await loadAll()
     }, { successMessage: '数据已刷新' })
   }
 
+  async function loadAll() {
+    await Promise.all([
+      loadDomains(),
+      loadOus(),
+      loadUsers(),
+      loadGroups(),
+      loadSyncDomains(),
+      loadOAuthClients(),
+    ])
+  }
+
+  async function logout() {
+    if (!tokenReady.value) {
+      return true
+    }
+
+    loading.value = true
+    try {
+      const response = await fetch('/api/admin/session', {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: {
+          'x-adss-csrf-token': csrfToken.value,
+        },
+      })
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`)
+      }
+      clearSession()
+      setStatus('已退出管理台')
+      return true
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '退出失败', true)
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
-    managementToken,
     tokenReady,
     loading,
     domains,
@@ -267,10 +293,9 @@ export function useAdminApi() {
     groups,
     syncDomains,
     oauthClients,
-    loadToken,
-    rememberToken,
-    clearToken,
+    restoreSession,
     authenticateToken,
+    logout,
     adminFetch,
     runAction,
     loadDomains,

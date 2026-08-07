@@ -87,12 +87,10 @@ Connector 是域内常驻同步进程。默认 [adss-connector .env 示例](../.
 
 ```text
 ADSS_CONNECTOR_DRY_RUN=0
-ADSS_LDAP_URL=ldap://dc-a.example.com:389
-ADSS_LDAP_BIND_DN=CN=adss-connector,OU=Service Accounts,DC=a,DC=example,DC=com
-ADSS_LDAP_BIND_PASSWORD=<from-local-secret>
+ADSS_LDAP_URL=ldap://dc01.rd.kim:389
 ```
 
-Connector 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；如果域控策略要求加密密码修改，应按域策略启用 `ldaps://` 或等价受保护绑定。
+Connector 主机必须加入 `rd.kim` 域，并以 `NetworkService` 服务身份运行。真实模式只接受 `ldap://<FQDN>:389`；Connector 使用主机计算机账号 `RD\<CONNECTOR-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
 
 历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `ADSS_ADOPT_EXISTING_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写中心 `employee_id`。迁移完成后应关闭该开关。
 
@@ -113,9 +111,9 @@ Connector 在运行目录下自动维护 `adss-connector-state.json`。文件无
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境配置本机高熵密码加密密钥。
-- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、Connector key、LDAP bind password 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
+- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN` 和 Connector key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 管理 Web 静态文件由主服务托管，不单独开放 Nuxt 开发服务。
-- 域内服务账号只授予镜像根和隔离 OU 范围内的必要权限。
+- 仅向 Connector 主机计算机账号委派镜像根和隔离 OU 范围内的必要权限，不使用 `superuser`、本地账户或其他内置本地服务身份。
 - 受管用户禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。
-- AD 沙箱域验证 OU、用户、组、成员、禁用、隔离移动和 Reset Password 全链路，并覆盖实际采用的 `ldap://` 或 `ldaps://` 连接方式。
+- AD 沙箱域验证 OU、用户、组、成员、禁用、隔离移动和 Reset Password 全链路，并确认 FQDN/SPN、GSS-API 保密层和主机计算机账号权限均符合实际域策略。

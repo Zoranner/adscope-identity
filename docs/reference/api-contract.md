@@ -400,13 +400,35 @@ UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 toke
 
 ## 管理入口
 
-管理入口必须携带受保护管理凭证。凭证格式由接入层决定，不能复用普通用户自助 token。
+管理凭证只用于创建浏览器管理会话，不能直接访问其他管理接口，也不能复用普通用户自助 token。管理会话 Cookie 名为 `adss_management`，使用 `HttpOnly`、`Secure`、`SameSite=Strict` 和 `Path=/api/admin`，有效期固定为 8 小时。所有管理 Cookie 会话由管理凭证经 HMAC 派生的服务端密钥签名，且每次创建会生成新的随机 CSRF nonce。
 
-```text
-Authorization: Bearer <management_token>
+### 管理会话
+
+`POST /api/admin/session` 使用一次管理凭证建立会话：
+
+```json
+{
+  "token": "<management_token>"
+}
 ```
 
-管理写入只维护中心当前事实，不直接访问域控。
+成功时服务端设置 `adss_management` Cookie，并返回当前会话绑定的 CSRF nonce：
+
+```json
+{
+  "csrf_token": "random-nonce"
+}
+```
+
+`GET /api/admin/session` 用现有管理 Cookie 恢复前端会话，并返回同一会话的 `csrf_token`。`DELETE /api/admin/session` 必须同时携带管理 Cookie 和 `X-ADSS-CSRF-Token`，成功后返回 `204 No Content` 并以 `Max-Age=0` 清除该 Cookie。
+
+这三个端点都返回 `Cache-Control: no-store`。除创建端点外，所有 `/api/admin/*` 路由只接受有效的 `adss_management` Cookie；普通用户 Cookie、普通用户 Bearer token 和旧管理 Bearer token 一律返回 `401 Unauthorized`。所有写方法还必须提供与当前会话 nonce 完全匹配的请求头：
+
+```text
+X-ADSS-CSRF-Token: <csrf_token>
+```
+
+缺少或不匹配时返回 `403 Forbidden`。管理写入只维护中心当前事实，不直接访问域控。
 
 ### OAuth 客户端管理
 

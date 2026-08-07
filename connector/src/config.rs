@@ -1,4 +1,6 @@
 use std::fmt;
+use std::net::IpAddr;
+use url::Url;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnectorProcessConfig {
@@ -16,9 +18,7 @@ pub struct ConnectorProcessConfig {
 #[derive(Clone, PartialEq, Eq)]
 pub struct LdapDirectoryConfig {
     pub url: String,
-    pub bind_dn: String,
-    pub bind_password: String,
-    pub accept_invalid_certs: bool,
+    pub server_fqdn: String,
     pub adopt_existing_users_by_username: bool,
 }
 
@@ -68,20 +68,15 @@ impl ConnectorProcessConfig {
         if !dry_run && !has_https_scheme(&center_url) {
             anyhow::bail!("ADSS_CENTER_URL must use https:// without dry-run");
         }
+        reject_removed_ldap_environment_variables()?;
         let ldap = if dry_run {
             None
         } else {
             let url = required_env("ADSS_LDAP_URL")?;
-            if !has_ldap_scheme(&url) {
-                anyhow::bail!("ADSS_LDAP_URL must use ldap:// or ldaps://");
-            }
+            let server_fqdn = parse_ldap_server_fqdn(&url)?;
             Some(LdapDirectoryConfig {
                 url,
-                bind_dn: required_env("ADSS_LDAP_BIND_DN")?,
-                bind_password: required_env("ADSS_LDAP_BIND_PASSWORD")?,
-                accept_invalid_certs: std::env::var("ADSS_LDAP_ACCEPT_INVALID_CERTS")
-                    .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false),
+                server_fqdn,
                 adopt_existing_users_by_username: std::env::var(
                     "ADSS_ADOPT_EXISTING_USERS_BY_USERNAME",
                 )
@@ -127,9 +122,7 @@ impl fmt::Debug for LdapDirectoryConfig {
         formatter
             .debug_struct("LdapDirectoryConfig")
             .field("url", &self.url)
-            .field("bind_dn", &self.bind_dn)
-            .field("bind_password", &"[redacted]")
-            .field("accept_invalid_certs", &self.accept_invalid_certs)
+            .field("server_fqdn", &self.server_fqdn)
             .field(
                 "adopt_existing_users_by_username",
                 &self.adopt_existing_users_by_username,
@@ -155,12 +148,47 @@ fn has_https_scheme(url: &str) -> bool {
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
 }
 
-fn has_ldap_scheme(url: &str) -> bool {
-    url.get(..7)
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ldap://"))
-        || url
-            .get(..8)
-            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ldaps://"))
+fn reject_removed_ldap_environment_variables() -> anyhow::Result<()> {
+    for name in [
+        "ADSS_LDAP_BIND_DN",
+        "ADSS_LDAP_BIND_PASSWORD",
+        "ADSS_LDAP_ACCEPT_INVALID_CERTS",
+    ] {
+        if std::env::var_os(name).is_some() {
+            anyhow::bail!("{name} is no longer supported; Connector uses GSS-API");
+        }
+    }
+    Ok(())
+}
+
+fn parse_ldap_server_fqdn(raw_url: &str) -> anyhow::Result<String> {
+    let url = Url::parse(raw_url)
+        .map_err(|_| anyhow::anyhow!("ADSS_LDAP_URL must be ldap://<FQDN>:389"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("ADSS_LDAP_URL must be ldap://<FQDN>:389"))?;
+    let is_fqdn = host.contains('.')
+        && host.parse::<IpAddr>().is_err()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+    if url.scheme() != "ldap"
+        || url.port() != Some(389)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || !(url.path().is_empty() || url.path() == "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !is_fqdn
+    {
+        anyhow::bail!("ADSS_LDAP_URL must be ldap://<FQDN>:389");
+    }
+    Ok(host.to_ascii_lowercase())
 }
 
 fn required_env(name: &'static str) -> anyhow::Result<String> {

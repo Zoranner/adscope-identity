@@ -21,10 +21,8 @@ fn file_logger_writes_failure_details_without_configuration_secrets() {
         60,
         false,
         Some(LdapDirectoryConfig {
-            url: "ldaps://dc-a.example.com:636".to_string(),
-            bind_dn: "CN=Svc,DC=example,DC=com".to_string(),
-            bind_password: "BindSecret123!".to_string(),
-            accept_invalid_certs: false,
+            url: "ldap://dc-a.example.com:389".to_string(),
+            server_fqdn: "dc-a.example.com".to_string(),
             adopt_existing_users_by_username: false,
         }),
     );
@@ -36,7 +34,7 @@ fn file_logger_writes_failure_details_without_configuration_secrets() {
         directory_failure: Some(ExecutionFailure {
             operation: "ensure_user",
             subject: "1001".to_string(),
-            detail: "LDAPS permission denied".to_string(),
+            detail: "LDAP permission denied".to_string(),
         }),
         ..ConnectorRunSummary::default()
     };
@@ -53,10 +51,9 @@ fn file_logger_writes_failure_details_without_configuration_secrets() {
         .collect::<String>();
     assert!(content.contains("ensure_user"));
     assert!(content.contains("1001"));
-    assert!(content.contains("LDAPS permission denied"));
+    assert!(content.contains("LDAP permission denied"));
     assert!(content.contains("startup config invalid"));
     assert!(!content.contains("connector-a-key"));
-    assert!(!content.contains("BindSecret123!"));
     assert!(!content.contains("NewPass123!"));
 
     fs::remove_dir_all(log_dir).unwrap();

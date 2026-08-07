@@ -68,6 +68,7 @@ pub struct DirectoryBatch {
     pub server_revision: u64,
     pub batch_revision: u64,
     pub organizational_units: Vec<OrganizationalUnit>,
+    pub organizational_unit_dns: BTreeMap<String, String>,
     pub users: Vec<User>,
     pub groups: Vec<Group>,
     pub has_more: bool,

@@ -9,10 +9,17 @@ use std::time::Duration;
 
 use crate::config::{LdapDirectoryConfig, validate_ldap_attribute_name};
 
-use super::{DirectoryClient, DirectoryExecutionContext};
+use super::{DirectoryBatchSession, DirectoryClient, DirectoryExecutionContext};
+
+#[derive(Clone)]
 pub struct LdapDirectoryClient {
     config: LdapDirectoryConfig,
     connection_timeout: Duration,
+}
+
+pub struct LdapDirectoryBatch {
+    client: LdapDirectoryClient,
+    ldap: Ldap,
 }
 
 impl LdapDirectoryClient {
@@ -32,23 +39,6 @@ impl LdapDirectoryClient {
 
     pub fn config(&self) -> &LdapDirectoryConfig {
         &self.config
-    }
-
-    async fn bind(&self) -> anyhow::Result<Ldap> {
-        let settings = LdapConnSettings::new()
-            .set_conn_timeout(self.connection_timeout)
-            .set_no_tls_verify(self.config.accept_invalid_certs);
-        let (connection, mut ldap) =
-            LdapConnAsync::with_settings(settings, &self.config.url).await?;
-        tokio::spawn(async move {
-            if let Err(error) = connection.drive().await {
-                eprintln!("ldap connection failed: {error}");
-            }
-        });
-        ldap.simple_bind(&self.config.bind_dn, &self.config.bind_password)
-            .await?
-            .success()?;
-        Ok(ldap)
     }
 
     async fn ensure_ou(
@@ -275,29 +265,54 @@ impl LdapDirectoryClient {
 
 #[async_trait]
 impl DirectoryClient for LdapDirectoryClient {
+    type Batch = LdapDirectoryBatch;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
+        let settings = LdapConnSettings::new().set_conn_timeout(self.connection_timeout);
+        let (connection, mut ldap) =
+            LdapConnAsync::with_settings(settings, &self.config.url).await?;
+        tokio::spawn(async move {
+            if let Err(error) = connection.drive().await {
+                tracing::warn!(error = %error, "LDAP batch connection failed");
+            }
+        });
+        ldap.sasl_gssapi_bind(&self.config.server_fqdn)
+            .await?
+            .success()?;
+        Ok(LdapDirectoryBatch {
+            client: self.clone(),
+            ldap,
+        })
+    }
+}
+
+#[async_trait]
+impl DirectoryBatchSession for LdapDirectoryBatch {
     async fn apply(
-        &self,
+        &mut self,
         operation: &DirectoryOperation,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        let mut ldap = self.bind().await?;
         match (operation.kind, operation.target.as_ref()) {
             (
                 DirectoryOperationKind::EnsureOu,
                 Some(DirectoryOperationTarget::OrganizationalUnit(ou)),
-            ) => self.ensure_ou(&mut ldap, ou, context).await,
+            ) => self.client.ensure_ou(&mut self.ldap, ou, context).await,
             (DirectoryOperationKind::EnsureUser, Some(DirectoryOperationTarget::User(user))) => {
-                self.ensure_user(&mut ldap, user, context).await
+                self.client.ensure_user(&mut self.ldap, user, context).await
             }
             (
                 DirectoryOperationKind::EnsureUserPlacement,
                 Some(DirectoryOperationTarget::UserOrganizationalUnitId(ou_id)),
             ) => {
-                self.ensure_user_placement(&mut ldap, &operation.subject, ou_id, context)
+                self.client
+                    .ensure_user_placement(&mut self.ldap, &operation.subject, ou_id, context)
                     .await
             }
             (DirectoryOperationKind::EnsureGroup, Some(DirectoryOperationTarget::Group(group))) => {
-                self.ensure_group(&mut ldap, group, context).await
+                self.client
+                    .ensure_group(&mut self.ldap, group, context)
+                    .await
             }
             (
                 DirectoryOperationKind::EnsureGroupMembers,
@@ -306,18 +321,26 @@ impl DirectoryClient for LdapDirectoryClient {
                     member_employee_ids,
                 }),
             ) => {
-                self.ensure_group_members(&mut ldap, group, member_employee_ids, context)
+                self.client
+                    .ensure_group_members(&mut self.ldap, group, member_employee_ids, context)
                     .await
             }
             (DirectoryOperationKind::DisableUser, None) => {
-                self.disable_user(&mut ldap, &operation.subject, context)
+                self.client
+                    .disable_user(&mut self.ldap, &operation.subject, context)
                     .await
             }
             (
                 DirectoryOperationKind::MoveUserToQuarantine,
                 Some(DirectoryOperationTarget::QuarantineDn(quarantine_dn)),
             ) => {
-                self.move_user_to_quarantine(&mut ldap, &operation.subject, quarantine_dn, context)
+                self.client
+                    .move_user_to_quarantine(
+                        &mut self.ldap,
+                        &operation.subject,
+                        quarantine_dn,
+                        context,
+                    )
                     .await
             }
             _ => anyhow::bail!("directory operation target does not match operation kind"),
@@ -325,31 +348,37 @@ impl DirectoryClient for LdapDirectoryClient {
     }
 
     async fn set_password(
-        &self,
+        &mut self,
         credential: &CredentialEntry,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        let mut ldap = self.bind().await?;
-        let dn = require_user_dn(&mut ldap, context, &credential.employee_id).await?;
-        ldap.modify(
-            &dn,
-            vec![Mod::Replace(
-                b"unicodePwd".to_vec(),
-                HashSet::from([encode_ad_unicode_password(&credential.plaintext_password)]),
-            )],
-        )
-        .await?
-        .success()?;
+        let dn = require_user_dn(&mut self.ldap, context, &credential.employee_id).await?;
+        self.ldap
+            .modify(
+                &dn,
+                vec![Mod::Replace(
+                    b"unicodePwd".to_vec(),
+                    HashSet::from([encode_ad_unicode_password(&credential.plaintext_password)]),
+                )],
+            )
+            .await?
+            .success()?;
         let user_account_control = match credential.status {
             UserStatus::Active => "512",
             UserStatus::Disabled => "514",
         };
-        ldap.modify(
-            &dn,
-            vec![replace_string("userAccountControl", user_account_control)],
-        )
-        .await?
-        .success()?;
+        self.ldap
+            .modify(
+                &dn,
+                vec![replace_string("userAccountControl", user_account_control)],
+            )
+            .await?
+            .success()?;
+        Ok(())
+    }
+
+    async fn close(mut self) -> anyhow::Result<()> {
+        self.ldap.unbind().await?;
         Ok(())
     }
 }

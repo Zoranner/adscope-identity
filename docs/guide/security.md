@@ -12,7 +12,7 @@
 
 OIDC 使用独立 RSA 私钥签发 RS256 ID token 和 access token。私钥至少为 2048 位，通过受限文件提供给 Center，不写入仓库、`.env`、环境变量、容器镜像或日志。OIDC 私钥只用于 token 签名，不是反向代理使用的 TLS 证书。
 
-Connector key 和 LDAP bind password 按域独立保存。Connector key 运行时不得写入日志、错误响应或配置仓库。
+Connector key 按域独立保存，是 Connector `.env` 中唯一的同步秘密；运行时不得写入日志、错误响应或配置仓库。Connector 不保存 LDAP bind DN 或 LDAP 密码。
 
 ## SSO 会话
 
@@ -26,7 +26,7 @@ Center 不签发 refresh token，也没有远程撤销单个浏览器 SSO 会话
 
 主服务必须位于 TLS 后面。Connector 调用 `/api/connector/sync` 获取凭据材料时，响应不能经过明文 HTTP，代理、网关、日志、tracing、错误回显和崩溃 dump 不记录响应体。
 
-Connector 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；如果域控策略要求加密密码修改，应按域策略启用 `ldaps://` 或等价受保护绑定。
+Connector 仅通过 `ldap://<FQDN>:389` 访问域控，并以 `NetworkService` 下的主机计算机账号发起 Kerberos GSS-API 认证。域控 FQDN 必须对应 LDAP SPN；GSS-API 协商的保密层失败即停止该批次，不回退到 Simple Authentication、NTLM、LDAP over TLS 或 StartTLS。
 
 ## 日志和诊断
 
@@ -38,4 +38,4 @@ Connector 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用
 
 管理入口必须使用独立保护，不能复用普通用户 token。域、OU、用户、组、管理员代设密码和同步状态查询接口都属于管理面。
 
-域内服务账号采用最小权限委派，只允许管理镜像根和隔离 OU 内的目标对象，并授予必要的创建、移动、属性写入、组成员写入、禁用和 Reset Password 权限。
+域管理员只向 `<DOMAIN>\<CONNECTOR-HOST>$` 委派镜像根和隔离 OU 内的必要权限，不使用 `superuser`、其他内置本地服务身份或本地账户。权限包括创建、移动、属性写入、组成员写入、禁用和 Reset Password，且不得扩展到委派范围外。

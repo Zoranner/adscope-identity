@@ -9,7 +9,7 @@ if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
 $serviceName = 'ADStructureSyncConnector'
-$localServiceSid = '*S-1-5-19'
+$networkServiceSid = '*S-1-5-20'
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -31,6 +31,44 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) {
         throw "$Command failed with exit code $LASTEXITCODE"
     }
+}
+
+function Set-ConnectorAcl {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [Parameter(Mandatory)]
+        [System.Security.AccessControl.FileSystemRights]$NetworkServiceRights,
+        [switch]$InheritToChildren
+    )
+
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.Access)) {
+        [void]$acl.RemoveAccessRuleAll($rule)
+    }
+
+    $inheritance = if ($InheritToChildren) {
+        [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    }
+    else {
+        [System.Security.AccessControl.InheritanceFlags]::None
+    }
+    foreach ($entry in @(
+        @{ Identity = 'NT AUTHORITY\SYSTEM'; Rights = [System.Security.AccessControl.FileSystemRights]::FullControl },
+        @{ Identity = 'BUILTIN\Administrators'; Rights = [System.Security.AccessControl.FileSystemRights]::FullControl },
+        @{ Identity = 'NT AUTHORITY\NetworkService'; Rights = $NetworkServiceRights }
+    )) {
+        $accessRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $entry.Identity,
+            $entry.Rights,
+            $inheritance,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        [void]$acl.AddAccessRule($accessRule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
 Assert-Administrator
@@ -63,17 +101,18 @@ if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
         Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
 }
 
-Invoke-Native icacls.exe $resolvedRuntimeDir /grant "${localServiceSid}:(RX)"
-Invoke-Native icacls.exe $executablePath /grant "${localServiceSid}:(R)"
-Invoke-Native icacls.exe $environmentPath /grant "${localServiceSid}:(R)"
-Invoke-Native icacls.exe $statePath /grant "${localServiceSid}:(M)"
-Invoke-Native icacls.exe $logsPath /grant "${localServiceSid}:(OI)(CI)(M)"
+Invoke-Native icacls.exe $environmentPath /inheritance:r
+Set-ConnectorAcl -Path $resolvedRuntimeDir -NetworkServiceRights ReadAndExecute -InheritToChildren
+Set-ConnectorAcl -Path $executablePath -NetworkServiceRights ReadAndExecute
+Set-ConnectorAcl -Path $environmentPath -NetworkServiceRights Read
+Set-ConnectorAcl -Path $statePath -NetworkServiceRights Modify
+Set-ConnectorAcl -Path $logsPath -NetworkServiceRights Modify -InheritToChildren
 
 $binaryPath = '"{0}" --service --runtime-dir "{1}"' -f $executablePath, $resolvedRuntimeDir
 $serviceCreated = $false
 try {
     Invoke-Native sc.exe create $serviceName "binPath= $binaryPath" 'start= auto' `
-        'obj= NT AUTHORITY\LocalService' 'DisplayName= AD Structure Sync Connector'
+        'obj= NT AUTHORITY\NetworkService' 'DisplayName= AD Structure Sync Connector'
     $serviceCreated = $true
     Invoke-Native sc.exe description $serviceName 'Synchronizes Center directory state to Active Directory.'
     Invoke-Native sc.exe failure $serviceName 'reset= 86400' `

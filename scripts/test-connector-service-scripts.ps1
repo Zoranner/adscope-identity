@@ -34,12 +34,19 @@ function Assert-Contains {
 
 $install = Get-Content -LiteralPath $installPath -Raw
 Assert-Contains $install 'ADStructureSyncConnector' 'fixed service name'
-Assert-Contains $install 'S-1-5-19|LocalService' 'LocalService identity'
+Assert-Contains $install 'S-1-5-20|NetworkService' 'NetworkService identity'
 Assert-Contains $install '--service' 'service process switch'
 Assert-Contains $install '--runtime-dir' 'explicit runtime directory'
 Assert-Contains $install '(?i)start=.{0,8}auto|StartupType.{0,8}Automatic' 'automatic startup'
 Assert-Contains $install '(?i)failure' 'failure recovery configuration'
 Assert-Contains $install '(?i)administrator|WindowsPrincipal|IsInRole' 'administrator check'
+Assert-Contains $install '/inheritance:r' 'removes ACL inheritance'
+foreach ($identity in @('SYSTEM', 'Administrators', 'NetworkService')) {
+    Assert-Contains $install $identity "explicit $identity ACL"
+}
+if ($install -match 'S-1-5-19|LocalService|ADSS_LDAP_BIND_DN|ADSS_LDAP_BIND_PASSWORD') {
+    throw 'Install script must not use LocalService or LDAP bind credentials'
+}
 
 $uninstall = Get-Content -LiteralPath $uninstallPath -Raw
 Assert-Contains $uninstall 'ADStructureSyncConnector' 'fixed uninstall service name'

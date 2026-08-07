@@ -1,7 +1,7 @@
 use adss_connector::{
-    DirectoryClient, DirectoryExecutionContext, DirectoryExecutor, encode_ad_unicode_password,
-    escape_ldap_dn_value, escape_ldap_filter_value, execute_credential_batch,
-    execute_directory_plan,
+    DirectoryBatchSession, DirectoryClient, DirectoryExecutionContext, DirectoryExecutor,
+    encode_ad_unicode_password, escape_ldap_dn_value, escape_ldap_filter_value,
+    execute_credential_batch, execute_directory_plan,
 };
 use adss_protocol::{
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DirectoryOperationKind,
@@ -14,8 +14,10 @@ use std::time::Duration;
 #[tokio::test]
 async fn executor_runs_directory_plan_in_contract_order() {
     let calls = Arc::new(Mutex::new(Vec::new()));
+    let opened_batches = Arc::new(Mutex::new(0));
     let client = RecordingDirectoryClient {
         calls: Arc::clone(&calls),
+        opened_batches: Arc::clone(&opened_batches),
         fail_kind: None,
         fail_password_employee_id: None,
     };
@@ -33,6 +35,7 @@ async fn executor_runs_directory_plan_in_contract_order() {
 
     assert_eq!(result.summary.succeeded, 5);
     assert!(result.failure.is_none());
+    assert_eq!(*opened_batches.lock().unwrap(), 1);
     assert_eq!(
         calls.lock().unwrap().as_slice(),
         &[
@@ -49,6 +52,7 @@ async fn executor_runs_directory_plan_in_contract_order() {
 async fn failed_directory_operation_is_reported_without_running_later_operations() {
     let client = RecordingDirectoryClient {
         calls: Arc::new(Mutex::new(Vec::new())),
+        opened_batches: Arc::new(Mutex::new(0)),
         fail_kind: Some(DirectoryOperationKind::EnsureUser),
         fail_password_employee_id: None,
     };
@@ -69,14 +73,16 @@ async fn failed_directory_operation_is_reported_without_running_later_operations
     let failure = result.failure.unwrap();
     assert_eq!(failure.operation, "ensure_user");
     assert_eq!(failure.subject, "1001");
-    assert!(failure.detail.contains("LDAPS permission denied"));
+    assert!(failure.detail.contains("LDAP permission denied"));
 }
 
 #[tokio::test]
 async fn credential_batch_stops_at_first_password_failure() {
     let calls = Arc::new(Mutex::new(Vec::new()));
+    let opened_batches = Arc::new(Mutex::new(0));
     let client = RecordingDirectoryClient {
         calls: Arc::clone(&calls),
+        opened_batches: Arc::clone(&opened_batches),
         fail_kind: None,
         fail_password_employee_id: Some("1002"),
     };
@@ -118,6 +124,7 @@ async fn credential_batch_stops_at_first_password_failure() {
     assert_eq!(failure.subject, "1002");
     assert!(failure.detail.contains("password denied"));
     assert!(!failure.detail.contains("SecondPass123!"));
+    assert_eq!(*opened_batches.lock().unwrap(), 1);
     assert_eq!(
         calls.lock().unwrap().as_slice(),
         &["password:1001".to_string(), "password:1002".to_string()]
@@ -171,7 +178,7 @@ fn ad_unicode_password_is_quoted_utf16_little_endian() {
 }
 
 #[test]
-fn directory_execution_context_builds_nested_ou_dns() {
+fn directory_execution_context_uses_precomputed_ou_dns() {
     let domain = DomainDirectoryConfig::example();
     let batch = DirectoryBatch {
         server_revision: 10,
@@ -190,6 +197,16 @@ fn directory_execution_context_builds_nested_ou_dns() {
                 changed_revision: 10,
             },
         ],
+        organizational_unit_dns: std::collections::BTreeMap::from([
+            (
+                "child".to_string(),
+                "OU=研发二部,OU=研发部,OU=Mirror,DC=example,DC=com".to_string(),
+            ),
+            (
+                "parent".to_string(),
+                "OU=研发部,OU=Mirror,DC=example,DC=com".to_string(),
+            ),
+        ]),
         users: Vec::new(),
         groups: Vec::new(),
         has_more: false,
@@ -204,25 +221,27 @@ fn directory_execution_context_builds_nested_ou_dns() {
 }
 
 #[test]
-fn directory_execution_context_includes_parent_chain_when_only_child_changed() {
+fn directory_execution_context_does_not_require_parent_ou_in_the_batch() {
     let domain = DomainDirectoryConfig::example();
     let batch = DirectoryBatch {
         server_revision: 11,
         batch_revision: 11,
-        organizational_units: vec![
-            OrganizationalUnit {
-                id: "child".to_string(),
-                name: "研发二部".to_string(),
-                parent_id: Some("parent".to_string()),
-                changed_revision: 11,
-            },
-            OrganizationalUnit {
-                id: "parent".to_string(),
-                name: "研发部".to_string(),
-                parent_id: None,
-                changed_revision: 1,
-            },
-        ],
+        organizational_units: vec![OrganizationalUnit {
+            id: "child".to_string(),
+            name: "研发二部".to_string(),
+            parent_id: Some("parent".to_string()),
+            changed_revision: 11,
+        }],
+        organizational_unit_dns: std::collections::BTreeMap::from([
+            (
+                "child".to_string(),
+                "OU=研发二部,OU=研发部,OU=Mirror,DC=example,DC=com".to_string(),
+            ),
+            (
+                "parent".to_string(),
+                "OU=研发部,OU=Mirror,DC=example,DC=com".to_string(),
+            ),
+        ]),
         users: Vec::new(),
         groups: Vec::new(),
         has_more: false,
@@ -237,7 +256,7 @@ fn directory_execution_context_includes_parent_chain_when_only_child_changed() {
 }
 
 #[test]
-fn directory_execution_context_rejects_missing_parent_ou() {
+fn directory_execution_context_rejects_missing_precomputed_ou_dn() {
     let batch = DirectoryBatch {
         server_revision: 10,
         batch_revision: 10,
@@ -247,30 +266,44 @@ fn directory_execution_context_rejects_missing_parent_ou() {
             parent_id: Some("missing-parent".to_string()),
             changed_revision: 10,
         }],
+        organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
         has_more: false,
     };
 
-    let error =
+    let context =
         DirectoryExecutionContext::try_from_batch(&batch, &DomainDirectoryConfig::example())
-            .unwrap_err();
+            .unwrap();
+    let error = context.organizational_unit_dn("child").unwrap_err();
 
-    assert!(error.to_string().contains("missing parent OU"));
+    assert!(error.to_string().contains("missing OU DN"));
 }
 
+#[derive(Clone)]
 struct RecordingDirectoryClient {
     calls: Arc<Mutex<Vec<String>>>,
+    opened_batches: Arc<Mutex<u32>>,
     fail_kind: Option<DirectoryOperationKind>,
     fail_password_employee_id: Option<&'static str>,
 }
 
 struct SlowDirectoryClient;
+struct SlowDirectoryBatch;
 
 #[async_trait]
 impl DirectoryClient for SlowDirectoryClient {
+    type Batch = SlowDirectoryBatch;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
+        Ok(SlowDirectoryBatch)
+    }
+}
+
+#[async_trait]
+impl DirectoryBatchSession for SlowDirectoryBatch {
     async fn apply(
-        &self,
+        &mut self,
         _operation: &DirectoryOperation,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
@@ -279,7 +312,7 @@ impl DirectoryClient for SlowDirectoryClient {
     }
 
     async fn set_password(
-        &self,
+        &mut self,
         _credential: &CredentialEntry,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
@@ -290,32 +323,46 @@ impl DirectoryClient for SlowDirectoryClient {
 
 #[async_trait]
 impl DirectoryClient for RecordingDirectoryClient {
+    type Batch = RecordingDirectoryBatch;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
+        *self.opened_batches.lock().unwrap() += 1;
+        Ok(RecordingDirectoryBatch(self.clone()))
+    }
+}
+
+struct RecordingDirectoryBatch(RecordingDirectoryClient);
+
+#[async_trait]
+impl DirectoryBatchSession for RecordingDirectoryBatch {
     async fn apply(
-        &self,
+        &mut self,
         operation: &DirectoryOperation,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        self.calls
+        self.0
+            .calls
             .lock()
             .unwrap()
             .push(format!("{:?}", operation.kind));
-        if self.fail_kind == Some(operation.kind) {
-            anyhow::bail!("LDAPS permission denied");
+        if self.0.fail_kind == Some(operation.kind) {
+            anyhow::bail!("LDAP permission denied");
         }
 
         Ok(())
     }
 
     async fn set_password(
-        &self,
+        &mut self,
         credential: &CredentialEntry,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        self.calls
+        self.0
+            .calls
             .lock()
             .unwrap()
             .push(format!("password:{}", credential.employee_id));
-        if self.fail_password_employee_id == Some(credential.employee_id.as_str()) {
+        if self.0.fail_password_employee_id == Some(credential.employee_id.as_str()) {
             anyhow::bail!("password denied");
         }
 
@@ -333,6 +380,7 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             parent_id: None,
             changed_revision: batch_revision,
         }],
+        organizational_unit_dns: std::collections::BTreeMap::new(),
         users: vec![User {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),

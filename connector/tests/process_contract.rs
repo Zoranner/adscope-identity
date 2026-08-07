@@ -1,6 +1,6 @@
 use adss_connector::{
-    ConnectorRuntime, ControlPlaneClient, DirectoryClient, DirectoryExecutionContext,
-    LocalRevisionState, LocalStateStore, run_connector_loop,
+    ConnectorRuntime, ControlPlaneClient, DirectoryBatchSession, DirectoryClient,
+    DirectoryExecutionContext, LocalRevisionState, LocalStateStore, run_connector_loop,
 };
 use adss_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
@@ -69,8 +69,19 @@ struct NoopDirectory;
 
 #[async_trait]
 impl DirectoryClient for NoopDirectory {
+    type Batch = NoopDirectoryBatch;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
+        Ok(NoopDirectoryBatch)
+    }
+}
+
+struct NoopDirectoryBatch;
+
+#[async_trait]
+impl DirectoryBatchSession for NoopDirectoryBatch {
     async fn apply(
-        &self,
+        &mut self,
         _operation: &DirectoryOperation,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
@@ -78,7 +89,7 @@ impl DirectoryClient for NoopDirectory {
     }
 
     async fn set_password(
-        &self,
+        &mut self,
         _credential: &CredentialEntry,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
@@ -105,6 +116,7 @@ fn empty_directory_batch() -> DirectoryBatch {
         server_revision: 0,
         batch_revision: 0,
         organizational_units: Vec::new(),
+        organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
         has_more: false,

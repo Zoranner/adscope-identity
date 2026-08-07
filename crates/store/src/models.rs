@@ -120,6 +120,12 @@ pub struct UserCredentialInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserCreateInput {
+    pub directory: UserDirectoryPatch,
+    pub credential: UserCredentialInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CredentialRecord {
     pub employee_id: String,
     pub password_ciphertext: String,

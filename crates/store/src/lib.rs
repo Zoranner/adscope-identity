@@ -8,6 +8,7 @@ mod revision;
 pub use models::{
     AuthorizationCodeExchange, AuthorizationCodeRecord, CredentialCiphertextBatch,
     CredentialCiphertextEntry, CredentialRecord, DomainPatch, DomainRecord, OAuthClientRecord,
-    OAuthClientType, UserContactPatch, UserCredentialInput, UserDirectoryPatch, UserListFilter,
+    OAuthClientType, UserContactPatch, UserCreateInput, UserCredentialInput, UserDirectoryPatch,
+    UserListFilter,
 };
 pub use repository::Repository;

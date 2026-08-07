@@ -1,10 +1,11 @@
 use adss_protocol::{Group, OrganizationalUnit, UserStatus};
 use adss_store::{
-    DomainPatch, DomainRecord, Repository, UserContactPatch, UserCredentialInput,
+    DomainPatch, DomainRecord, Repository, UserContactPatch, UserCreateInput, UserCredentialInput,
     UserDirectoryPatch, UserListFilter,
 };
 use sea_orm::{ConnectionTrait, Database};
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -110,12 +111,91 @@ async fn repository_rejects_duplicate_usernames() {
 }
 
 #[tokio::test]
+async fn create_user_with_initial_credential_rolls_back_everything_when_credential_insert_fails() {
+    let database = Database::connect("sqlite::memory:").await.unwrap();
+    let repository = Repository::from_connection(database.clone());
+    repository.initialize_schema().await.unwrap();
+    repository.seed_domain(domain()).await.unwrap();
+    database
+        .execute_unprepared(
+            r#"
+CREATE TRIGGER reject_initial_user_credential
+BEFORE INSERT ON user_credentials
+BEGIN
+    SELECT RAISE(ABORT, 'test credential insert failure');
+END
+"#,
+        )
+        .await
+        .unwrap();
+
+    let result = repository
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: user_patch("1001", "zhangsan@example.com"),
+            credential: UserCredentialInput {
+                employee_id: "1001".to_string(),
+                password_ciphertext: "ciphertext".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        })
+        .await;
+
+    assert!(result.is_err());
+    assert!(repository.get_user("1001").await.unwrap().is_none());
+    assert!(
+        repository
+            .get_credential_record("1001")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(repository.current_directory_revision().await.unwrap(), 0);
+    assert_eq!(repository.current_credential_revision().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn create_user_with_initial_credential_returns_user_and_both_revisions() {
+    let repository = sqlite_repository().await;
+
+    let (user, directory_revision, credential_revision) = repository
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: user_patch("1001", "zhangsan@example.com"),
+            credential: UserCredentialInput {
+                employee_id: "1001".to_string(),
+                password_ciphertext: "ciphertext".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(user.employee_id, "1001");
+    assert_eq!(directory_revision, 1);
+    assert_eq!(credential_revision, 1);
+    assert_eq!(
+        repository
+            .get_credential_record("1001")
+            .await
+            .unwrap()
+            .unwrap()
+            .changed_revision,
+        1
+    );
+}
+
+#[tokio::test]
 async fn repository_returns_current_state_after_multiple_updates() {
     let repository = sqlite_repository().await;
 
     repository
         .upsert_directory(
-            Vec::new(),
+            vec![OrganizationalUnit {
+                id: "ou-rd".to_string(),
+                name: "研发部".to_string(),
+                parent_id: None,
+                changed_revision: 0,
+            }],
             vec![user_patch("1001", "first@example.com")],
             Vec::new(),
         )
@@ -183,7 +263,7 @@ async fn repository_updates_only_user_contact_fields() {
 }
 
 #[tokio::test]
-async fn repository_returns_all_ous_when_user_changes_after_confirmed_revision() {
+async fn repository_returns_ou_dn_context_when_user_changes_after_confirmed_revision() {
     let repository = sqlite_repository().await;
 
     repository
@@ -217,15 +297,18 @@ async fn repository_returns_all_ous_when_user_changes_after_confirmed_revision()
         .await
         .unwrap();
 
-    assert_eq!(batch.organizational_units.len(), 1);
-    assert_eq!(batch.organizational_units[0].id, "ou-rd");
+    assert!(batch.organizational_units.is_empty());
+    assert_eq!(
+        batch.organizational_unit_dns.get("ou-rd"),
+        Some(&"OU=研发部,OU=Mirror,DC=a,DC=example,DC=com".to_string())
+    );
     assert_eq!(batch.users.len(), 1);
     assert_eq!(batch.users[0].email.as_deref(), Some("latest@example.com"));
     assert_eq!(batch.batch_revision, 2);
 }
 
 #[tokio::test]
-async fn repository_returns_all_ous_when_child_ou_changes_after_confirmed_revision() {
+async fn repository_returns_parent_dn_context_when_child_ou_changes_after_confirmed_revision() {
     let repository = sqlite_repository().await;
 
     repository
@@ -272,14 +355,26 @@ async fn repository_returns_all_ous_when_child_ou_changes_after_confirmed_revisi
         .await
         .unwrap();
 
-    assert_eq!(batch.organizational_units.len(), 2);
-    assert_eq!(batch.organizational_units[0].id, "ou-root");
-    assert_eq!(batch.organizational_units[1].id, "ou-child");
-    assert_eq!(batch.organizational_units[1].name, "Renamed Child");
+    assert_eq!(batch.organizational_units.len(), 1);
+    assert_eq!(batch.organizational_units[0].id, "ou-child");
+    assert_eq!(batch.organizational_units[0].name, "Renamed Child");
+    assert_eq!(
+        batch.organizational_unit_dns,
+        BTreeMap::from([
+            (
+                "ou-child".to_string(),
+                "OU=Renamed Child,OU=Root,OU=Mirror,DC=a,DC=example,DC=com".to_string(),
+            ),
+            (
+                "ou-root".to_string(),
+                "OU=Root,OU=Mirror,DC=a,DC=example,DC=com".to_string(),
+            ),
+        ])
+    );
 }
 
 #[tokio::test]
-async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one() {
+async fn repository_pages_directory_revisions_and_limits_ou_context_to_the_batch() {
     let repository = sqlite_repository().await;
 
     repository
@@ -292,13 +387,22 @@ async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one
                     changed_revision: 0,
                 },
                 OrganizationalUnit {
+                    id: "ou-unused".to_string(),
+                    name: "Unused".to_string(),
+                    parent_id: None,
+                    changed_revision: 0,
+                },
+                OrganizationalUnit {
                     id: "ou-child".to_string(),
                     name: "Child".to_string(),
                     parent_id: Some("ou-root".to_string()),
                     changed_revision: 0,
                 },
             ],
-            vec![user_patch("1001", "zhangsan@example.com")],
+            vec![UserDirectoryPatch {
+                organizational_unit_id: "ou-root".to_string(),
+                ..user_patch("1001", "zhangsan@example.com")
+            }],
             Vec::new(),
         )
         .await
@@ -306,29 +410,94 @@ async fn repository_returns_all_pending_directory_objects_even_when_limit_is_one
     repository
         .upsert_directory(
             Vec::new(),
-            vec![user_patch("1002", "lisi@example.com")],
-            vec![Group {
-                id: "ops".to_string(),
-                name: "Operators".to_string(),
+            vec![UserDirectoryPatch {
                 organizational_unit_id: "ou-root".to_string(),
-                member_employee_ids: vec!["1002".to_string()],
+                ..user_patch("1002", "lisi@example.com")
+            }],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .upsert_directory(
+            vec![OrganizationalUnit {
+                id: "ou-child".to_string(),
+                name: "Child".to_string(),
+                parent_id: Some("ou-root".to_string()),
                 changed_revision: 0,
             }],
+            vec![UserDirectoryPatch {
+                organizational_unit_id: "ou-child".to_string(),
+                ..user_patch("1003", "wangwu@example.com")
+            }],
+            Vec::new(),
         )
         .await
         .unwrap();
 
-    let batch = repository
-        .list_directory_changed_after("domain-a", 0, false, 1)
+    let first_batch = repository
+        .list_directory_changed_after("domain-a", 0, false, 2)
         .await
         .unwrap();
 
-    assert_eq!(batch.server_revision, 2);
-    assert_eq!(batch.batch_revision, 2);
-    assert_eq!(batch.organizational_units.len(), 2);
-    assert_eq!(batch.users.len(), 2);
-    assert_eq!(batch.groups.len(), 1);
-    assert!(!batch.has_more);
+    assert_eq!(first_batch.server_revision, 3);
+    assert_eq!(first_batch.batch_revision, 2);
+    assert!(first_batch.has_more);
+    assert_eq!(
+        first_batch
+            .users
+            .iter()
+            .map(|user| user.employee_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1001", "1002"]
+    );
+
+    repository
+        .confirm_directory_revision("domain-a", first_batch.batch_revision)
+        .await
+        .unwrap();
+    let second_batch = repository
+        .list_directory_changed_after("domain-a", first_batch.batch_revision, false, 2)
+        .await
+        .unwrap();
+
+    assert_eq!(second_batch.server_revision, 3);
+    assert_eq!(second_batch.batch_revision, 3);
+    assert!(!second_batch.has_more);
+    assert_eq!(
+        second_batch
+            .organizational_units
+            .iter()
+            .map(|ou| ou.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ou-child"]
+    );
+    assert_eq!(
+        second_batch
+            .users
+            .iter()
+            .map(|user| user.employee_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1003"]
+    );
+    assert_eq!(
+        second_batch.organizational_unit_dns,
+        BTreeMap::from([
+            (
+                "ou-child".to_string(),
+                "OU=Child,OU=Root,OU=Mirror,DC=a,DC=example,DC=com".to_string(),
+            ),
+            (
+                "ou-root".to_string(),
+                "OU=Root,OU=Mirror,DC=a,DC=example,DC=com".to_string(),
+            ),
+        ])
+    );
+    assert!(
+        !second_batch
+            .organizational_unit_dns
+            .contains_key("ou-unused")
+    );
 }
 
 #[tokio::test]

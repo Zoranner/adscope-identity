@@ -30,7 +30,7 @@ fn http_control_plane_client_builds_endpoints_from_trailing_slash_base_url() {
 #[tokio::test]
 async fn http_control_plane_client_posts_sync_request_with_connector_key() {
     let server = OneShotHttpServer::start(
-        r#"{"directory":{"server_revision":0,"batch_revision":0,"organizational_units":[],"users":[],"groups":[],"has_more":false},"credentials":{"server_revision":0,"batch_revision":0,"credentials":[],"has_more":false},"directory_config":{"domain_id":"domain-a","mirror_root_dn":"OU=Mirror,DC=example,DC=com","quarantine_ou_dn":"OU=Quarantine,DC=example,DC=com","upn_suffix":"example.com","employee_id_attribute":"employeeID","managed_group_id_attribute":"adminDescription"}}"#,
+        r#"{"directory":{"server_revision":0,"batch_revision":0,"organizational_units":[],"organizational_unit_dns":{},"users":[],"groups":[],"has_more":false},"credentials":{"server_revision":0,"batch_revision":0,"credentials":[],"has_more":false},"directory_config":{"domain_id":"domain-a","mirror_root_dn":"OU=Mirror,DC=example,DC=com","quarantine_ou_dn":"OU=Quarantine,DC=example,DC=com","upn_suffix":"example.com","employee_id_attribute":"employeeID","managed_group_id_attribute":"adminDescription"}}"#,
     )
     .await;
     let client =
@@ -190,10 +190,8 @@ fn connector_process_config_debug_redacts_secrets() {
         30,
         false,
         Some(LdapDirectoryConfig {
-            url: "ldaps://dc-a.example.com:636".to_string(),
-            bind_dn: "CN=adss-connector,OU=Svc,DC=example,DC=com".to_string(),
-            bind_password: "BindSecret123!".to_string(),
-            accept_invalid_certs: false,
+            url: "ldap://dc-a.example.com:389".to_string(),
+            server_fqdn: "dc-a.example.com".to_string(),
             adopt_existing_users_by_username: false,
         }),
     );
@@ -201,13 +199,14 @@ fn connector_process_config_debug_redacts_secrets() {
     let debug = format!("{config:?}");
 
     assert!(!debug.contains("connector-a-key"));
-    assert!(!debug.contains("BindSecret123!"));
-    assert!(debug.matches("[redacted]").count() >= 2);
+    assert!(debug.matches("[redacted]").count() >= 1);
 }
 
 #[test]
 fn connector_process_config_rejects_zero_timeouts_from_env() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for name in [
         "ADSS_CONNECTOR_HTTP_TIMEOUT_SECONDS",
         "ADSS_CONNECTOR_OPERATION_TIMEOUT_SECONDS",
@@ -232,16 +231,16 @@ fn connector_process_config_rejects_zero_timeouts_from_env() {
 
 #[test]
 fn connector_process_config_requires_https_for_real_ldap_mode() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_connector_env();
     unsafe {
         std::env::set_var("ADSS_CENTER_URL", "http://sync.example.com");
         std::env::set_var("ADSS_DOMAIN_ID", "domain-a");
         std::env::set_var("ADSS_CONNECTOR_KEY", "connector-a-key");
         std::env::set_var("ADSS_CONNECTOR_DRY_RUN", "0");
-        std::env::set_var("ADSS_LDAP_URL", "ldaps://dc-a.example.com:636");
-        std::env::set_var("ADSS_LDAP_BIND_DN", "CN=Svc,DC=example,DC=com");
-        std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
+        std::env::set_var("ADSS_LDAP_URL", "ldap://dc-a.example.com:389");
     }
 
     let error = ConnectorProcessConfig::from_env().unwrap_err();
@@ -256,7 +255,9 @@ fn connector_process_config_requires_https_for_real_ldap_mode() {
 
 #[test]
 fn connector_process_config_rejects_zero_interval_from_env() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     unsafe {
         std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
         std::env::set_var("ADSS_DOMAIN_ID", "domain-a");
@@ -286,7 +287,9 @@ fn connector_process_config_rejects_zero_interval_from_env() {
 
 #[test]
 fn connector_process_config_requires_ldap_settings_without_dry_run() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_connector_env();
     unsafe {
         std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
@@ -304,7 +307,9 @@ fn connector_process_config_requires_ldap_settings_without_dry_run() {
 
 #[test]
 fn connector_process_config_accepts_ldap_url_without_dry_run() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_connector_env();
     unsafe {
         std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
@@ -312,11 +317,6 @@ fn connector_process_config_accepts_ldap_url_without_dry_run() {
         std::env::set_var("ADSS_CONNECTOR_KEY", "connector-a-key");
         std::env::set_var("ADSS_CONNECTOR_DRY_RUN", "0");
         std::env::set_var("ADSS_LDAP_URL", "ldap://dc-a.example.com:389");
-        std::env::set_var(
-            "ADSS_LDAP_BIND_DN",
-            "CN=adss-connector,OU=Svc,DC=example,DC=com",
-        );
-        std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
     }
 
     let config = ConnectorProcessConfig::from_env().unwrap();
@@ -329,7 +329,9 @@ fn connector_process_config_accepts_ldap_url_without_dry_run() {
 
 #[test]
 fn connector_process_config_rejects_non_ldap_url_without_dry_run() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_connector_env();
     unsafe {
         std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
@@ -337,11 +339,6 @@ fn connector_process_config_rejects_non_ldap_url_without_dry_run() {
         std::env::set_var("ADSS_CONNECTOR_KEY", "connector-a-key");
         std::env::set_var("ADSS_CONNECTOR_DRY_RUN", "0");
         std::env::set_var("ADSS_LDAP_URL", "http://dc-a.example.com");
-        std::env::set_var(
-            "ADSS_LDAP_BIND_DN",
-            "CN=adss-connector,OU=Svc,DC=example,DC=com",
-        );
-        std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
     }
 
     let error = ConnectorProcessConfig::from_env().unwrap_err();
@@ -349,44 +346,57 @@ fn connector_process_config_rejects_non_ldap_url_without_dry_run() {
     assert!(
         error
             .to_string()
-            .contains("ADSS_LDAP_URL must use ldap:// or ldaps://")
+            .contains("ADSS_LDAP_URL must be ldap://<FQDN>:389")
     );
 
     clear_connector_env();
 }
 
 #[test]
-fn connector_process_config_parses_ldap_settings_from_env() {
-    let _guard = ENV_LOCK.lock().unwrap();
-    clear_connector_env();
-    unsafe {
-        std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
-        std::env::set_var("ADSS_DOMAIN_ID", "domain-a");
-        std::env::set_var("ADSS_CONNECTOR_KEY", "connector-a-key");
-        std::env::set_var("ADSS_CONNECTOR_INTERVAL_SECONDS", "30");
-        std::env::set_var("ADSS_CONNECTOR_DRY_RUN", "false");
-        std::env::set_var("ADSS_LDAP_URL", "ldaps://dc-a.example.com:636");
-        std::env::set_var(
-            "ADSS_LDAP_BIND_DN",
-            "CN=adss-connector,OU=Svc,DC=example,DC=com",
+fn connector_process_config_rejects_ldap_downgrade_and_legacy_credentials() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for url in [
+        "ldaps://dc-a.example.com:636",
+        "ldap://192.168.2.6:389",
+        "ldap://dc-a.example.com:1389",
+        "ldap://dc-a.example.com:389/ou=Mirror",
+        "ldap://dc-a.example.com:389?starttls=1",
+        "ldap://user@dc-a.example.com:389",
+        "ldap://dc-a.example.com:389#fragment",
+    ] {
+        clear_connector_env();
+        unsafe {
+            std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
+            std::env::set_var("ADSS_DOMAIN_ID", "domain-a");
+            std::env::set_var("ADSS_CONNECTOR_KEY", "connector-a-key");
+            std::env::set_var("ADSS_CONNECTOR_DRY_RUN", "false");
+            std::env::set_var("ADSS_LDAP_URL", url);
+        }
+        assert!(
+            ConnectorProcessConfig::from_env().is_err(),
+            "accepted {url}"
         );
-        std::env::set_var("ADSS_LDAP_BIND_PASSWORD", "BindSecret123!");
-        std::env::set_var("ADSS_LDAP_ACCEPT_INVALID_CERTS", "true");
-        std::env::set_var("ADSS_ADOPT_EXISTING_USERS_BY_USERNAME", "true");
     }
 
-    let config = ConnectorProcessConfig::from_env().unwrap();
-    let ldap = config
-        .ldap
-        .expect("non-dry-run config must include LDAP settings");
-
-    assert!(!config.dry_run);
-    assert_eq!(config.state_path, "adss-connector-state.json");
-    assert_eq!(ldap.url, "ldaps://dc-a.example.com:636");
-    assert_eq!(ldap.bind_dn, "CN=adss-connector,OU=Svc,DC=example,DC=com");
-    assert_eq!(ldap.bind_password, "BindSecret123!");
-    assert!(ldap.accept_invalid_certs);
-    assert!(ldap.adopt_existing_users_by_username);
+    for legacy_name in [
+        "ADSS_LDAP_BIND_DN",
+        "ADSS_LDAP_BIND_PASSWORD",
+        "ADSS_LDAP_ACCEPT_INVALID_CERTS",
+    ] {
+        clear_connector_env();
+        unsafe {
+            std::env::set_var("ADSS_CENTER_URL", "https://sync.example.com");
+            std::env::set_var("ADSS_DOMAIN_ID", "domain-a");
+            std::env::set_var("ADSS_CONNECTOR_KEY", "connector-a-key");
+            std::env::set_var("ADSS_CONNECTOR_DRY_RUN", "false");
+            std::env::set_var("ADSS_LDAP_URL", "ldap://dc-a.example.com:389");
+            std::env::set_var(legacy_name, "legacy");
+        }
+        let error = ConnectorProcessConfig::from_env().unwrap_err();
+        assert!(error.to_string().contains(legacy_name));
+    }
 
     clear_connector_env();
 }
@@ -401,10 +411,8 @@ fn configured_directory_client_selects_ldap_without_dry_run() {
         30,
         false,
         Some(LdapDirectoryConfig {
-            url: "ldaps://dc-a.example.com:636".to_string(),
-            bind_dn: "CN=adss-connector,OU=Svc,DC=example,DC=com".to_string(),
-            bind_password: "BindSecret123!".to_string(),
-            accept_invalid_certs: false,
+            url: "ldap://dc-a.example.com:389".to_string(),
+            server_fqdn: "dc-a.example.com".to_string(),
             adopt_existing_users_by_username: false,
         }),
     );
@@ -530,6 +538,7 @@ fn empty_directory_batch() -> DirectoryBatch {
         server_revision: 0,
         batch_revision: 0,
         organizational_units: Vec::new(),
+        organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
         has_more: false,

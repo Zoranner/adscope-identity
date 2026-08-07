@@ -2,12 +2,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
+use rand::{TryRngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 use crate::oidc::crypto::CsrfSigner;
 
 const TOKEN_PREFIX: &str = "adss-user-session:v2";
+const MANAGEMENT_TOKEN_PREFIX: &str = "adss-management-session:v1";
+const MANAGEMENT_SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 3600;
 const SESSION_KEY_ENV: &str = "ADSS_USER_SESSION_KEY";
 const SESSION_TTL_ENV: &str = "ADSS_USER_SESSION_TTL_SECONDS";
@@ -23,6 +26,19 @@ pub(crate) struct UserSession {
 
 #[derive(Clone)]
 pub(crate) struct UserSessionIssuer {
+    key: Vec<u8>,
+    ttl: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ManagementSession {
+    pub(crate) auth_time: u64,
+    pub(crate) expires_at: u64,
+    pub(crate) csrf_nonce: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct ManagementSessionIssuer {
     key: Vec<u8>,
     ttl: Duration,
 }
@@ -100,6 +116,64 @@ impl UserSessionIssuer {
 
         let payload = URL_SAFE_NO_PAD.decode(payload).ok()?;
         let session: UserSession = serde_json::from_slice(&payload).ok()?;
+        (session.auth_time <= session.expires_at && now <= session.expires_at).then_some(session)
+    }
+}
+
+impl ManagementSessionIssuer {
+    pub(crate) fn from_management_token(token: &str) -> Self {
+        let mut mac = HmacSha256::new_from_slice(token.as_bytes())
+            .expect("management token must be a valid HMAC key");
+        mac.update(b"adss:management-session:v1");
+        Self {
+            key: mac.finalize().into_bytes().to_vec(),
+            ttl: Duration::from_secs(MANAGEMENT_SESSION_TTL_SECONDS),
+        }
+    }
+
+    pub(crate) fn issue(&self) -> anyhow::Result<String> {
+        self.issue_at(current_unix_seconds()?)
+    }
+
+    pub(crate) fn verify(&self, token: &str) -> Option<ManagementSession> {
+        self.verify_at(token, current_unix_seconds().ok()?)
+    }
+
+    pub(crate) fn ttl_seconds(&self) -> u64 {
+        self.ttl.as_secs()
+    }
+
+    fn issue_at(&self, auth_time: u64) -> anyhow::Result<String> {
+        let expires_at = auth_time
+            .checked_add(self.ttl.as_secs())
+            .ok_or_else(|| anyhow::anyhow!("management session expiration overflow"))?;
+        let mut csrf_nonce = [0_u8; 32];
+        OsRng.try_fill_bytes(&mut csrf_nonce).map_err(|error| {
+            anyhow::anyhow!("operating system random source unavailable: {error}")
+        })?;
+        let session = ManagementSession {
+            auth_time,
+            expires_at,
+            csrf_nonce: URL_SAFE_NO_PAD.encode(csrf_nonce),
+        };
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&session)?);
+        let signed = format!("{MANAGEMENT_TOKEN_PREFIX}.{payload}");
+        let mut mac = HmacSha256::new_from_slice(&self.key)?;
+        mac.update(signed.as_bytes());
+        let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        Ok(format!("{signed}.{signature}"))
+    }
+
+    fn verify_at(&self, token: &str, now: u64) -> Option<ManagementSession> {
+        let (signed, signature) = token.rsplit_once('.')?;
+        let payload = signed.strip_prefix(&format!("{MANAGEMENT_TOKEN_PREFIX}."))?;
+        let signature = URL_SAFE_NO_PAD.decode(signature).ok()?;
+        let mut mac = HmacSha256::new_from_slice(&self.key).ok()?;
+        mac.update(signed.as_bytes());
+        mac.verify_slice(&signature).ok()?;
+
+        let payload = URL_SAFE_NO_PAD.decode(payload).ok()?;
+        let session: ManagementSession = serde_json::from_slice(&payload).ok()?;
         (session.auth_time <= session.expires_at && now <= session.expires_at).then_some(session)
     }
 }

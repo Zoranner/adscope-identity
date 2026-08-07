@@ -1,6 +1,7 @@
 use adss_protocol::{Group, OrganizationalUnit, PasswordChangeResponse, User, UserStatus};
 use adss_store::{
-    DomainPatch, DomainRecord, UserCredentialInput, UserDirectoryPatch, UserListFilter,
+    DomainPatch, DomainRecord, UserCreateInput, UserCredentialInput, UserDirectoryPatch,
+    UserListFilter,
 };
 use axum::{
     Json, Router,
@@ -8,6 +9,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     routing::{get, patch, post, put},
 };
+use axum_extra::extract::cookie::Cookie;
 use chacha20poly1305::{
     XChaCha20Poly1305,
     aead::{KeyInit, OsRng},
@@ -15,10 +17,10 @@ use chacha20poly1305::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    auth::{connector_key_hash, constant_time_eq},
-    error::ApiError,
-    state::AppState,
+    auth::connector_key_hash, error::ApiError, session::ManagementSession, state::AppState,
 };
+
+use super::management_session::{MANAGEMENT_COOKIE, MANAGEMENT_CSRF_HEADER};
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -72,7 +74,7 @@ async fn create_domain(
     State(state): State<AppState>,
     Json(request): Json<CreateDomainRequest>,
 ) -> Result<(HeaderMap, Json<DomainMutationResponse>), ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let connector_key = generate_connector_key();
     let domain = state
         .repository
@@ -102,7 +104,7 @@ async fn update_domain(
     Path(domain_id): Path<String>,
     Json(request): Json<DomainPatchRequest>,
 ) -> Result<(HeaderMap, Json<DomainMutationResponse>), ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let connector_key = generate_connector_key();
     let domain = state
         .repository
@@ -147,7 +149,7 @@ async fn create_organizational_unit(
     State(state): State<AppState>,
     Json(request): Json<OrganizationalUnitRequest>,
 ) -> Result<Json<OrganizationalUnitUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     write_organizational_unit(&state, request.id, request.name, request.parent_id).await
 }
 
@@ -157,7 +159,7 @@ async fn update_organizational_unit(
     Path(ou_id): Path<String>,
     Json(request): Json<OrganizationalUnitPatchRequest>,
 ) -> Result<Json<OrganizationalUnitUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     write_organizational_unit(&state, ou_id, request.name, request.parent_id).await
 }
 
@@ -189,7 +191,7 @@ async fn create_user(
     State(state): State<AppState>,
     Json(request): Json<CreateUserRequest>,
 ) -> Result<Json<UserCreateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let user_patch = UserDirectoryPatch {
         employee_id: request.employee_id.clone(),
         username: request.username,
@@ -200,19 +202,26 @@ async fn create_user(
         organizational_unit_id: request.organizational_unit_id,
         status: request.status,
     };
-    let directory_revision = state
+    let credential = UserCredentialInput {
+        employee_id: request.employee_id,
+        password_ciphertext: state
+            .password_encryption
+            .seal(&request.initial_password)
+            .map_err(|_| ApiError::Persistence)?,
+        password_verifier: state
+            .password_hash
+            .hash(&request.initial_password)
+            .map_err(|_| ApiError::Persistence)?,
+    };
+    let (user, directory_revision, credential_revision) = state
         .repository
-        .upsert_directory(Vec::new(), vec![user_patch], Vec::new())
-        .await
-        .map_err(|_| ApiError::Persistence)?;
-    let credential_revision =
-        write_user_password(&state, &request.employee_id, &request.initial_password).await?;
-    let user = state
-        .repository
-        .get_user(&request.employee_id)
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: user_patch,
+            credential,
+        })
         .await
         .map_err(|_| ApiError::Persistence)?
-        .ok_or(ApiError::NotFound)?;
+        .ok_or(ApiError::Conflict)?;
 
     Ok(Json(UserCreateResponse {
         user: UserProfileResponse::from(user),
@@ -243,7 +252,7 @@ async fn update_user(
     Path(employee_id): Path<String>,
     Json(request): Json<UpdateUserDirectoryRequest>,
 ) -> Result<Json<UserDirectoryUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let directory_revision = state
         .repository
         .upsert_directory(
@@ -280,7 +289,7 @@ async fn disable_user(
     State(state): State<AppState>,
     Path(employee_id): Path<String>,
 ) -> Result<Json<UserDirectoryUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     set_user_status(&state, &employee_id, UserStatus::Disabled).await
 }
 
@@ -289,7 +298,7 @@ async fn enable_user(
     State(state): State<AppState>,
     Path(employee_id): Path<String>,
 ) -> Result<Json<UserDirectoryUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     set_user_status(&state, &employee_id, UserStatus::Active).await
 }
 
@@ -299,7 +308,7 @@ async fn reset_user_password(
     Path(employee_id): Path<String>,
     Json(request): Json<PasswordResetRequest>,
 ) -> Result<Json<PasswordChangeResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let credential_revision =
         write_user_password(&state, &employee_id, &request.new_password).await?;
 
@@ -328,7 +337,7 @@ async fn create_group(
     State(state): State<AppState>,
     Json(request): Json<GroupCreateRequest>,
 ) -> Result<Json<GroupUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     write_group(
         &state,
         Group {
@@ -364,7 +373,7 @@ async fn update_group(
     Path(group_id): Path<String>,
     Json(request): Json<GroupPatchRequest>,
 ) -> Result<Json<GroupUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let existing = state
         .repository
         .get_group(&group_id)
@@ -390,7 +399,7 @@ async fn replace_group_members(
     Path(group_id): Path<String>,
     Json(request): Json<GroupMembersRequest>,
 ) -> Result<Json<GroupUpdateResponse>, ApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     let existing = state
         .repository
         .get_group(&group_id)
@@ -570,17 +579,45 @@ fn user_patch_with_status(user: User, status: UserStatus) -> UserDirectoryPatch 
     }
 }
 
-pub(super) fn authorize_management(headers: &HeaderMap, state: &AppState) -> Result<(), ApiError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
+pub(super) fn authorize_management(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<ManagementSession, ApiError> {
+    let token = management_cookie_from_headers(headers).ok_or(ApiError::Unauthorized)?;
+    state
+        .management_sessions
+        .verify(&token)
+        .ok_or(ApiError::Unauthorized)
+}
+
+pub(super) fn authorize_management_write(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<ManagementSession, ApiError> {
+    let session = authorize_management(headers, state)?;
+    let csrf_token = headers
+        .get(MANAGEMENT_CSRF_HEADER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(ApiError::Unauthorized)?;
-    if constant_time_eq(token.as_bytes(), state.management_token.as_bytes()) {
-        Ok(())
+        .ok_or(ApiError::Forbidden)?;
+    if crate::auth::constant_time_eq(csrf_token.as_bytes(), session.csrf_nonce.as_bytes()) {
+        Ok(session)
     } else {
-        Err(ApiError::Unauthorized)
+        Err(ApiError::Forbidden)
     }
+}
+
+fn management_cookie_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.split(';').map(str::trim).find_map(|cookie| {
+                Cookie::parse_encoded(cookie.to_string())
+                    .ok()
+                    .filter(|cookie| cookie.name() == MANAGEMENT_COOKIE)
+                    .map(|cookie| cookie.value().to_string())
+            })
+        })
 }
 
 #[derive(Debug, Serialize)]

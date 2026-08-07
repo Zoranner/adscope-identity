@@ -12,10 +12,12 @@ use axum::{
     body::Body,
     http::{Method, Request, Response, StatusCode},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chacha20poly1305::{
     XChaCha20Poly1305,
     aead::{Aead, AeadCore, KeyInit},
 };
+use hmac::{Hmac, Mac};
 use http_body_util::BodyExt;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -23,6 +25,7 @@ use tower::ServiceExt;
 
 const CONNECTOR_KEY: &str = "test-connector-key";
 const MANAGEMENT_TOKEN: &str = "test-management-token";
+const MANAGEMENT_CSRF_TOKEN: &str = "test-management-csrf-token";
 const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 const TEST_OIDC_ISSUER: &str = "https://center.example.test";
 const TEST_OIDC_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/oidc-private-key.pem");
@@ -113,10 +116,92 @@ async fn user_directory_update_returns_changed_user_with_ou_context() {
         response.directory.users[0].email.as_deref(),
         Some("second@example.com")
     );
-    assert_eq!(response.directory.organizational_units.len(), 1);
-    assert_eq!(response.directory.organizational_units[0].id, "ou-root");
+    assert!(response.directory.organizational_units.is_empty());
+    assert_eq!(
+        response.directory.organizational_unit_dns.get("ou-root"),
+        Some(&"OU=Root,OU=Mirror,DC=a,DC=example,DC=com".to_string())
+    );
     assert!(response.directory.groups.is_empty());
     assert!(response.credentials.credentials.is_empty());
+}
+
+#[tokio::test]
+async fn connector_sync_honors_the_configured_directory_batch_limit() {
+    let TestApp { app, repository } = test_app_with_batch_limit(2).await;
+
+    repository
+        .upsert_directory(
+            vec![
+                adss_protocol::OrganizationalUnit {
+                    id: "ou-root".to_string(),
+                    name: "Root".to_string(),
+                    parent_id: None,
+                    changed_revision: 0,
+                },
+                adss_protocol::OrganizationalUnit {
+                    id: "ou-unused".to_string(),
+                    name: "Unused".to_string(),
+                    parent_id: None,
+                    changed_revision: 0,
+                },
+            ],
+            vec![user_patch("1001", "first@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .upsert_directory(
+            Vec::new(),
+            vec![user_patch("1002", "second@example.com")],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    repository
+        .upsert_directory(
+            vec![adss_protocol::OrganizationalUnit {
+                id: "ou-child".to_string(),
+                name: "Child".to_string(),
+                parent_id: Some("ou-root".to_string()),
+                changed_revision: 0,
+            }],
+            vec![UserDirectoryPatch {
+                organizational_unit_id: "ou-child".to_string(),
+                ..user_patch("1003", "third@example.com")
+            }],
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+    let first_batch = connector_sync(&app, 0, 0, false, false).await.directory;
+    assert_eq!(first_batch.server_revision, 3);
+    assert_eq!(first_batch.batch_revision, 2);
+    assert!(first_batch.has_more);
+    assert_eq!(first_batch.users.len(), 2);
+
+    confirm(
+        &app,
+        SyncChannel::Directory,
+        first_batch.batch_revision,
+        true,
+    )
+    .await;
+    let second_batch = connector_sync(&app, 2, 0, false, false).await.directory;
+    assert_eq!(second_batch.batch_revision, 3);
+    assert!(!second_batch.has_more);
+    assert_eq!(second_batch.organizational_units.len(), 1);
+    assert_eq!(second_batch.organizational_units[0].id, "ou-child");
+    assert_eq!(
+        second_batch.organizational_unit_dns.get("ou-child"),
+        Some(&"OU=Child,OU=Root,OU=Mirror,DC=a,DC=example,DC=com".to_string())
+    );
+    assert!(
+        !second_batch
+            .organizational_unit_dns
+            .contains_key("ou-unused")
+    );
 }
 
 #[tokio::test]
@@ -166,6 +251,300 @@ async fn admin_routes_require_management_token_not_user_token() {
         .await
         .expect("admin response");
     assert_eq!(user_token_response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn management_session_exchanges_token_for_protected_cookie() {
+    let TestApp { app, .. } = test_app().await;
+
+    let response = app
+        .oneshot(json_request(
+            "/api/admin/session",
+            &json!({ "token": MANAGEMENT_TOKEN }),
+        ))
+        .await
+        .expect("management session response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = response
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .expect("management session cookie");
+    assert!(set_cookie.starts_with("adss_management="));
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("Secure"));
+    assert!(set_cookie.contains("SameSite=Strict"));
+    assert!(set_cookie.contains("Path=/api/admin"));
+    assert!(set_cookie.contains("Max-Age=28800"));
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let raw_body = String::from_utf8_lossy(&body);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        body["csrf_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty())
+    );
+    assert!(!raw_body.contains(MANAGEMENT_TOKEN));
+}
+
+#[tokio::test]
+async fn management_session_errors_always_disable_caching() {
+    let TestApp { app, .. } = test_app().await;
+
+    let missing_content_type = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/session")
+                .body(Body::from(r#"{"token":"wrong-management-token"}"#))
+                .unwrap(),
+        )
+        .await
+        .expect("missing content type response");
+    assert!(missing_content_type.status().is_client_error());
+    assert_eq!(
+        missing_content_type.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+
+    let invalid_token = app
+        .clone()
+        .oneshot(json_request(
+            "/api/admin/session",
+            &json!({ "token": "wrong-management-token" }),
+        ))
+        .await
+        .expect("invalid management token response");
+    assert_eq!(invalid_token.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        invalid_token.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+
+    let missing_cookie = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("missing management cookie response");
+    assert_eq!(missing_cookie.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        missing_cookie.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+
+    let created = app
+        .clone()
+        .oneshot(json_request(
+            "/api/admin/session",
+            &json!({ "token": MANAGEMENT_TOKEN }),
+        ))
+        .await
+        .expect("management session creation response");
+    let management_cookie = created
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .expect("management cookie")
+        .to_string();
+    let missing_csrf = app
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/session")
+                .header("cookie", management_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("missing csrf response");
+    assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        missing_csrf.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+}
+
+#[tokio::test]
+async fn admin_routes_reject_normal_user_cookie() {
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
+    let login = app
+        .clone()
+        .oneshot(json_request(
+            "/api/auth/login",
+            &UserLoginRequest {
+                username: "1001".to_string(),
+                password: "OldPass123!".to_string(),
+            },
+        ))
+        .await
+        .expect("user login response");
+    assert_eq!(login.status(), StatusCode::OK);
+    let user_cookie = login
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .expect("user cookie");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/domains")
+                .header("cookie", user_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("admin response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn management_cookie_session_restores_protects_writes_and_logs_out() {
+    let TestApp { app, .. } = test_app().await;
+
+    let created = app
+        .clone()
+        .oneshot(json_request(
+            "/api/admin/session",
+            &json!({ "token": MANAGEMENT_TOKEN }),
+        ))
+        .await
+        .expect("management session creation response");
+    assert_eq!(created.status(), StatusCode::OK);
+    let management_cookie = created
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .expect("management cookie")
+        .to_string();
+    let body = created.into_body().collect().await.unwrap().to_bytes();
+    let csrf_token = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["csrf_token"]
+        .as_str()
+        .expect("csrf token")
+        .to_string();
+
+    let restored = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/session")
+                .header("cookie", &management_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("management session restore response");
+    assert_eq!(restored.status(), StatusCode::OK);
+    assert_eq!(restored.headers().get("cache-control").unwrap(), "no-store");
+    let restored_body = restored.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&restored_body).unwrap()["csrf_token"].as_str(),
+        Some(csrf_token.as_str())
+    );
+
+    let bearer = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/domains")
+                .header("authorization", format!("Bearer {MANAGEMENT_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("legacy bearer response");
+    assert_eq!(bearer.status(), StatusCode::UNAUTHORIZED);
+
+    let read = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/domains")
+                .header("cookie", &management_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("management cookie read response");
+    assert_eq!(read.status(), StatusCode::OK);
+
+    let missing_csrf = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/ous")
+                .header("cookie", &management_cookie)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"id":"ou-csrf","name":"CSRF","parent_id":null}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("missing csrf response");
+    assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+
+    let write = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/ous")
+                .header("cookie", &management_cookie)
+                .header("x-adss-csrf-token", &csrf_token)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"id":"ou-csrf","name":"CSRF","parent_id":null}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("csrf-protected write response");
+    assert_eq!(write.status(), StatusCode::OK);
+
+    let logged_out = app
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/session")
+                .header("cookie", &management_cookie)
+                .header("x-adss-csrf-token", &csrf_token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("management session delete response");
+    assert_eq!(logged_out.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        logged_out.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+    let deleted_cookie = logged_out
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .expect("deleted management cookie");
+    assert!(deleted_cookie.starts_with("adss_management="));
+    assert!(deleted_cookie.contains("Path=/api/admin"));
+    assert!(deleted_cookie.contains("Max-Age=0"));
 }
 
 #[tokio::test]
@@ -544,6 +923,64 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
 }
 
 #[tokio::test]
+async fn admin_create_user_returns_conflict_for_duplicate_employee_id_or_username() {
+    let TestApp { app, .. } = test_app().await;
+    let initial_user = json!({
+        "employee_id": "1001",
+        "username": "zhangsan",
+        "display_name": "张三",
+        "email": null,
+        "mobile": null,
+        "telephone": null,
+        "organizational_unit_id": "ou-root",
+        "status": "active",
+        "initial_password": "InitialPass123!"
+    });
+    admin_json(&app, Method::POST, "/api/admin/users", &initial_user).await;
+
+    let duplicate_employee_id = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/admin/users",
+            &json!({
+                "employee_id": "1001",
+                "username": "lisi",
+                "display_name": "李四",
+                "email": null,
+                "mobile": null,
+                "telephone": null,
+                "organizational_unit_id": "ou-root",
+                "status": "active",
+                "initial_password": "InitialPass123!"
+            }),
+        ))
+        .await
+        .expect("duplicate employee ID response");
+    assert_eq!(duplicate_employee_id.status(), StatusCode::CONFLICT);
+
+    let duplicate_username = app
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/admin/users",
+            &json!({
+                "employee_id": "1002",
+                "username": "zhangsan",
+                "display_name": "李四",
+                "email": null,
+                "mobile": null,
+                "telephone": null,
+                "organizational_unit_id": "ou-root",
+                "status": "active",
+                "initial_password": "InitialPass123!"
+            }),
+        ))
+        .await
+        .expect("duplicate username response");
+    assert_eq!(duplicate_username.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
 async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
     let TestApp { app, repository } = test_app().await;
 
@@ -650,6 +1087,7 @@ async fn admin_routes_manage_domains_directory_users_groups_and_sync_status() {
         }),
     )
     .await;
+    assert_eq!(created_user["user"]["employee_id"], "1001");
     assert_eq!(created_user["directory_revision"], 4);
     assert_eq!(created_user["credential_revision"], 1);
     assert!(created_user.get("initial_password").is_none());
@@ -770,14 +1208,14 @@ async fn directory_confirm_advances_only_directory_channel() {
 
 #[tokio::test]
 async fn failed_confirm_does_not_advance_revision() {
-    let TestApp { app, .. } = test_app().await;
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
 
     patch_user(&app, "1001", "zhangsan@example.com").await;
-    confirm(&app, SyncChannel::Directory, 1, false).await;
+    confirm(&app, SyncChannel::Directory, 2, false).await;
     let response = connector_sync(&app, 0, 0, false, false).await;
 
-    assert_eq!(response.directory.server_revision, 1);
-    assert_eq!(response.directory.batch_revision, 1);
+    assert_eq!(response.directory.server_revision, 2);
+    assert_eq!(response.directory.batch_revision, 2);
     assert_eq!(response.directory.users.len(), 1);
 }
 
@@ -1010,7 +1448,7 @@ async fn sync_requires_matching_connector_key() {
 
 #[tokio::test]
 async fn confirm_requires_matching_connector_key_and_does_not_advance_revision() {
-    let TestApp { app, .. } = test_app().await;
+    let TestApp { app, .. } = test_app_with_seeded_credential("OldPass123!").await;
 
     patch_user(&app, "1001", "zhangsan@example.com").await;
     let response = app
@@ -1021,7 +1459,7 @@ async fn confirm_requires_matching_connector_key_and_does_not_advance_revision()
             &ConnectorConfirmRequest {
                 domain_id: "domain-a".to_string(),
                 channel: SyncChannel::Directory,
-                target_revision: 1,
+                target_revision: 2,
                 success: true,
                 error_code: None,
             },
@@ -1033,7 +1471,7 @@ async fn confirm_requires_matching_connector_key_and_does_not_advance_revision()
 
     let sync = connector_sync(&app, 0, 0, false, false).await;
     assert_eq!(sync.directory.users.len(), 1);
-    assert_eq!(sync.directory.batch_revision, 1);
+    assert_eq!(sync.directory.batch_revision, 2);
 }
 
 #[tokio::test]
@@ -1427,6 +1865,20 @@ async fn test_app() -> TestApp {
     test_app_with_domain_enabled(true).await
 }
 
+async fn test_app_with_batch_limit(batch_limit: usize) -> TestApp {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    repository.seed_domain(domain(true)).await.unwrap();
+    let app = build_router(AppState::with_batch_limit_for_tests(
+        repository.clone(),
+        batch_limit,
+        TEST_ENCRYPTION_KEY,
+        TEST_OIDC_ISSUER,
+        TEST_OIDC_PRIVATE_KEY,
+    ));
+    TestApp { app, repository }
+}
+
 async fn test_app_with_domain_enabled(enabled: bool) -> TestApp {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     repository.initialize_schema().await.unwrap();
@@ -1550,7 +2002,8 @@ async fn admin_empty(app: &axum::Router, method: Method, uri: &str) -> serde_jso
             Request::builder()
                 .method(method)
                 .uri(uri)
-                .header("authorization", format!("Bearer {MANAGEMENT_TOKEN}"))
+                .header("cookie", management_session_cookie())
+                .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1566,10 +2019,31 @@ fn admin_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T)
     Request::builder()
         .method(method)
         .uri(uri)
-        .header("authorization", format!("Bearer {MANAGEMENT_TOKEN}"))
+        .header("cookie", management_session_cookie())
+        .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()
+}
+
+fn management_session_cookie() -> String {
+    let payload = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "auth_time": 0,
+            "expires_at": u64::MAX,
+            "csrf_nonce": MANAGEMENT_CSRF_TOKEN,
+        }))
+        .unwrap(),
+    );
+    let signed = format!("adss-management-session:v1.{payload}");
+    let mut key_derivation =
+        <Hmac<Sha256> as Mac>::new_from_slice(MANAGEMENT_TOKEN.as_bytes()).unwrap();
+    key_derivation.update(b"adss:management-session:v1");
+    let key = key_derivation.finalize().into_bytes();
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key).unwrap();
+    mac.update(signed.as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    format!("adss_management={signed}.{signature}")
 }
 
 async fn change_password_with_current_password(

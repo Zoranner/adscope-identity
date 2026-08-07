@@ -74,7 +74,7 @@ AD 侧必须写入对应工号属性。默认属性为 `employeeID`；如果组�
 - `password_verifier`：用于中心登录和改密校验，不能还原明文。
 - `password_ciphertext`：用于向 Connector 下发当前应设置的密码，由密码加密方式保护。
 
-Connector 从中心服务获取密码材料后，通过域控连接执行 Reset Password。域控连接支持 `ldap://` 或 `ldaps://`，Connector 不把明文密码写入本地 state、日志或配置。
+Connector 从中心服务获取密码材料后，通过 `ldap://<FQDN>:389` 的 Kerberos GSS-API 会话执行 Reset Password。Connector 不把明文密码写入本地 state、日志或配置；真实模式不接受 IP、LDAP over TLS、StartTLS、Simple Authentication 或 NTLM。
 
 域内普通 Change Password 不作为事实源。受管账号应禁止用户直接在 AD 中改密，并通过 GPO 隐藏 `Ctrl+Alt+Del` 的“更改密码”入口，避免 AD 侧密码与中心事实源冲突。
 

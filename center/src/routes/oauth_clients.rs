@@ -19,7 +19,7 @@ use crate::{
     state::AppState,
 };
 
-use super::admin::authorize_management;
+use super::admin::{authorize_management, authorize_management_write};
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -58,7 +58,7 @@ async fn create_oauth_client(
     State(state): State<AppState>,
     Json(request): Json<CreateOAuthClientRequest>,
 ) -> Result<(HeaderMap, Json<OAuthClientCreateResponse>), OAuthClientApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     validate_client_fields(
         &request.name,
         request.client_type,
@@ -105,7 +105,7 @@ async fn update_oauth_client(
     Path(client_id): Path<String>,
     Json(request): Json<UpdateOAuthClientRequest>,
 ) -> Result<Json<OAuthClientResponse>, OAuthClientApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     validate_client_id(&client_id).map_err(|_| OAuthClientApiError::InvalidRequest)?;
     let existing = state
         .repository
@@ -145,7 +145,7 @@ async fn delete_oauth_client(
     State(state): State<AppState>,
     Path(client_id): Path<String>,
 ) -> Result<StatusCode, OAuthClientApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     validate_client_id(&client_id).map_err(|_| OAuthClientApiError::InvalidRequest)?;
     if !state
         .repository
@@ -163,7 +163,7 @@ async fn regenerate_oauth_client_secret(
     State(state): State<AppState>,
     Path(client_id): Path<String>,
 ) -> Result<(HeaderMap, Json<OAuthClientSecretResponse>), OAuthClientApiError> {
-    authorize_management(&headers, &state)?;
+    authorize_management_write(&headers, &state)?;
     validate_client_id(&client_id).map_err(|_| OAuthClientApiError::InvalidRequest)?;
     let mut client = state
         .repository

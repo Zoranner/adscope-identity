@@ -1,6 +1,6 @@
 use adss_connector::{
-    ConnectorRuntime, ControlPlaneClient, DirectoryClient, DirectoryExecutionContext,
-    FileLocalStateStore, LocalRevisionState, LocalStateStore,
+    ConnectorRuntime, ControlPlaneClient, DirectoryBatchSession, DirectoryClient,
+    DirectoryExecutionContext, FileLocalStateStore, LocalRevisionState, LocalStateStore,
 };
 use adss_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
@@ -39,6 +39,25 @@ async fn runtime_confirms_directory_only_after_full_success() {
 }
 
 #[tokio::test]
+async fn runtime_confirms_a_successful_directory_page_at_its_batch_revision() {
+    let mut batch = directory_batch(5);
+    batch.server_revision = 7;
+    batch.has_more = true;
+    let control = RecordingControlPlane::with_directory_batch(batch);
+    let directory = RecordingDirectory::succeeds();
+    let state = MemoryLocalState::default();
+    let mut runtime = ConnectorRuntime::new("domain-a", control, directory, state);
+
+    runtime.run_once().await.unwrap();
+
+    assert_eq!(runtime.local_state().applied_directory_revision, 5);
+    assert_eq!(
+        runtime.control_plane().confirmed_directory_revision(),
+        Some(5)
+    );
+}
+
+#[tokio::test]
 async fn runtime_does_not_confirm_failed_directory_batch() {
     let control = RecordingControlPlane::with_directory_batch(directory_batch(5));
     let directory = RecordingDirectory::fails_directory("ensure_user");
@@ -59,6 +78,42 @@ async fn runtime_does_not_confirm_failed_directory_batch() {
     assert_eq!(failure.operation, "ensure_user");
     assert_eq!(failure.subject, "1001");
     assert!(failure.detail.contains("directory operation failed"));
+}
+
+#[tokio::test]
+async fn session_open_failure_confirms_directory_without_advancing_revision() {
+    let control = RecordingControlPlane::with_directory_batch(directory_batch(5));
+    let directory = RecordingDirectory::fails_to_open();
+    let state = MemoryLocalState::default();
+    let mut runtime = ConnectorRuntime::new("domain-a", control, directory, state);
+
+    let summary = runtime.run_once().await.unwrap();
+
+    assert_eq!(runtime.local_state().applied_directory_revision, 0);
+    assert_eq!(
+        runtime
+            .control_plane()
+            .failed_confirm_error_code(SyncChannel::Directory),
+        Some("directory_execution_failed".to_string())
+    );
+    assert_eq!(
+        summary.directory_failure.unwrap().operation,
+        "open_directory_batch"
+    );
+}
+
+#[tokio::test]
+async fn empty_batches_do_not_open_directory_sessions() {
+    let control =
+        RecordingControlPlane::with_batches(empty_directory_batch(), empty_credential_batch());
+    let directory = RecordingDirectory::succeeds();
+    let opened_batches = Arc::clone(&directory.opened_batches);
+    let state = MemoryLocalState::default();
+    let mut runtime = ConnectorRuntime::new("domain-a", control, directory, state);
+
+    runtime.run_once().await.unwrap();
+
+    assert_eq!(*opened_batches.lock().unwrap(), 0);
 }
 
 #[tokio::test]
@@ -325,9 +380,12 @@ struct ExpectedSyncRequest {
     rebuild_credentials: bool,
 }
 
+#[derive(Clone)]
 struct RecordingDirectory {
     fail_directory_kind: Option<&'static str>,
     fail_password_employee_id: Option<&'static str>,
+    fail_open: bool,
+    opened_batches: Arc<Mutex<u32>>,
 }
 
 impl RecordingDirectory {
@@ -335,6 +393,8 @@ impl RecordingDirectory {
         Self {
             fail_directory_kind: None,
             fail_password_employee_id: None,
+            fail_open: false,
+            opened_batches: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -342,6 +402,8 @@ impl RecordingDirectory {
         Self {
             fail_directory_kind: Some(kind),
             fail_password_employee_id: None,
+            fail_open: false,
+            opened_batches: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -349,18 +411,44 @@ impl RecordingDirectory {
         Self {
             fail_directory_kind: None,
             fail_password_employee_id: Some(employee_id),
+            fail_open: false,
+            opened_batches: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    fn fails_to_open() -> Self {
+        Self {
+            fail_directory_kind: None,
+            fail_password_employee_id: None,
+            fail_open: true,
+            opened_batches: Arc::new(Mutex::new(0)),
         }
     }
 }
 
 #[async_trait]
 impl DirectoryClient for RecordingDirectory {
+    type Batch = RecordingDirectoryBatch;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
+        *self.opened_batches.lock().unwrap() += 1;
+        if self.fail_open {
+            anyhow::bail!("GSS-API bind failed");
+        }
+        Ok(RecordingDirectoryBatch(self.clone()))
+    }
+}
+
+struct RecordingDirectoryBatch(RecordingDirectory);
+
+#[async_trait]
+impl DirectoryBatchSession for RecordingDirectoryBatch {
     async fn apply(
-        &self,
+        &mut self,
         operation: &DirectoryOperation,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        if self.fail_directory_kind == Some(directory_kind_name(operation.kind)) {
+        if self.0.fail_directory_kind == Some(directory_kind_name(operation.kind)) {
             anyhow::bail!("directory operation failed");
         }
 
@@ -368,11 +456,11 @@ impl DirectoryClient for RecordingDirectory {
     }
 
     async fn set_password(
-        &self,
+        &mut self,
         credential: &CredentialEntry,
         _context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        if self.fail_password_employee_id == Some(credential.employee_id.as_str()) {
+        if self.0.fail_password_employee_id == Some(credential.employee_id.as_str()) {
             anyhow::bail!("password failed");
         }
 
@@ -414,6 +502,7 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             parent_id: None,
             changed_revision: batch_revision,
         }],
+        organizational_unit_dns: std::collections::BTreeMap::new(),
         users: vec![User {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),
@@ -454,6 +543,7 @@ fn invalid_directory_batch(batch_revision: u64) -> DirectoryBatch {
                 changed_revision: batch_revision,
             },
         ],
+        organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
         has_more: false,
@@ -470,6 +560,18 @@ fn credential_batch(batch_revision: u64) -> CredentialBatch {
             status: UserStatus::Active,
             changed_revision: batch_revision,
         }],
+        has_more: false,
+    }
+}
+
+fn empty_directory_batch() -> DirectoryBatch {
+    DirectoryBatch {
+        server_revision: 0,
+        batch_revision: 0,
+        organizational_units: Vec::new(),
+        organizational_unit_dns: std::collections::BTreeMap::new(),
+        users: Vec::new(),
+        groups: Vec::new(),
         has_more: false,
     }
 }

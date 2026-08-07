@@ -3,6 +3,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbErr,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlErr, Statement, TransactionTrait,
 };
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     entities,
@@ -10,7 +11,7 @@ use crate::{
     models::{
         AuthorizationCodeExchange, AuthorizationCodeRecord, CredentialCiphertextBatch,
         CredentialCiphertextEntry, CredentialRecord, DomainPatch, DomainRecord, OAuthClientRecord,
-        UserContactPatch, UserCredentialInput, UserDirectoryPatch, UserListFilter,
+        UserContactPatch, UserCreateInput, UserCredentialInput, UserDirectoryPatch, UserListFilter,
     },
     oauth::{authorization_code_active_model, oauth_client_active_model},
     revision::{
@@ -571,6 +572,115 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             .transpose()
     }
 
+    pub async fn create_user_with_initial_credential(
+        &self,
+        input: UserCreateInput,
+    ) -> anyhow::Result<Option<(User, u64, u64)>> {
+        use entities::{user, user_credential};
+
+        let UserCreateInput {
+            directory,
+            credential,
+        } = input;
+        if directory.employee_id != credential.employee_id {
+            anyhow::bail!("user directory and credential employee IDs must match");
+        }
+
+        for _ in 0..MAX_REVISION_ALLOCATION_ATTEMPTS {
+            let transaction = self.db.begin().await?;
+            let directory_revision = match try_allocate_directory_revision(&transaction).await {
+                Ok(Some(revision)) => revision,
+                Ok(None) => {
+                    transaction.rollback().await?;
+                    continue;
+                }
+                Err(error) => {
+                    transaction.rollback().await?;
+                    return Err(error);
+                }
+            };
+
+            let created = match (user::ActiveModel {
+                employee_id: Set(directory.employee_id.clone()),
+                username: Set(directory.username.clone()),
+                display_name: Set(directory.display_name.clone()),
+                email: Set(directory.email.clone()),
+                mobile: Set(directory.mobile.clone()),
+                telephone: Set(directory.telephone.clone()),
+                organizational_unit_id: Set(directory.organizational_unit_id.clone()),
+                status: Set(user_status_to_storage(directory.status).to_string()),
+                changed_revision: Set(directory_revision),
+            })
+            .insert(&transaction)
+            .await
+            {
+                Ok(user) => user,
+                Err(error)
+                    if matches!(error.sql_err(), Some(SqlErr::UniqueConstraintViolation(_))) =>
+                {
+                    transaction.rollback().await?;
+                    return Ok(None);
+                }
+                Err(error) => {
+                    transaction.rollback().await?;
+                    return Err(error.into());
+                }
+            };
+
+            let credential_revision = match try_allocate_credential_revision(&transaction).await {
+                Ok(Some(revision)) => revision,
+                Ok(None) => {
+                    transaction.rollback().await?;
+                    continue;
+                }
+                Err(error) => {
+                    transaction.rollback().await?;
+                    return Err(error);
+                }
+            };
+
+            if let Err(error) = (user_credential::ActiveModel {
+                employee_id: Set(credential.employee_id.clone()),
+                password_ciphertext: Set(credential.password_ciphertext.clone()),
+                password_verifier: Set(credential.password_verifier.clone()),
+                changed_revision: Set(credential_revision),
+            }
+            .insert(&transaction)
+            .await)
+            {
+                transaction.rollback().await?;
+                return Err(error.into());
+            }
+
+            let user = match User::try_from(created) {
+                Ok(user) => user,
+                Err(error) => {
+                    transaction.rollback().await?;
+                    return Err(error);
+                }
+            };
+            let directory_revision = match i64_to_u64_revision(directory_revision) {
+                Ok(revision) => revision,
+                Err(error) => {
+                    transaction.rollback().await?;
+                    return Err(error);
+                }
+            };
+            let credential_revision = match i64_to_u64_revision(credential_revision) {
+                Ok(revision) => revision,
+                Err(error) => {
+                    transaction.rollback().await?;
+                    return Err(error);
+                }
+            };
+
+            transaction.commit().await?;
+            return Ok(Some((user, directory_revision, credential_revision)));
+        }
+
+        anyhow::bail!("failed to allocate revisions after retries")
+    }
+
     pub async fn update_user_contact(
         &self,
         employee_id: &str,
@@ -621,7 +731,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         domain_id: &str,
         applied_revision: u64,
         rebuild: bool,
-        _limit: usize,
+        limit: usize,
     ) -> anyhow::Result<DirectoryBatch> {
         use entities::{group, organizational_unit, user};
 
@@ -636,8 +746,48 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             anyhow::bail!("applied directory revision exceeds server revision");
         }
 
+        let mut revisions = organizational_unit::Entity::find()
+            .select_only()
+            .column(organizational_unit::Column::ChangedRevision)
+            .filter(organizational_unit::Column::ChangedRevision.gt(threshold))
+            .into_tuple::<i64>()
+            .all(&self.db)
+            .await?;
+        revisions.extend(
+            user::Entity::find()
+                .select_only()
+                .column(user::Column::ChangedRevision)
+                .filter(user::Column::ChangedRevision.gt(threshold))
+                .into_tuple::<i64>()
+                .all(&self.db)
+                .await?,
+        );
+        revisions.extend(
+            group::Entity::find()
+                .select_only()
+                .column(group::Column::ChangedRevision)
+                .filter(group::Column::ChangedRevision.gt(threshold))
+                .into_tuple::<i64>()
+                .all(&self.db)
+                .await?,
+        );
+        revisions.sort_unstable();
+        revisions.dedup();
+
+        let limit = limit.max(1);
+        let has_more = revisions.len() > limit;
+        let batch_revision = revisions
+            .get(limit - 1)
+            .or_else(|| revisions.last())
+            .copied()
+            .map(i64_to_u64_revision)
+            .transpose()?
+            .unwrap_or(server_revision);
+        let batch_revision = u64_to_i64_revision(batch_revision)?;
+
         let users = user::Entity::find()
             .filter(user::Column::ChangedRevision.gt(threshold))
+            .filter(user::Column::ChangedRevision.lte(batch_revision))
             .order_by_asc(user::Column::ChangedRevision)
             .order_by_asc(user::Column::EmployeeId)
             .all(&self.db)
@@ -647,6 +797,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             .collect::<anyhow::Result<Vec<_>>>()?;
         let groups = group::Entity::find()
             .filter(group::Column::ChangedRevision.gt(threshold))
+            .filter(group::Column::ChangedRevision.lte(batch_revision))
             .order_by_asc(group::Column::ChangedRevision)
             .order_by_asc(group::Column::Id)
             .all(&self.db)
@@ -654,35 +805,114 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             .into_iter()
             .map(Group::try_from)
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let changed_organizational_units = organizational_unit::Entity::find()
+        let organizational_units = organizational_unit::Entity::find()
             .filter(organizational_unit::Column::ChangedRevision.gt(threshold))
+            .filter(organizational_unit::Column::ChangedRevision.lte(batch_revision))
             .order_by_asc(organizational_unit::Column::ChangedRevision)
             .order_by_asc(organizational_unit::Column::Id)
             .all(&self.db)
+            .await?
+            .into_iter()
+            .map(OrganizationalUnit::try_from)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let organizational_unit_dns = self
+            .organizational_unit_dns_for_batch(
+                &domain.mirror_root_dn,
+                &organizational_units,
+                &users,
+                &groups,
+            )
             .await?;
-        let has_directory_changes =
-            !changed_organizational_units.is_empty() || !users.is_empty() || !groups.is_empty();
-        let organizational_units = if has_directory_changes {
-            organizational_unit::Entity::find()
-                .order_by_asc(organizational_unit::Column::ChangedRevision)
-                .order_by_asc(organizational_unit::Column::Id)
-                .all(&self.db)
-                .await?
-        } else {
-            changed_organizational_units
-        }
-        .into_iter()
-        .map(OrganizationalUnit::try_from)
-        .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(DirectoryBatch {
             server_revision,
-            batch_revision: server_revision,
+            batch_revision: i64_to_u64_revision(batch_revision)?,
             organizational_units,
+            organizational_unit_dns,
             users,
             groups,
-            has_more: false,
+            has_more,
         })
+    }
+
+    async fn organizational_unit_dns_for_batch(
+        &self,
+        mirror_root_dn: &str,
+        organizational_units: &[OrganizationalUnit],
+        users: &[User],
+        groups: &[Group],
+    ) -> anyhow::Result<BTreeMap<String, String>> {
+        use entities::organizational_unit;
+
+        let mut involved_ou_ids = BTreeSet::new();
+        involved_ou_ids.extend(organizational_units.iter().map(|ou| ou.id.clone()));
+        involved_ou_ids.extend(users.iter().map(|user| user.organizational_unit_id.clone()));
+        involved_ou_ids.extend(
+            groups
+                .iter()
+                .map(|group| group.organizational_unit_id.clone()),
+        );
+
+        let mut organizational_units_by_id: BTreeMap<String, OrganizationalUnit> = BTreeMap::new();
+        let mut organizational_unit_dns: BTreeMap<String, String> = BTreeMap::new();
+        for organizational_unit_id in involved_ou_ids {
+            let mut chain = Vec::new();
+            let mut current_id = organizational_unit_id;
+            let mut visited = BTreeSet::new();
+
+            loop {
+                if organizational_unit_dns.contains_key(&current_id) {
+                    break;
+                }
+                if !visited.insert(current_id.clone()) {
+                    anyhow::bail!("cyclic OU hierarchy at {current_id}");
+                }
+                let organizational_unit = if let Some(organizational_unit) =
+                    organizational_units_by_id.get(&current_id)
+                {
+                    organizational_unit.clone()
+                } else {
+                    let organizational_unit = organizational_unit::Entity::find_by_id(&current_id)
+                        .one(&self.db)
+                        .await?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("missing OU {current_id} required by directory batch")
+                        })?;
+                    let organizational_unit = OrganizationalUnit::try_from(organizational_unit)?;
+                    organizational_units_by_id
+                        .insert(current_id.clone(), organizational_unit.clone());
+                    organizational_unit
+                };
+                current_id = match &organizational_unit.parent_id {
+                    Some(parent_id) => parent_id.clone(),
+                    None => {
+                        chain.push(organizational_unit);
+                        break;
+                    }
+                };
+                chain.push(organizational_unit);
+            }
+
+            for organizational_unit in chain.into_iter().rev() {
+                let parent_dn = match &organizational_unit.parent_id {
+                    Some(parent_id) => organizational_unit_dns
+                        .get(parent_id)
+                        .ok_or_else(|| anyhow::anyhow!("missing parent OU DN {parent_id}"))?,
+                    None => mirror_root_dn,
+                };
+                organizational_unit_dns.insert(
+                    organizational_unit.id,
+                    format!(
+                        "OU={},{}",
+                        escape_ldap_dn_value(&organizational_unit.name),
+                        parent_dn
+                    ),
+                );
+            }
+        }
+
+        Ok(organizational_unit_dns)
     }
 
     pub async fn list_groups(&self) -> anyhow::Result<Vec<Group>> {
@@ -922,4 +1152,23 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         }
         Ok(())
     }
+}
+
+fn escape_ldap_dn_value(value: &str) -> String {
+    let mut escaped = String::new();
+    let mut chars = value.char_indices().peekable();
+
+    while let Some((index, character)) = chars.next() {
+        let is_first = index == 0;
+        let is_last = chars.peek().is_none();
+        if (is_first && (character == ' ' || character == '#'))
+            || (is_last && character == ' ')
+            || matches!(character, ',' | '+' | '"' | '\\' | '<' | '>' | ';' | '=')
+        {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+
+    escaped
 }

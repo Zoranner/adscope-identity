@@ -107,8 +107,8 @@ OIDC Provider 只提供 Authorization Code Flow、`authorization_code` grant、`
 
 ## AD 权限
 
-Connector 访问域控支持 `ldap://` 或 `ldaps://`。生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`；如果域控策略要求加密密码修改，应按域策略启用 `ldaps://` 或等价受保护绑定。
+Connector 仅接受 `ldap://<FQDN>:389`，不接受 IP、LDAP over TLS、StartTLS、URL 路径、查询、片段或用户名。它以 `NetworkService` 的主机计算机账号通过 Kerberos GSS-API 绑定 FQDN 对应的 LDAP SPN；协商保密层失败时，Connector 以该通道失败确认，不推进 revision，且不回退到 Simple Authentication 或 NTLM。
 
-域内服务账号应采用最小权限委派，只允许管理镜像根和隔离 OU 内的目标对象，并授予必要的创建、移动、属性写入、组成员写入、禁用和 Reset Password 权限。
+域管理员只向 `<DOMAIN>\<CONNECTOR-HOST>$` 委派镜像根和隔离 OU 内的必要权限，包括创建、移动、属性写入、组成员写入、禁用和 Reset Password。不得使用 `superuser`、其他内置本地服务身份、本地账户或保存 LDAP 密码。
 
 域控高权限凭据不得集中存放在主服务。主服务只保存中心业务事实、域同步配置和 Connector 认证摘要。

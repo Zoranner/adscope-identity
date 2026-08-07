@@ -17,6 +17,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
+use hmac::{Hmac, Mac};
 use http_body_util::BodyExt;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, decode_header, encode};
 use rsa::{RsaPrivateKey, pkcs1::EncodeRsaPrivateKey, pkcs8::DecodePrivateKey};
@@ -25,6 +26,7 @@ use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 const MANAGEMENT_TOKEN: &str = "test-management-token";
+const MANAGEMENT_CSRF_TOKEN: &str = "test-management-csrf-token";
 const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 const TEST_OIDC_ISSUER: &str = "https://center.example.test";
 const TEST_OIDC_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/oidc-private-key.pem");
@@ -2714,7 +2716,13 @@ async fn json_body(response: Response<Body>) -> Value {
 }
 
 fn admin_request(method: Method, uri: &str) -> Request<Body> {
-    auth_request(method, uri, MANAGEMENT_TOKEN)
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("cookie", management_session_cookie())
+        .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
+        .body(Body::empty())
+        .unwrap()
 }
 
 fn auth_request(method: Method, uri: &str, token: &str) -> Request<Body> {
@@ -2735,28 +2743,40 @@ fn empty_request(method: Method, uri: &str) -> Request<Body> {
 }
 
 fn admin_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T) -> Request<Body> {
-    json_request_with_token(method, uri, MANAGEMENT_TOKEN, value)
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("cookie", management_session_cookie())
+        .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(value).unwrap()))
+        .unwrap()
+}
+
+fn management_session_cookie() -> String {
+    let payload = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "auth_time": 0,
+            "expires_at": u64::MAX,
+            "csrf_nonce": MANAGEMENT_CSRF_TOKEN,
+        }))
+        .unwrap(),
+    );
+    let signed = format!("adss-management-session:v1.{payload}");
+    let mut key_derivation =
+        <Hmac<Sha256> as Mac>::new_from_slice(MANAGEMENT_TOKEN.as_bytes()).unwrap();
+    key_derivation.update(b"adss:management-session:v1");
+    let key = key_derivation.finalize().into_bytes();
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key).unwrap();
+    mac.update(signed.as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    format!("adss_management={signed}.{signature}")
 }
 
 fn json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T) -> Request<Body> {
     Request::builder()
         .method(method)
         .uri(uri)
-        .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_vec(value).unwrap()))
-        .unwrap()
-}
-
-fn json_request_with_token<T: serde::Serialize>(
-    method: Method,
-    uri: &str,
-    token: &str,
-    value: &T,
-) -> Request<Body> {
-    Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("authorization", format!("Bearer {token}"))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()

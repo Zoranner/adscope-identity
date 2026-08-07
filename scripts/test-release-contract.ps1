@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Path $assemblyRoot, $fakeRepository -Force | Out-N
 
 try {
     $actualVersion = Get-AdssVersion -RepositoryRoot $repositoryRoot
-    if ($actualVersion -ne '0.1.0') {
+    if ($actualVersion -ne '0.2.0-rc.1') {
         throw "Unexpected workspace version: $actualVersion"
     }
 
@@ -32,7 +32,7 @@ try {
 
     $fakeBinary = Join-Path $assemblyRoot 'fake-adss-connector.exe'
     Set-Content -LiteralPath $fakeBinary -Value 'fake connector binary' -NoNewline
-    $connectorArchive = Join-Path $assemblyRoot 'adss-connector-v0.1.0-windows-x86_64.zip'
+    $connectorArchive = Join-Path $assemblyRoot 'adss-connector-v0.2.0-rc.1-windows-x86_64.zip'
     New-ConnectorArchive `
         -RepositoryRoot $repositoryRoot `
         -ConnectorBinary $fakeBinary `
@@ -52,12 +52,12 @@ try {
         }
     }
 
-    $centerArchive = Join-Path $assemblyRoot 'adss-center-v0.1.0-linux-amd64.tar'
+    $centerArchive = Join-Path $assemblyRoot 'adss-center-v0.2.0-rc.1-linux-amd64.tar'
     Set-Content -LiteralPath $centerArchive -Value 'fake center image archive' -NoNewline
     $manifestPath = Join-Path $assemblyRoot 'manifest.json'
     $checksumsPath = Join-Path $assemblyRoot 'SHA256SUMS'
     Write-ReleaseManifest `
-        -Version '0.1.0' `
+        -Version '0.2.0-rc.1' `
         -Revision '0123456789abcdef' `
         -Target 'windows-x86_64,linux-amd64' `
         -Artifacts @($connectorArchive, $centerArchive) `
@@ -65,7 +65,7 @@ try {
         -ChecksumsPath $checksumsPath
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.version -ne '0.1.0' -or $manifest.revision -ne '0123456789abcdef') {
+    if ($manifest.version -ne '0.2.0-rc.1' -or $manifest.revision -ne '0123456789abcdef') {
         throw 'Release manifest version or revision is incorrect.'
     }
     if ($manifest.target -ne 'windows-x86_64,linux-amd64') {

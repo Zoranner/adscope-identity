@@ -1,4 +1,5 @@
 mod admin;
+mod management_session;
 mod oauth_clients;
 
 use adss_protocol::{
@@ -49,6 +50,7 @@ fn api_routes() -> Router<AppState> {
         .route("/me", get(get_me))
         .route("/me/contact", patch(update_me_contact))
         .route("/me/password", post(change_me_password))
+        .merge(management_session::routes())
         .merge(admin::routes())
         .merge(oauth_clients::routes())
         .route("/connector/sync", post(connector_sync))

@@ -20,7 +20,7 @@ Center 以 Docker 服务运行，内置管理端和用户端页面，SQLite 数�
 
 统一登录需要配置 `ADSS_OIDC_ISSUER`、`ADSS_OIDC_PRIVATE_KEY_FILE=/run/secrets/oidc-private-key.pem` 和 `ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false`。部署目录放置受限读取的 `oidc-private-key.pem`，Compose 将其只读挂载到容器中。
 
-Connector 作为原生 Windows 服务安装在各 AD 域内。每个 Connector 使用对应域生成的 key 访问 Center，并使用本地域内的受限服务账号写入 AD。
+Connector 作为原生 Windows 服务安装在各 AD 域内。每个 Connector 使用对应域生成的 key 访问 Center，并以 `NetworkService` 的计算机账号通过 Kerberos GSS-API 写入 AD；真实模式只接受 `ldap://<FQDN>:389`。
 
 部署前请阅读[运行部署](docs/guide/deployment.md)和[安全要求](docs/guide/security.md)。
 

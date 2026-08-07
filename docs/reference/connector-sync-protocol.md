@@ -93,7 +93,7 @@ Connector 按中心下发的域配置写入 AD，不在本地 `.env` 配置字�
 
 凭据响应包含中心当前密文在服务端内存解封后的明文密码。Connector 调用主服务 `/api/connector/sync` 时必须走 TLS，并且响应必须设置 `Cache-Control: no-store`。
 
-Connector 不落盘明文密码，只在本轮立即通过域控连接执行 Reset Password。域控连接支持 `ldap://` 或 `ldaps://`；生产环境建议使用 `ldaps://`，或仅在受保护网络内使用 `ldap://`。密码下发和管理面仍必须通过主服务 TLS。任一密码设置失败时，Connector 发送失败 confirm，不推进本地凭据 revision，下轮继续重试。
+Connector 不落盘明文密码，只在本轮立即通过 `ldap://<FQDN>:389` 的 Kerberos GSS-API 会话执行 Reset Password。每个非空目录或凭据批次各建立一个 LDAP 会话，批次内复用；建连、GSS-API 认证或保密层协商失败时，Connector 发送该通道失败 confirm，不推进本地 revision。空批次不建立 LDAP 会话，dry-run 不访问网络。密码下发和管理面仍必须通过主服务 TLS。任一密码设置失败时，Connector 发送失败 confirm，不推进本地凭据 revision，下轮继续重试。
 
 ## Confirm 请求
 

@@ -3,7 +3,7 @@ pub mod ldap;
 
 use adss_protocol::{
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DirectoryPlan,
-    DomainDirectoryConfig, OrganizationalUnit, SyncSummary,
+    DomainDirectoryConfig, SyncSummary,
 };
 use async_trait::async_trait;
 use std::collections::BTreeMap;
@@ -11,28 +11,48 @@ use std::time::Duration;
 
 use crate::config::ConnectorProcessConfig;
 
-pub use dry_run::DryRunDirectoryClient;
+pub use dry_run::{DryRunDirectoryBatch, DryRunDirectoryClient};
 pub use ldap::{
-    LdapDirectoryClient, encode_ad_unicode_password, escape_ldap_dn_value, escape_ldap_filter_value,
+    LdapDirectoryBatch, LdapDirectoryClient, encode_ad_unicode_password, escape_ldap_dn_value,
+    escape_ldap_filter_value,
 };
 
 #[async_trait]
-pub trait DirectoryClient {
+pub trait DirectoryBatchSession {
     async fn apply(
-        &self,
+        &mut self,
         operation: &DirectoryOperation,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()>;
     async fn set_password(
-        &self,
+        &mut self,
         credential: &CredentialEntry,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()>;
+
+    async fn close(self) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+}
+
+#[async_trait]
+pub trait DirectoryClient {
+    type Batch: DirectoryBatchSession + Send;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch>;
 }
 
 pub enum ConfiguredDirectoryClient {
     DryRun(DryRunDirectoryClient),
     Ldap(LdapDirectoryClient),
+}
+
+pub enum ConfiguredDirectoryBatch {
+    DryRun(DryRunDirectoryBatch),
+    Ldap(LdapDirectoryBatch),
 }
 
 impl ConfiguredDirectoryClient {
@@ -54,25 +74,46 @@ impl ConfiguredDirectoryClient {
 
 #[async_trait]
 impl DirectoryClient for ConfiguredDirectoryClient {
+    type Batch = ConfiguredDirectoryBatch;
+
+    async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
+        match self {
+            Self::DryRun(client) => {
+                Ok(ConfiguredDirectoryBatch::DryRun(client.open_batch().await?))
+            }
+            Self::Ldap(client) => Ok(ConfiguredDirectoryBatch::Ldap(client.open_batch().await?)),
+        }
+    }
+}
+
+#[async_trait]
+impl DirectoryBatchSession for ConfiguredDirectoryBatch {
     async fn apply(
-        &self,
+        &mut self,
         operation: &DirectoryOperation,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
         match self {
-            Self::DryRun(client) => client.apply(operation, context).await,
-            Self::Ldap(client) => client.apply(operation, context).await,
+            Self::DryRun(batch) => batch.apply(operation, context).await,
+            Self::Ldap(batch) => batch.apply(operation, context).await,
         }
     }
 
     async fn set_password(
-        &self,
+        &mut self,
         credential: &CredentialEntry,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
         match self {
-            Self::DryRun(client) => client.set_password(credential, context).await,
-            Self::Ldap(client) => client.set_password(credential, context).await,
+            Self::DryRun(batch) => batch.set_password(credential, context).await,
+            Self::Ldap(batch) => batch.set_password(credential, context).await,
+        }
+    }
+
+    async fn close(self) -> anyhow::Result<()> {
+        match self {
+            Self::DryRun(batch) => batch.close().await,
+            Self::Ldap(batch) => batch.close().await,
         }
     }
 }
@@ -95,19 +136,9 @@ impl DirectoryExecutionContext {
         batch: &DirectoryBatch,
         domain: &DomainDirectoryConfig,
     ) -> anyhow::Result<Self> {
-        let mut by_id = BTreeMap::new();
-        for ou in &batch.organizational_units {
-            by_id.insert(ou.id.as_str(), ou);
-        }
-
-        let mut organizational_unit_dns = BTreeMap::new();
-        for ou in &batch.organizational_units {
-            build_organizational_unit_dn(ou, &by_id, &mut organizational_unit_dns, domain)?;
-        }
-
         Ok(Self {
             domain: domain.clone(),
-            organizational_unit_dns,
+            organizational_unit_dns: batch.organizational_unit_dns.clone(),
         })
     }
 
@@ -117,30 +148,6 @@ impl DirectoryExecutionContext {
             .map(String::as_str)
             .ok_or_else(|| anyhow::anyhow!("missing OU DN for {organizational_unit_id}"))
     }
-}
-
-fn build_organizational_unit_dn<'a>(
-    ou: &'a OrganizationalUnit,
-    by_id: &BTreeMap<&str, &'a OrganizationalUnit>,
-    organizational_unit_dns: &mut BTreeMap<String, String>,
-    domain: &DomainDirectoryConfig,
-) -> anyhow::Result<String> {
-    if let Some(dn) = organizational_unit_dns.get(&ou.id) {
-        return Ok(dn.clone());
-    }
-
-    let parent_dn = match &ou.parent_id {
-        Some(parent_id) => {
-            let parent = by_id
-                .get(parent_id.as_str())
-                .ok_or_else(|| anyhow::anyhow!("missing parent OU {parent_id} for {}", ou.id))?;
-            build_organizational_unit_dn(parent, by_id, organizational_unit_dns, domain)?
-        }
-        None => domain.mirror_root_dn.clone(),
-    };
-    let dn = format!("OU={},{}", escape_ldap_dn_value(&ou.name), parent_dn);
-    organizational_unit_dns.insert(ou.id.clone(), dn.clone());
-    Ok(dn)
 }
 
 pub struct DirectoryExecutor<C> {
@@ -218,44 +225,59 @@ where
     C: DirectoryClient + Sync,
 {
     let mut summary = SyncSummary::default();
+    if plan.operations.is_empty() {
+        return ExecutionResult {
+            summary,
+            failure: None,
+        };
+    }
+    let mut batch = match tokio::time::timeout(operation_timeout, client.open_batch()).await {
+        Ok(Ok(batch)) => batch,
+        Ok(Err(error)) => return batch_open_failure("open_directory_batch", error),
+        Err(_) => return batch_open_timeout("open_directory_batch", operation_timeout),
+    };
+    let mut failure = None;
 
     for (index, operation) in plan.operations.iter().enumerate() {
-        match tokio::time::timeout(operation_timeout, client.apply(operation, context)).await {
+        match tokio::time::timeout(operation_timeout, batch.apply(operation, context)).await {
             Ok(Ok(())) => summary.succeeded += 1,
             Ok(Err(error)) => {
                 summary.failed += 1;
                 summary.skipped += (plan.operations.len() - index - 1) as u32;
-                return ExecutionResult {
-                    summary,
-                    failure: Some(ExecutionFailure {
-                        operation: operation_name(operation.kind),
-                        subject: operation.subject.clone(),
-                        detail: format!("{error:#}"),
-                    }),
-                };
+                failure = Some(ExecutionFailure {
+                    operation: operation_name(operation.kind),
+                    subject: operation.subject.clone(),
+                    detail: format!("{error:#}"),
+                });
+                break;
             }
             Err(_) => {
                 summary.failed += 1;
                 summary.skipped += (plan.operations.len() - index - 1) as u32;
-                return ExecutionResult {
-                    summary,
-                    failure: Some(ExecutionFailure {
-                        operation: operation_name(operation.kind),
-                        subject: operation.subject.clone(),
-                        detail: format!(
-                            "operation timed out after {} seconds",
-                            operation_timeout.as_secs_f64()
-                        ),
-                    }),
-                };
+                failure = Some(ExecutionFailure {
+                    operation: operation_name(operation.kind),
+                    subject: operation.subject.clone(),
+                    detail: format!(
+                        "operation timed out after {} seconds",
+                        operation_timeout.as_secs_f64()
+                    ),
+                });
+                break;
             }
         }
     }
-
-    ExecutionResult {
-        summary,
-        failure: None,
+    if let Err(error) = batch.close().await
+        && failure.is_none()
+    {
+        summary.failed += 1;
+        failure = Some(ExecutionFailure {
+            operation: "close_directory_batch",
+            subject: context.domain.domain_id.clone(),
+            detail: format!("{error:#}"),
+        });
     }
+
+    ExecutionResult { summary, failure }
 }
 
 pub async fn execute_credential_batch<C>(
@@ -279,46 +301,86 @@ where
     C: DirectoryClient + Sync,
 {
     let mut summary = SyncSummary::default();
+    if batch.credentials.is_empty() {
+        return ExecutionResult {
+            summary,
+            failure: None,
+        };
+    }
+    let mut session = match tokio::time::timeout(operation_timeout, client.open_batch()).await {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => return batch_open_failure("open_credential_batch", error),
+        Err(_) => return batch_open_timeout("open_credential_batch", operation_timeout),
+    };
+    let mut failure = None;
 
     for (index, credential) in batch.credentials.iter().enumerate() {
-        match tokio::time::timeout(operation_timeout, client.set_password(credential, context))
+        match tokio::time::timeout(operation_timeout, session.set_password(credential, context))
             .await
         {
             Ok(Ok(())) => summary.succeeded += 1,
             Ok(Err(error)) => {
                 summary.failed += 1;
                 summary.skipped += (batch.credentials.len() - index - 1) as u32;
-                return ExecutionResult {
-                    summary,
-                    failure: Some(ExecutionFailure {
-                        operation: "set_password",
-                        subject: credential.employee_id.clone(),
-                        detail: format!("{error:#}"),
-                    }),
-                };
+                failure = Some(ExecutionFailure {
+                    operation: "set_password",
+                    subject: credential.employee_id.clone(),
+                    detail: format!("{error:#}"),
+                });
+                break;
             }
             Err(_) => {
                 summary.failed += 1;
                 summary.skipped += (batch.credentials.len() - index - 1) as u32;
-                return ExecutionResult {
-                    summary,
-                    failure: Some(ExecutionFailure {
-                        operation: "set_password",
-                        subject: credential.employee_id.clone(),
-                        detail: format!(
-                            "operation timed out after {} seconds",
-                            operation_timeout.as_secs_f64()
-                        ),
-                    }),
-                };
+                failure = Some(ExecutionFailure {
+                    operation: "set_password",
+                    subject: credential.employee_id.clone(),
+                    detail: format!(
+                        "operation timed out after {} seconds",
+                        operation_timeout.as_secs_f64()
+                    ),
+                });
+                break;
             }
         }
     }
 
-    ExecutionResult {
-        summary,
-        failure: None,
+    if let Err(error) = session.close().await
+        && failure.is_none()
+    {
+        summary.failed += 1;
+        failure = Some(ExecutionFailure {
+            operation: "close_credential_batch",
+            subject: context.domain.domain_id.clone(),
+            detail: format!("{error:#}"),
+        });
     }
+
+    ExecutionResult { summary, failure }
+}
+
+fn batch_open_failure(operation: &'static str, error: anyhow::Error) -> ExecutionResult {
+    ExecutionResult {
+        summary: SyncSummary {
+            failed: 1,
+            ..SyncSummary::default()
+        },
+        failure: Some(ExecutionFailure {
+            operation,
+            subject: "ldap".to_string(),
+            detail: format!("{error:#}"),
+        }),
+    }
+}
+
+fn batch_open_timeout(operation: &'static str, operation_timeout: Duration) -> ExecutionResult {
+    batch_open_failure(
+        operation,
+        anyhow::anyhow!(
+            "batch connection timed out after {} seconds",
+            operation_timeout.as_secs_f64()
+        ),
+    )
 }
 
 fn operation_name(kind: adss_protocol::DirectoryOperationKind) -> &'static str {

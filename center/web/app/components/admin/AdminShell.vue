@@ -17,9 +17,9 @@ const route = useRoute()
 const {
   tokenReady,
   loading,
-  loadToken,
-  clearToken,
+  restoreSession,
   authenticateToken,
+  logout,
   refreshAll,
 } = useAdminApi()
 const credentialDraft = ref('')
@@ -36,10 +36,7 @@ const activeTitle = computed(
 )
 
 onMounted(() => {
-  const storedToken = loadToken()
-  if (storedToken) {
-    void authenticateToken(storedToken, false)
-  }
+  void restoreSession()
 })
 
 async function submitCredential() {
@@ -47,15 +44,18 @@ async function submitCredential() {
   if (!token) {
     return
   }
-  await authenticateToken(token)
+  if (await authenticateToken(token)) {
+    credentialDraft.value = ''
+  }
 }
 
-function exitManagement() {
+async function exitManagement() {
   if (props.busy) {
     return
   }
-  credentialDraft.value = ''
-  clearToken()
+  if (await logout()) {
+    credentialDraft.value = ''
+  }
 }
 
 function preventBusyNavigation(event: MouseEvent) {
