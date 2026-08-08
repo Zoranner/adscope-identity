@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 use tower_http::services::{ServeDir, ServeFile};
 
 pub(crate) fn default_web_root() -> PathBuf {
-    if let Ok(path) = env::var("ADSS_WEB_ROOT") {
+    if let Ok(path) = env::var("ADSCOPE_WEB_ROOT") {
         return PathBuf::from(path);
     }
 

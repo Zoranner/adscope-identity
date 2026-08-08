@@ -25,7 +25,7 @@ impl ConnectorLogger {
         std::fs::create_dir_all(log_directory.as_ref())?;
         let appender = RollingFileAppender::builder()
             .rotation(Rotation::DAILY)
-            .filename_prefix("adss-connector.log")
+            .filename_prefix("adscope-connector.log")
             .max_log_files(14)
             .build(log_directory)?;
         let (writer, worker_guard) = tracing_appender::non_blocking(appender);

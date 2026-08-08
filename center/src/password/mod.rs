@@ -8,8 +8,8 @@ pub(crate) use hash::DeterministicPasswordHash;
 
 use hash::Argon2idPasswordHash;
 
-const PASSWORD_ENCRYPTION_KEY_ENV: &str = "ADSS_PASSWORD_ENCRYPTION_KEY";
-const PASSWORD_HASH_PROVIDER_ENV: &str = "ADSS_PASSWORD_HASH_PROVIDER";
+const PASSWORD_ENCRYPTION_KEY_ENV: &str = "ADSCOPE_PASSWORD_ENCRYPTION_KEY";
+const PASSWORD_HASH_PROVIDER_ENV: &str = "ADSCOPE_PASSWORD_HASH_PROVIDER";
 
 pub(crate) trait PasswordEncryption: Send + Sync {
     fn seal(&self, plaintext: &str) -> anyhow::Result<String>;

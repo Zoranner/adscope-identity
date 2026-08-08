@@ -22,7 +22,7 @@ pub struct LdapDirectoryConfig {
     pub adopt_existing_users_by_username: bool,
 }
 
-const DEFAULT_STATE_PATH: &str = "adss-connector-state.json";
+const DEFAULT_STATE_PATH: &str = "adscope-connector-state.json";
 const DEFAULT_TIMEOUT_SECONDS: u64 = 60;
 
 impl ConnectorProcessConfig {
@@ -49,36 +49,37 @@ impl ConnectorProcessConfig {
     }
 
     pub fn from_env() -> anyhow::Result<Self> {
-        let center_url = std::env::var("ADSS_CENTER_URL")
+        reject_retired_environment_variables()?;
+        let center_url = std::env::var("ADSCOPE_CENTER_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-        let domain_id = std::env::var("ADSS_DOMAIN_ID")?;
-        let connector_key = std::env::var("ADSS_CONNECTOR_KEY")?;
-        let interval_seconds = positive_seconds("ADSS_CONNECTOR_INTERVAL_SECONDS", 60)?;
+        let domain_id = std::env::var("ADSCOPE_DOMAIN_ID")?;
+        let connector_key = std::env::var("ADSCOPE_CONNECTOR_KEY")?;
+        let interval_seconds = positive_seconds("ADSCOPE_CONNECTOR_INTERVAL_SECONDS", 60)?;
         let http_timeout_seconds = positive_seconds(
-            "ADSS_CONNECTOR_HTTP_TIMEOUT_SECONDS",
+            "ADSCOPE_CONNECTOR_HTTP_TIMEOUT_SECONDS",
             DEFAULT_TIMEOUT_SECONDS,
         )?;
         let operation_timeout_seconds = positive_seconds(
-            "ADSS_CONNECTOR_OPERATION_TIMEOUT_SECONDS",
+            "ADSCOPE_CONNECTOR_OPERATION_TIMEOUT_SECONDS",
             DEFAULT_TIMEOUT_SECONDS,
         )?;
-        let dry_run = std::env::var("ADSS_CONNECTOR_DRY_RUN")
+        let dry_run = std::env::var("ADSCOPE_CONNECTOR_DRY_RUN")
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
         if !dry_run && !has_https_scheme(&center_url) {
-            anyhow::bail!("ADSS_CENTER_URL must use https:// without dry-run");
+            anyhow::bail!("ADSCOPE_CENTER_URL must use https:// without dry-run");
         }
         reject_removed_ldap_environment_variables()?;
         let ldap = if dry_run {
             None
         } else {
-            let url = required_env("ADSS_LDAP_URL")?;
+            let url = required_env("ADSCOPE_LDAP_URL")?;
             let server_fqdn = parse_ldap_server_fqdn(&url)?;
             Some(LdapDirectoryConfig {
                 url,
                 server_fqdn,
                 adopt_existing_users_by_username: std::env::var(
-                    "ADSS_ADOPT_EXISTING_USERS_BY_USERNAME",
+                    "ADSCOPE_ADOPT_EXISTING_USERS_BY_USERNAME",
                 )
                 .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
@@ -150,9 +151,9 @@ fn has_https_scheme(url: &str) -> bool {
 
 fn reject_removed_ldap_environment_variables() -> anyhow::Result<()> {
     for name in [
-        "ADSS_LDAP_BIND_DN",
-        "ADSS_LDAP_BIND_PASSWORD",
-        "ADSS_LDAP_ACCEPT_INVALID_CERTS",
+        "ADSCOPE_LDAP_BIND_DN",
+        "ADSCOPE_LDAP_BIND_PASSWORD",
+        "ADSCOPE_LDAP_ACCEPT_INVALID_CERTS",
     ] {
         if std::env::var_os(name).is_some() {
             anyhow::bail!("{name} is no longer supported; Connector uses GSS-API");
@@ -161,12 +162,49 @@ fn reject_removed_ldap_environment_variables() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn reject_retired_environment_variables() -> anyhow::Result<()> {
+    for (retired, replacement) in [
+        ("ADSS_CENTER_URL", "ADSCOPE_CENTER_URL"),
+        ("ADSS_DOMAIN_ID", "ADSCOPE_DOMAIN_ID"),
+        ("ADSS_CONNECTOR_KEY", "ADSCOPE_CONNECTOR_KEY"),
+        (
+            "ADSS_CONNECTOR_INTERVAL_SECONDS",
+            "ADSCOPE_CONNECTOR_INTERVAL_SECONDS",
+        ),
+        (
+            "ADSS_CONNECTOR_HTTP_TIMEOUT_SECONDS",
+            "ADSCOPE_CONNECTOR_HTTP_TIMEOUT_SECONDS",
+        ),
+        (
+            "ADSS_CONNECTOR_OPERATION_TIMEOUT_SECONDS",
+            "ADSCOPE_CONNECTOR_OPERATION_TIMEOUT_SECONDS",
+        ),
+        ("ADSS_CONNECTOR_DRY_RUN", "ADSCOPE_CONNECTOR_DRY_RUN"),
+        ("ADSS_LDAP_URL", "ADSCOPE_LDAP_URL"),
+        (
+            "ADSS_ADOPT_EXISTING_USERS_BY_USERNAME",
+            "ADSCOPE_ADOPT_EXISTING_USERS_BY_USERNAME",
+        ),
+        ("ADSS_LDAP_BIND_DN", "ADSCOPE_LDAP_BIND_DN"),
+        ("ADSS_LDAP_BIND_PASSWORD", "ADSCOPE_LDAP_BIND_PASSWORD"),
+        (
+            "ADSS_LDAP_ACCEPT_INVALID_CERTS",
+            "ADSCOPE_LDAP_ACCEPT_INVALID_CERTS",
+        ),
+    ] {
+        if std::env::var_os(retired).is_some() {
+            anyhow::bail!("{retired} is retired; use {replacement}");
+        }
+    }
+    Ok(())
+}
+
 fn parse_ldap_server_fqdn(raw_url: &str) -> anyhow::Result<String> {
     let url = Url::parse(raw_url)
-        .map_err(|_| anyhow::anyhow!("ADSS_LDAP_URL must be ldap://<FQDN>:389"))?;
+        .map_err(|_| anyhow::anyhow!("ADSCOPE_LDAP_URL must be ldap://<FQDN>:389"))?;
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("ADSS_LDAP_URL must be ldap://<FQDN>:389"))?;
+        .ok_or_else(|| anyhow::anyhow!("ADSCOPE_LDAP_URL must be ldap://<FQDN>:389"))?;
     let is_fqdn = host.contains('.')
         && host.parse::<IpAddr>().is_err()
         && host.split('.').all(|label| {
@@ -186,7 +224,7 @@ fn parse_ldap_server_fqdn(raw_url: &str) -> anyhow::Result<String> {
         || url.fragment().is_some()
         || !is_fqdn
     {
-        anyhow::bail!("ADSS_LDAP_URL must be ldap://<FQDN>:389");
+        anyhow::bail!("ADSCOPE_LDAP_URL must be ldap://<FQDN>:389");
     }
     Ok(host.to_ascii_lowercase())
 }

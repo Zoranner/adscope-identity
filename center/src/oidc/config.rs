@@ -3,9 +3,9 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::{Context, ensure};
 use url::Url;
 
-const ISSUER_ENV: &str = "ADSS_OIDC_ISSUER";
-const PRIVATE_KEY_FILE_ENV: &str = "ADSS_OIDC_PRIVATE_KEY_FILE";
-const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS";
+const ISSUER_ENV: &str = "ADSCOPE_OIDC_ISSUER";
+const PRIVATE_KEY_FILE_ENV: &str = "ADSCOPE_OIDC_PRIVATE_KEY_FILE";
+const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS";
 const AUTHORIZATION_CODE_TTL_SECONDS: u64 = 120;
 const TOKEN_TTL_SECONDS: u64 = 300;
 
@@ -24,30 +24,30 @@ impl OidcConfig {
         private_key_pem: Vec<u8>,
         allow_insecure_web_loopback_redirects: bool,
     ) -> anyhow::Result<Self> {
-        let issuer = Url::parse(issuer).context("ADSS_OIDC_ISSUER must be an absolute URL")?;
+        let issuer = Url::parse(issuer).context("ADSCOPE_OIDC_ISSUER must be an absolute URL")?;
         ensure!(
             issuer.scheme() == "https",
-            "ADSS_OIDC_ISSUER must use HTTPS"
+            "ADSCOPE_OIDC_ISSUER must use HTTPS"
         );
         ensure!(
             issuer.host().is_some(),
-            "ADSS_OIDC_ISSUER must include a host"
+            "ADSCOPE_OIDC_ISSUER must include a host"
         );
         ensure!(
             issuer.username().is_empty() && issuer.password().is_none(),
-            "ADSS_OIDC_ISSUER must not include userinfo"
+            "ADSCOPE_OIDC_ISSUER must not include userinfo"
         );
         ensure!(
             issuer.query().is_none(),
-            "ADSS_OIDC_ISSUER must not include a query"
+            "ADSCOPE_OIDC_ISSUER must not include a query"
         );
         ensure!(
             issuer.fragment().is_none(),
-            "ADSS_OIDC_ISSUER must not include a fragment"
+            "ADSCOPE_OIDC_ISSUER must not include a fragment"
         );
         ensure!(
             issuer.path() == "/",
-            "ADSS_OIDC_ISSUER path must be '/' or empty"
+            "ADSCOPE_OIDC_ISSUER path must be '/' or empty"
         );
 
         Ok(Self {
