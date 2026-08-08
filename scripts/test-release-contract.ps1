@@ -14,8 +14,8 @@ $fakeRepository = Join-Path $temporaryRoot 'dirty-repository'
 New-Item -ItemType Directory -Path $assemblyRoot, $fakeRepository -Force | Out-Null
 
 try {
-    $actualVersion = Get-AdssVersion -RepositoryRoot $repositoryRoot
-    if ($actualVersion -ne '0.2.0-rc.1') {
+    $actualVersion = Get-AdscopeVersion -RepositoryRoot $repositoryRoot
+    if ($actualVersion -ne '0.1.0') {
         throw "Unexpected workspace version: $actualVersion"
     }
 
@@ -30,9 +30,9 @@ try {
         throw 'Mismatched release version was not rejected.'
     }
 
-    $fakeBinary = Join-Path $assemblyRoot 'fake-adss-connector.exe'
+    $fakeBinary = Join-Path $assemblyRoot 'fake-adscope-connector.exe'
     Set-Content -LiteralPath $fakeBinary -Value 'fake connector binary' -NoNewline
-    $connectorArchive = Join-Path $assemblyRoot 'adss-connector-v0.2.0-rc.1-windows-x86_64.zip'
+    $connectorArchive = Join-Path $assemblyRoot 'adscope-connector-v0.1.0-windows-x86_64.zip'
     New-ConnectorArchive `
         -RepositoryRoot $repositoryRoot `
         -ConnectorBinary $fakeBinary `
@@ -41,7 +41,7 @@ try {
     $expanded = Join-Path $assemblyRoot 'expanded'
     Expand-Archive -LiteralPath $connectorArchive -DestinationPath $expanded
     foreach ($entry in @(
-        'adss-connector.exe',
+        'adscope-connector.exe',
         '.env.example',
         'install-service.ps1',
         'uninstall-service.ps1',
@@ -52,12 +52,12 @@ try {
         }
     }
 
-    $centerArchive = Join-Path $assemblyRoot 'adss-center-v0.2.0-rc.1-linux-amd64.tar'
+    $centerArchive = Join-Path $assemblyRoot 'adscope-center-v0.1.0-linux-amd64.tar'
     Set-Content -LiteralPath $centerArchive -Value 'fake center image archive' -NoNewline
     $manifestPath = Join-Path $assemblyRoot 'manifest.json'
     $checksumsPath = Join-Path $assemblyRoot 'SHA256SUMS'
     Write-ReleaseManifest `
-        -Version '0.2.0-rc.1' `
+        -Version '0.1.0' `
         -Revision '0123456789abcdef' `
         -Target 'windows-x86_64,linux-amd64' `
         -Artifacts @($connectorArchive, $centerArchive) `
@@ -65,7 +65,7 @@ try {
         -ChecksumsPath $checksumsPath
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.version -ne '0.2.0-rc.1' -or $manifest.revision -ne '0123456789abcdef') {
+    if ($manifest.version -ne '0.1.0' -or $manifest.revision -ne '0123456789abcdef') {
         throw 'Release manifest version or revision is incorrect.'
     }
     if ($manifest.target -ne 'windows-x86_64,linux-amd64') {

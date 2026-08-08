@@ -1,12 +1,12 @@
 [package]
-name = "adss-store"
-version = "0.2.0-rc.1"
+name = "adscope-store"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
 
 [dependencies]
-adss-protocol = { path = "../protocol" }
+adscope-protocol = { path = "../protocol" }
 anyhow = "1.0.100"
 sea-orm = { version = "2.0.0-rc.38", features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 serde = { version = "1.0.228", features = ["derive"] }

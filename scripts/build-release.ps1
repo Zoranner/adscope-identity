@@ -28,7 +28,7 @@ function Assert-CleanWorktree {
     }
 }
 
-function Get-AdssVersion {
+function Get-AdscopeVersion {
     param([Parameter(Mandatory)][string]$RepositoryRoot)
 
     $manifestPath = Join-Path $RepositoryRoot 'Cargo.toml'
@@ -36,10 +36,10 @@ function Get-AdssVersion {
     Assert-NativeSuccess 'cargo metadata'
     $metadata = $metadataJson | ConvertFrom-Json
     $releasePackages = @(
-        $metadata.packages | Where-Object { $_.name -in @('adss-center', 'adss-connector') }
+        $metadata.packages | Where-Object { $_.name -in @('adscope-center', 'adscope-connector') }
     )
     if ($releasePackages.Count -ne 2) {
-        throw 'Cargo metadata must contain both adss-center and adss-connector.'
+        throw 'Cargo metadata must contain both adscope-center and adscope-connector.'
     }
     $versions = @(
         $releasePackages |
@@ -73,11 +73,11 @@ function New-ConnectorArchive {
     if (-not (Test-Path -LiteralPath $ConnectorBinary -PathType Leaf)) {
         throw "Connector binary does not exist: $ConnectorBinary"
     }
-    $staging = Join-Path ([System.IO.Path]::GetTempPath()) "adss-connector-archive-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $staging = Join-Path ([System.IO.Path]::GetTempPath()) "adscope-connector-archive-$PID-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     try {
         $entries = @{
-            'adss-connector.exe' = $ConnectorBinary
+            'adscope-connector.exe' = $ConnectorBinary
             '.env.example' = (Join-Path $RepositoryRoot 'connector\.env.example')
             'install-service.ps1' = (Join-Path $RepositoryRoot 'deploy\connector\install-service.ps1')
             'uninstall-service.ps1' = (Join-Path $RepositoryRoot 'deploy\connector\uninstall-service.ps1')
@@ -146,7 +146,7 @@ function Invoke-ReleaseBuild {
         [Parameter(Mandatory)][string]$ReleaseOutputRoot
     )
 
-    $actualVersion = Get-AdssVersion -RepositoryRoot $RepositoryRoot
+    $actualVersion = Get-AdscopeVersion -RepositoryRoot $RepositoryRoot
     if ([string]::IsNullOrWhiteSpace($RequestedVersion)) {
         $RequestedVersion = $actualVersion
     }
@@ -164,8 +164,8 @@ function Invoke-ReleaseBuild {
     $releaseDirectory = Join-Path $resolvedOutputRoot "v$RequestedVersion"
     New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
     foreach ($name in @(
-        "adss-connector-v$RequestedVersion-windows-x86_64.zip",
-        "adss-center-v$RequestedVersion-linux-amd64.tar",
+        "adscope-connector-v$RequestedVersion-windows-x86_64.zip",
+        "adscope-center-v$RequestedVersion-linux-amd64.tar",
         'manifest.json',
         'SHA256SUMS'
     )) {
@@ -177,19 +177,19 @@ function Invoke-ReleaseBuild {
 
     Push-Location $RepositoryRoot
     try {
-        cargo build --release --locked -p adss-connector
+        cargo build --release --locked -p adscope-connector
         Assert-NativeSuccess 'Connector release build'
-        $connectorArchive = Join-Path $releaseDirectory "adss-connector-v$RequestedVersion-windows-x86_64.zip"
+        $connectorArchive = Join-Path $releaseDirectory "adscope-connector-v$RequestedVersion-windows-x86_64.zip"
         New-ConnectorArchive `
             -RepositoryRoot $RepositoryRoot `
-            -ConnectorBinary (Join-Path $RepositoryRoot 'target\release\adss-connector.exe') `
+            -ConnectorBinary (Join-Path $RepositoryRoot 'target\release\adscope-connector.exe') `
             -OutputPath $connectorArchive
 
         $artifacts = @($connectorArchive)
         $target = 'windows-x86_64'
         if (-not $SkipDockerBuild) {
-            $imageTag = "adss-center:$RequestedVersion"
-            $centerArchive = Join-Path $releaseDirectory "adss-center-v$RequestedVersion-linux-amd64.tar"
+            $imageTag = "adscope-center:$RequestedVersion"
+            $centerArchive = Join-Path $releaseDirectory "adscope-center-v$RequestedVersion-linux-amd64.tar"
             docker build --platform linux/amd64 `
                 --build-arg "VERSION=$RequestedVersion" `
                 --build-arg "REVISION=$revision" `
