@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
-$serviceName = 'ADStructureSyncConnector'
+$serviceName = 'AdscopeConnector'
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()

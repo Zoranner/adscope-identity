@@ -4,7 +4,7 @@ use rand::{TryRngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const CSRF_PREFIX: &str = "adss-csrf:v1";
+const CSRF_PREFIX: &str = "adscope-csrf:v1";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -151,7 +151,7 @@ mod tests {
 
         assert!(!signer.verify(&tampered, "1001", "sha256:request-a", 1_000));
         assert!(!signer.verify(
-            "adss-csrf:v1.not-json.signature",
+            "adscope-csrf:v1.not-json.signature",
             "1001",
             "sha256:request-a",
             1_000

@@ -953,7 +953,7 @@ fn sqlite_file_database_url(name: &str) -> (String, PathBuf) {
         .unwrap()
         .as_nanos();
     let database_path = std::env::temp_dir().join(format!(
-        "adss-store-{name}-{timestamp}-{}.db",
+        "adscope-store-{name}-{timestamp}-{}.db",
         std::process::id()
     ));
     let database_url = format!(

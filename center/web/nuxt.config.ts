@@ -7,7 +7,7 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
   app: {
     head: {
-      title: 'ADSS Center',
+      title: 'Adscope Center',
       meta: [
         {
           name: 'viewport',

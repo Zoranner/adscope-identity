@@ -8,7 +8,7 @@ if (-not (Test-Path -LiteralPath $buildScriptPath -PathType Leaf)) {
 
 . $buildScriptPath
 
-$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "adss-release-contract-$PID-$([Guid]::NewGuid().ToString('N'))"
+$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "adscope-release-contract-$PID-$([Guid]::NewGuid().ToString('N'))"
 $assemblyRoot = Join-Path $temporaryRoot 'assembly'
 $fakeRepository = Join-Path $temporaryRoot 'dirty-repository'
 New-Item -ItemType Directory -Path $assemblyRoot, $fakeRepository -Force | Out-Null

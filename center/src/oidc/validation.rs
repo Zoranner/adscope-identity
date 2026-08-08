@@ -222,7 +222,7 @@ mod tests {
         validate_response_mode, validate_scopes, validate_state,
     };
 
-    const WEB_CALLBACK: &str = "https://portal.example.com/oauth/callback?source=adss";
+    const WEB_CALLBACK: &str = "https://portal.example.com/oauth/callback?source=adscope";
 
     #[test]
     fn body_limit_is_sixteen_kibibytes() {
@@ -320,7 +320,7 @@ mod tests {
             validate_redirect_uri(
                 OAuthClientType::Web,
                 &registered,
-                "https://portal.example.com/oauth/callback/child?source=adss",
+                "https://portal.example.com/oauth/callback/child?source=adscope",
                 false,
             )
             .is_err()
@@ -329,22 +329,23 @@ mod tests {
 
     #[test]
     fn web_redirect_compares_parsed_structure_and_rejects_field_changes() {
-        let registered = ["https://PORTAL.example.com:8443/oauth/callback?source=adss".to_string()];
+        let registered =
+            ["https://PORTAL.example.com:8443/oauth/callback?source=adscope".to_string()];
         assert!(
             validate_redirect_uri(
                 OAuthClientType::Web,
                 &registered,
-                "https://portal.example.com:8443/oauth/callback?source=adss",
+                "https://portal.example.com:8443/oauth/callback?source=adscope",
                 false,
             )
             .is_ok()
         );
 
         for changed in [
-            "http://portal.example.com:8443/oauth/callback?source=adss",
-            "https://other.example.com:8443/oauth/callback?source=adss",
-            "https://portal.example.com:9443/oauth/callback?source=adss",
-            "https://portal.example.com:8443/oauth/other?source=adss",
+            "http://portal.example.com:8443/oauth/callback?source=adscope",
+            "https://other.example.com:8443/oauth/callback?source=adscope",
+            "https://portal.example.com:9443/oauth/callback?source=adscope",
+            "https://portal.example.com:8443/oauth/other?source=adscope",
             "https://portal.example.com:8443/oauth/callback?source=other",
         ] {
             assert!(
@@ -371,22 +372,22 @@ mod tests {
 
     #[test]
     fn desktop_redirect_only_allows_loopback_ip_and_variable_port() {
-        let registered = ["http://127.0.0.1:41000/callback?source=adss".to_string()];
+        let registered = ["http://127.0.0.1:41000/callback?source=adscope".to_string()];
         assert_eq!(
             validate_redirect_uri(
                 OAuthClientType::Desktop,
                 &registered,
-                "http://127.0.0.1:51000/callback?source=adss",
+                "http://127.0.0.1:51000/callback?source=adscope",
                 false,
             )
             .unwrap(),
-            "http://127.0.0.1:51000/callback?source=adss"
+            "http://127.0.0.1:51000/callback?source=adscope"
         );
         assert!(
             validate_redirect_uri(
                 OAuthClientType::Desktop,
                 &registered,
-                "http://127.0.0.2:51000/callback?source=adss",
+                "http://127.0.0.2:51000/callback?source=adscope",
                 false,
             )
             .is_err()
@@ -395,7 +396,7 @@ mod tests {
             validate_redirect_uri(
                 OAuthClientType::Desktop,
                 &registered,
-                "http://127.0.0.1:51000/other?source=adss",
+                "http://127.0.0.1:51000/other?source=adscope",
                 false,
             )
             .is_err()

@@ -4,7 +4,7 @@
 
 每个域部署一个 Connector。Connector 定时主动请求中心服务，中心服务不主动连接域控或 Connector。
 
-Connector 请求使用 `x-adss-connector-key` 认证，只能访问请求 `domain_id` 对应的域配置和同步数据。中心服务返回的是当前期望状态；域内 AD 是下游执行目标。
+Connector 请求使用 `x-adscope-connector-key` 认证，只能访问请求 `domain_id` 对应的域配置和同步数据。中心服务返回的是当前期望状态；域内 AD 是下游执行目标。
 
 ## 同步通道
 
@@ -85,7 +85,7 @@ Connector 将目录批次转为固定执行顺序：
 
 Connector 按中心下发的域配置写入 AD，不在本地 `.env` 配置字段映射。
 
-用户工号写入 `employee_id_attribute` 指定的属性，默认 `employeeID`。受管安全组写入 `managed_group_id_attribute` 指定的属性，默认 `adminDescription`，属性值格式为 `adss:group:{group.id}`。Connector 通过该属性在受管范围内查找已有组对象。
+用户工号写入 `employee_id_attribute` 指定的属性，默认 `employeeID`。受管安全组写入 `managed_group_id_attribute` 指定的属性，默认 `adminDescription`，属性值格式为 `adscope:group:{group.id}`。Connector 通过该属性在受管范围内查找已有组对象。
 
 标准 AD 字段保持固定映射：用户账号名写入 `sAMAccountName` 和 UPN 本地部分，显示名写入 `displayName`，邮箱写入 `mail`，手机号写入 `mobile`，办公电话写入 `telephoneNumber`，密码写入 `unicodePwd`。组名写入 `cn` 和 `sAMAccountName`，组成员写入 `member`。
 

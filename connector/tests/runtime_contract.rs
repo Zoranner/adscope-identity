@@ -599,7 +599,7 @@ fn directory_kind_name(kind: adscope_protocol::DirectoryOperationKind) -> &'stat
 
 fn temp_state_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
-        "adss-connector-{name}-{}-{}.json",
+        "adscope-connector-{name}-{}-{}.json",
         std::process::id(),
         std::thread::current().name().unwrap_or("test")
     ))

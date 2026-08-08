@@ -15,9 +15,9 @@ Center 和 Connector 是两个独立部署单元，部署方式不同：
 
 ## 主服务
 
-主服务是中心 API 和同步控制面。主服务必须配置 `ADSS_DATABASE_URL`、`ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_PASSWORD_HASH_PROVIDER`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN`、`ADSS_OIDC_ISSUER` 和 `ADSS_OIDC_PRIVATE_KEY_FILE`。生产部署还应显式设置 `ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false`。
+主服务是中心 API 和同步控制面。主服务必须配置 `ADSCOPE_DATABASE_URL`、`ADSCOPE_PASSWORD_ENCRYPTION_KEY`、`ADSCOPE_PASSWORD_HASH_PROVIDER`、`ADSCOPE_USER_SESSION_KEY`、`ADSCOPE_MANAGEMENT_TOKEN`、`ADSCOPE_OIDC_ISSUER` 和 `ADSCOPE_OIDC_PRIVATE_KEY_FILE`。生产部署还应显式设置 `ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false`。
 
-`ADSS_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
+`ADSCOPE_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
 Web 使用 Nuxt 静态构建，由主服务统一托管。构建命令在 `center/web` 下执行：
 
@@ -26,7 +26,7 @@ bun install
 bun run build
 ```
 
-构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `ADSS_WEB_ROOT` 指定静态文件目录。
+构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `ADSCOPE_WEB_ROOT` 指定静态文件目录。
 
 主服务会优先匹配 `/api/*`，非 API 请求由 Web 静态文件处理。普通用户入口为 `/login`，管理入口为 `/admin`。未知 `/api/*` 返回 API 404，不会回退到前端页面。
 
@@ -56,12 +56,12 @@ services:
 `center.env` 中的 OIDC 配置如下：
 
 ```text
-ADSS_OIDC_ISSUER=https://center.example.com
-ADSS_OIDC_PRIVATE_KEY_FILE=/run/secrets/oidc-private-key.pem
-ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false
+ADSCOPE_OIDC_ISSUER=https://center.example.com
+ADSCOPE_OIDC_PRIVATE_KEY_FILE=/run/secrets/oidc-private-key.pem
+ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false
 ```
 
-`ADSS_OIDC_ISSUER` 必须填写反向代理对外提供的 HTTPS 地址，并与客户端访问的 Center 地址一致。该值只能是 HTTPS origin，不能包含路径、查询参数或片段。
+`ADSCOPE_OIDC_ISSUER` 必须填写反向代理对外提供的 HTTPS 地址，并与客户端访问的 Center 地址一致。该值只能是 HTTPS origin，不能包含路径、查询参数或片段。
 
 Compose 只通过 `expose` 提供 Center 内部 HTTP 端口，由同一容器网络中的反向代理终止 TLS 并转发请求。Center 不管理 TLS 证书，OIDC RSA 私钥也不是 TLS 证书，两类密钥应分别生成和保管。
 
@@ -81,18 +81,18 @@ Center 只发布一个活动公钥，不提供新旧密钥并行验证窗口。�
 
 ## Connector
 
-Connector 是域内常驻同步进程。默认 [adss-connector .env 示例](../../connector/.env.example) 使用 dry-run，不写入 AD。
+Connector 是域内常驻同步进程。默认 [adscope-connector .env 示例](../../connector/.env.example) 使用 dry-run，不写入 AD。
 
 启用真实域控写入时，设置：
 
 ```text
-ADSS_CONNECTOR_DRY_RUN=0
-ADSS_LDAP_URL=ldap://dc01.rd.kim:389
+ADSCOPE_CONNECTOR_DRY_RUN=0
+ADSCOPE_LDAP_URL=ldap://dc01.rd.kim:389
 ```
 
 Connector 主机必须加入 `rd.kim` 域，并以 `NetworkService` 服务身份运行。真实模式只接受 `ldap://<FQDN>:389`；Connector 使用主机计算机账号 `RD\<CONNECTOR-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
 
-历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `ADSS_ADOPT_EXISTING_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写中心 `employee_id`。迁移完成后应关闭该开关。
+历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `ADSCOPE_ADOPT_EXISTING_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写中心 `employee_id`。迁移完成后应关闭该开关。
 
 本地 state 文件只保存：
 
@@ -103,7 +103,7 @@ Connector 主机必须加入 `rd.kim` 域，并以 `NetworkService` 服务身份
 }
 ```
 
-Connector 在运行目录下自动维护 `adss-connector-state.json`。文件无法解析时，Connector 可以以 `0/0` 进度和 rebuild flags 重新拉取，并在 confirm 被中心接受后覆盖 state。
+Connector 在运行目录下自动维护 `adscope-connector-state.json`。文件无法解析时，Connector 可以以 `0/0` 进度和 rebuild flags 重新拉取，并在 confirm 被中心接受后覆盖 state。
 
 ## 部署要求
 
@@ -111,7 +111,7 @@ Connector 在运行目录下自动维护 `adss-connector-state.json`。文件无
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境配置本机高熵密码加密密钥。
-- `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY`、`ADSS_MANAGEMENT_TOKEN` 和 Connector key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
+- `ADSCOPE_PASSWORD_ENCRYPTION_KEY`、`ADSCOPE_USER_SESSION_KEY`、`ADSCOPE_MANAGEMENT_TOKEN` 和 Connector key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 管理 Web 静态文件由主服务托管，不单独开放 Nuxt 开发服务。
 - 仅向 Connector 主机计算机账号委派镜像根和隔离 OU 范围内的必要权限，不使用 `superuser`、本地账户或其他内置本地服务身份。

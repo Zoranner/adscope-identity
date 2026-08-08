@@ -90,7 +90,7 @@ async function exitUser() {
           <Database :size="22" />
         </span>
         <span class="brand-copy">
-          <span class="brand-title">ADSS Center</span>
+          <span class="brand-title">Adscope Center</span>
           <span class="brand-subtitle">用户自助入口</span>
         </span>
       </NuxtLink>

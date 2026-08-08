@@ -50,7 +50,7 @@ API 按调用身份分组：
 - 根据 `users.username` 定位用户。用户名必须唯一，不能用工号代替登录名。
 - 使用 `user_credentials.password_verifier` 验证用户提交的密码。
 - 登录成功后签发普通用户自助接口使用的 Bearer token。
-- 登录响应同时把同一个 token 写入 `adss_sso` Cookie，供浏览器 OIDC 授权流程识别登录状态。Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`。
+- 登录响应同时把同一个 token 写入 `adscope_sso` Cookie，供浏览器 OIDC 授权流程识别登录状态。Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`。
 - 登录失败返回 `401 Unauthorized`。
 
 响应：
@@ -58,7 +58,7 @@ API 按调用身份分组：
 ```json
 {
   "employee_id": "1001",
-  "access_token": "adss-user-session:v2.<payload>.<signature>"
+  "access_token": "adscope-user-session:v2.<payload>.<signature>"
 }
 ```
 
@@ -66,7 +66,7 @@ API 按调用身份分组：
 
 `POST /api/auth/logout`
 
-服务端返回 `204 No Content`，并通过 `Max-Age=0` 的 `adss_sso` Cookie 清除当前浏览器登录状态。该接口不接受会话 ID，也不撤销其他浏览器中的无状态登录凭证。
+服务端返回 `204 No Content`，并通过 `Max-Age=0` 的 `adscope_sso` Cookie 清除当前浏览器登录状态。该接口不接受会话 ID，也不撤销其他浏览器中的无状态登录凭证。
 
 ### 本人资料
 
@@ -238,13 +238,13 @@ Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `
 
 参数缺失、重复、未定义、编码非法或总查询长度超过 16 KiB 时，服务端拒绝请求。
 
-服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adss_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 Center 的 `/authorize` 确认页。`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
+服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adscope_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 Center 的 `/authorize` 确认页。`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
 
 ### 授权确认上下文
 
 `GET /api/oauth2/authorize/context`
 
-查询参数与 `GET /oauth2/authorize` 相同。请求必须携带有效 `adss_sso` Cookie，服务端再次检查客户端、用户和全部授权参数。
+查询参数与 `GET /oauth2/authorize` 相同。请求必须携带有效 `adscope_sso` Cookie，服务端再次检查客户端、用户和全部授权参数。
 
 响应包含本次确认所需的客户端、用户、声明预览、授权参数和短期 CSRF token：
 
@@ -262,7 +262,7 @@ Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `
     "name": "张三",
     "email": "zhangsan@example.com"
   },
-  "csrf_token": "adss-csrf:v1....",
+  "csrf_token": "adscope-csrf:v1....",
   "authorization": {
     "response_type": "code",
     "client_id": "client_...",
@@ -400,7 +400,7 @@ UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 toke
 
 ## 管理入口
 
-管理凭证只用于创建浏览器管理会话，不能直接访问其他管理接口，也不能复用普通用户自助 token。管理会话 Cookie 名为 `adss_management`，使用 `HttpOnly`、`Secure`、`SameSite=Strict` 和 `Path=/api/admin`，有效期固定为 8 小时。所有管理 Cookie 会话由管理凭证经 HMAC 派生的服务端密钥签名，且每次创建会生成新的随机 CSRF nonce。
+管理凭证只用于创建浏览器管理会话，不能直接访问其他管理接口，也不能复用普通用户自助 token。管理会话 Cookie 名为 `adscope_management`，使用 `HttpOnly`、`Secure`、`SameSite=Strict` 和 `Path=/api/admin`，有效期固定为 8 小时。所有管理 Cookie 会话由管理凭证经 HMAC 派生的服务端密钥签名，且每次创建会生成新的随机 CSRF nonce。
 
 ### 管理会话
 
@@ -412,7 +412,7 @@ UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 toke
 }
 ```
 
-成功时服务端设置 `adss_management` Cookie，并返回当前会话绑定的 CSRF nonce：
+成功时服务端设置 `adscope_management` Cookie，并返回当前会话绑定的 CSRF nonce：
 
 ```json
 {
@@ -420,12 +420,12 @@ UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 toke
 }
 ```
 
-`GET /api/admin/session` 用现有管理 Cookie 恢复前端会话，并返回同一会话的 `csrf_token`。`DELETE /api/admin/session` 必须同时携带管理 Cookie 和 `X-ADSS-CSRF-Token`，成功后返回 `204 No Content` 并以 `Max-Age=0` 清除该 Cookie。
+`GET /api/admin/session` 用现有管理 Cookie 恢复前端会话，并返回同一会话的 `csrf_token`。`DELETE /api/admin/session` 必须同时携带管理 Cookie 和 `X-ADSCOPE-CSRF-Token`，成功后返回 `204 No Content` 并以 `Max-Age=0` 清除该 Cookie。
 
-这三个端点都返回 `Cache-Control: no-store`。除创建端点外，所有 `/api/admin/*` 路由只接受有效的 `adss_management` Cookie；普通用户 Cookie、普通用户 Bearer token 和旧管理 Bearer token 一律返回 `401 Unauthorized`。所有写方法还必须提供与当前会话 nonce 完全匹配的请求头：
+这三个端点都返回 `Cache-Control: no-store`。除创建端点外，所有 `/api/admin/*` 路由只接受有效的 `adscope_management` Cookie；普通用户 Cookie、普通用户 Bearer token 和旧管理 Bearer token 一律返回 `401 Unauthorized`。所有写方法还必须提供与当前会话 nonce 完全匹配的请求头：
 
 ```text
-X-ADSS-CSRF-Token: <csrf_token>
+X-ADSCOPE-CSRF-Token: <csrf_token>
 ```
 
 缺少或不匹配时返回 `403 Forbidden`。管理写入只维护中心当前事实，不直接访问域控。
@@ -559,7 +559,7 @@ X-ADSS-CSRF-Token: <csrf_token>
 }
 ```
 
-创建和修改请求不得携带 `connector_key` 或 `connector_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Connector key。管理员必须把本次响应中的新 key 配置到对应 Connector 的 `ADSS_CONNECTOR_KEY`。域列表及其他查询响应不返回 Connector key 或其摘要。
+创建和修改请求不得携带 `connector_key` 或 `connector_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Connector key。管理员必须把本次响应中的新 key 配置到对应 Connector 的 `ADSCOPE_CONNECTOR_KEY`。域列表及其他查询响应不返回 Connector key 或其摘要。
 
 ### OU 管理
 
@@ -674,7 +674,7 @@ rebuild 由 Connector 请求中的 `rebuild_directory` 和 `rebuild_credentials`
 所有 Connector 接口必须携带：
 
 ```text
-x-adss-connector-key: <connector-key>
+x-adscope-connector-key: <connector-key>
 ```
 
 服务端按请求 `domain_id` 校验 `domains.connector_key_hash`。未知域、错误 key 或缺少 key 返回 `401 Unauthorized`，域被禁用返回 `403 Forbidden`。

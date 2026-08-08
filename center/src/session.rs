@@ -8,8 +8,8 @@ use sha2::Sha256;
 
 use crate::oidc::crypto::CsrfSigner;
 
-const TOKEN_PREFIX: &str = "adss-user-session:v2";
-const MANAGEMENT_TOKEN_PREFIX: &str = "adss-management-session:v1";
+const TOKEN_PREFIX: &str = "adscope-user-session:v2";
+const MANAGEMENT_TOKEN_PREFIX: &str = "adscope-management-session:v1";
 const MANAGEMENT_SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 3600;
 const SESSION_KEY_ENV: &str = "ADSCOPE_USER_SESSION_KEY";
@@ -193,7 +193,7 @@ mod tests {
         let token = issuer.issue_at("employee:1001", 1_000).unwrap();
         let session = issuer.verify_at(&token, 1_030).unwrap();
 
-        assert!(token.starts_with("adss-user-session:v2."));
+        assert!(token.starts_with("adscope-user-session:v2."));
         assert_eq!(session.employee_id, "employee:1001");
         assert_eq!(session.auth_time, 1_000);
         assert_eq!(session.expires_at, 1_060);
@@ -209,7 +209,7 @@ mod tests {
         assert!(issuer.verify_at(&tampered, 1_001).is_none());
         assert!(
             issuer
-                .verify_at("adss-user-session:v2.not-json.signature", 1_001)
+                .verify_at("adscope-user-session:v2.not-json.signature", 1_001)
                 .is_none()
         );
         assert!(issuer.verify_at(&token, 1_061).is_none());

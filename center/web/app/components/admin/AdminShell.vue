@@ -81,7 +81,7 @@ function preventBusyNavigation(event: MouseEvent) {
           <Database :size="22" />
         </span>
         <span class="brand-copy">
-          <span class="brand-title">ADSS Center</span>
+          <span class="brand-title">Adscope Center</span>
           <span class="brand-subtitle">中心事实源管理工作台</span>
         </span>
       </NuxtLink>

@@ -13,7 +13,7 @@ use windows_service::service_control_handler::{
 };
 use windows_service::service_dispatcher;
 
-pub const SERVICE_NAME: &str = "ADStructureSyncConnector";
+pub const SERVICE_NAME: &str = "AdscopeConnector";
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 static SERVICE_RUNTIME_DIR: OnceLock<PathBuf> = OnceLock::new();
 

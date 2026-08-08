@@ -30,7 +30,7 @@ cp connector/.env.example <connector-runtime-dir>/.env
 启动主服务：
 
 ```text
-cargo run -p adss-center
+cargo run -p adscope-center
 ```
 
 构建 Web：
@@ -41,12 +41,12 @@ bun install
 bun run build
 ```
 
-主服务默认读取运行目录下的 `web`，在开发仓库中也会读取 `center/web/.output/public`。需要指定静态文件目录时设置 `ADSS_WEB_ROOT`。普通用户入口为 `/login`，管理入口为 `/admin`。
+主服务默认读取运行目录下的 `web`，在开发仓库中也会读取 `center/web/.output/public`。需要指定静态文件目录时设置 `ADSCOPE_WEB_ROOT`。普通用户入口为 `/login`，管理入口为 `/admin`。
 
 启动 Connector：
 
 ```text
-cargo run -p adss-connector
+cargo run -p adscope-connector
 ```
 
 Connector dry-run 可用于验证同步协议和本地 state，不写入 AD。

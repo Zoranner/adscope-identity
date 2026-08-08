@@ -8,7 +8,7 @@ use std::fs;
 #[test]
 fn file_logger_writes_failure_details_without_configuration_secrets() {
     let log_dir = std::env::temp_dir().join(format!(
-        "adss-connector-logs-{}-{}",
+        "adscope-connector-logs-{}-{}",
         std::process::id(),
         std::thread::current().name().unwrap_or("test")
     ));
@@ -17,7 +17,7 @@ fn file_logger_writes_failure_details_without_configuration_secrets() {
         "https://sync.example.com",
         "domain-a",
         "connector-a-key",
-        "adss-connector-state.json",
+        "adscope-connector-state.json",
         60,
         false,
         Some(LdapDirectoryConfig {

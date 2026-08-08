@@ -123,7 +123,7 @@ export function useAdminApi() {
         ...(init.body ? { 'content-type': 'application/json' } : {}),
         ...(method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
           ? {}
-          : { 'x-adss-csrf-token': csrfToken.value }),
+          : { 'x-adscope-csrf-token': csrfToken.value }),
         ...init.headers,
       },
     })
@@ -267,7 +267,7 @@ export function useAdminApi() {
         method: 'DELETE',
         credentials: 'same-origin',
         headers: {
-          'x-adss-csrf-token': csrfToken.value,
+          'x-adscope-csrf-token': csrfToken.value,
         },
       })
       if (!response.ok) {

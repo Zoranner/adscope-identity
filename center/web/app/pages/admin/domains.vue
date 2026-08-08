@@ -215,7 +215,7 @@ async function saveDomain() {
           <p id="connector-key-notice">仅显示一次；关闭后需重新保存域配置才能生成新 key。</p>
         </div>
         <div class="field">
-          <label for="generated-connector-key">ADSS_CONNECTOR_KEY</label>
+          <label for="generated-connector-key">ADSCOPE_CONNECTOR_KEY</label>
           <div class="connector-key-row">
             <input
               id="generated-connector-key"
@@ -228,8 +228,8 @@ async function saveDomain() {
             <button
               type="button"
               class="icon-button"
-              title="复制 ADSS_CONNECTOR_KEY"
-              aria-label="复制 ADSS_CONNECTOR_KEY"
+              title="复制 ADSCOPE_CONNECTOR_KEY"
+              aria-label="复制 ADSCOPE_CONNECTOR_KEY"
               @click="copyConnectorKey"
             >
               <Copy :size="17" />

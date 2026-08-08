@@ -12,7 +12,7 @@
 
 `user_credentials.password_ciphertext` 用于保存中心当前密码材料。主服务通过密码加密方式处理密文，只有在响应 `/api/connector/sync` 时才在内存中解封，并组装 `CredentialEntry.plaintext_password`。
 
-主服务使用内置 XChaCha20-Poly1305 加密密码材料，并通过本机受保护配置提供高熵 `ADSS_PASSWORD_ENCRYPTION_KEY`。该密钥必须和数据库备份分离保存，不能进入源码、日志或配置仓库。
+主服务使用内置 XChaCha20-Poly1305 加密密码材料，并通过本机受保护配置提供高熵 `ADSCOPE_PASSWORD_ENCRYPTION_KEY`。该密钥必须和数据库备份分离保存，不能进入源码、日志或配置仓库。
 
 ## 凭据传输
 
@@ -28,21 +28,21 @@
 
 ## Connector Key
 
-`domains.connector_key_hash` 保存 Connector key 的 `sha256:` 摘要，不保存明文 key。请求时服务端对 `x-adss-connector-key` 做同样摘要，并使用常量时间比较。
+`domains.connector_key_hash` 保存 Connector key 的 `sha256:` 摘要，不保存明文 key。请求时服务端对 `x-adscope-connector-key` 做同样摘要，并使用常量时间比较。
 
 Connector key 是域绑定共享密钥。部署时应通过 Windows DPAPI、Secret Manager、受限配置文件或等价机制保存 Connector key。Connector key 不得进入日志、错误响应或配置仓库。
 
 ## 普通用户会话
 
-普通用户登录成功后，主服务返回 HMAC-SHA256 签名的 Bearer token，并把同一个 token 写入 `adss_sso` Cookie。Bearer token 只用于 `/api/me/*` 自助接口；Cookie 只用于浏览器 OIDC 授权流程。两种入口都从签名内容中确定当前 `employee_id`，不建立服务端会话表。
+普通用户登录成功后，主服务返回 HMAC-SHA256 签名的 Bearer token，并把同一个 token 写入 `adscope_sso` Cookie。Bearer token 只用于 `/api/me/*` 自助接口；Cookie 只用于浏览器 OIDC 授权流程。两种入口都从签名内容中确定当前 `employee_id`，不建立服务端会话表。
 
-`adss_sso` Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`。默认有效期为一小时，可通过服务端会话 TTL 配置调整。`POST /api/auth/logout` 只清除当前浏览器 Cookie，不接受或撤销远程会话。
+`adscope_sso` Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`。默认有效期为一小时，可通过服务端会话 TTL 配置调整。`POST /api/auth/logout` 只清除当前浏览器 Cookie，不接受或撤销远程会话。
 
 普通用户不能通过路径参数选择其他用户，不能修改 `employee_id`、`username`、显示名、组织归属、启用状态、组成员或域配置。
 
 `/api/me/password` 必须根据 token 中的 `employee_id` 修改当前用户自己的密码。请求必须提供当前密码，服务端用 `password_verifier` 校验后才写入新的 verifier 和 ciphertext。
 
-`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN` 是生产密钥材料，必须通过受限 `.env`、系统环境变量、Secret Manager、Windows DPAPI 或等价机制注入，不得进入源码、日志或配置仓库。
+`ADSCOPE_USER_SESSION_KEY` 和 `ADSCOPE_MANAGEMENT_TOKEN` 是生产密钥材料，必须通过受限 `.env`、系统环境变量、Secret Manager、Windows DPAPI 或等价机制注入，不得进入源码、日志或配置仓库。
 
 ## 管理入口
 
@@ -56,9 +56,9 @@ Connector key 是域绑定共享密钥。部署时应通过 Windows DPAPI、Secr
 
 Center OIDC 复用现有用户名和密码校验，不复制账号或身份资料。OIDC `sub` 使用用户 `employee_id`；`profile`、`email` 和 `phone` 声明从用户表读取。OIDC access token 只授权访问 `/oauth2/userinfo`，不能代替普通用户 Bearer token、管理 token 或 Connector key。
 
-`ADSS_OIDC_ISSUER` 必须是仅包含 HTTPS scheme、host 和可选端口的外部 origin，不接受 userinfo、业务路径、query 或 fragment。Discovery 地址、JWT `iss` 和各公开端点都从该配置生成，不能根据 `Host`、`Forwarded` 或 `X-Forwarded-*` 动态推导。
+`ADSCOPE_OIDC_ISSUER` 必须是仅包含 HTTPS scheme、host 和可选端口的外部 origin，不接受 userinfo、业务路径、query 或 fragment。Discovery 地址、JWT `iss` 和各公开端点都从该配置生成，不能根据 `Host`、`Forwarded` 或 `X-Forwarded-*` 动态推导。
 
-签名私钥通过 `ADSS_OIDC_PRIVATE_KEY_FILE` 指向的受限文件提供。密钥必须是至少 2048 位的 RSA PKCS#8 或 PKCS#1 PEM，不能写入数据库、源码、日志、镜像或发布包。Center 使用 `RS256` 签发 ID Token 和 access token，JWKS 只发布当前公钥；服务端不保存历史签名密钥集合，也不提供管理端密钥轮换接口。
+签名私钥通过 `ADSCOPE_OIDC_PRIVATE_KEY_FILE` 指向的受限文件提供。密钥必须是至少 2048 位的 RSA PKCS#8 或 PKCS#1 PEM，不能写入数据库、源码、日志、镜像或发布包。Center 使用 `RS256` 签发 ID Token 和 access token，JWKS 只发布当前公钥；服务端不保存历史签名密钥集合，也不提供管理端密钥轮换接口。
 
 ## OIDC 授权确认
 
@@ -70,7 +70,7 @@ Center OIDC 复用现有用户名和密码校验，不复制账号或身份资�
 
 所有回调地址都使用结构化 URL 解析，不接受相对地址、userinfo 或 fragment。
 
-- Web 客户端使用绝对 HTTPS URI，scheme、host、port、path 和 query 必须与登记值一致。只有 `ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=true` 时，Web 客户端才可使用 HTTP loopback IP 进行本机开发。
+- Web 客户端使用绝对 HTTPS URI，scheme、host、port、path 和 query 必须与登记值一致。只有 `ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=true` 时，Web 客户端才可使用 HTTP loopback IP 进行本机开发。
 - Desktop 客户端只接受 HTTP loopback IP，不接受 `localhost` 主机名。登记值固定 loopback IP、path 和 query，授权请求必须提供实际监听端口，并可用该端口替换登记值中的端口；实际请求地址会绑定到授权码，兑换时必须原样提交。
 - 两类客户端都必须使用 PKCE S256。授权请求的 `code_challenge_method` 固定为 `S256`，Token 请求必须提供匹配的 `code_verifier`，不支持 `plain`。
 - Web 客户端还必须使用 `client_secret_basic`，并在 PKCE 校验之外验证 secret。Desktop 客户端按 `none` 处理，不持有 secret，也不得发送客户端认证头。

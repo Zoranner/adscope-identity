@@ -37,10 +37,10 @@
 
 | Crate | 职责 |
 | --- | --- |
-| `adss-protocol` | 定义同步对象、请求响应、目录执行计划和共享错误边界。 |
-| `adss-store` | 封装数据库模型、事实源读写和 revision 更新规则。 |
-| `adss-center` | 提供中心 API、用户会话、Connector 鉴权、密码加密和同步控制面。 |
-| `adss-connector` | 管理 Connector 配置、本地 state、HTTP 拉取确认和域控写入。 |
+| `adscope-protocol` | 定义同步对象、请求响应、目录执行计划和共享错误边界。 |
+| `adscope-store` | 封装数据库模型、事实源读写和 revision 更新规则。 |
+| `adscope-center` | 提供中心 API、用户会话、Connector 鉴权、密码加密和同步控制面。 |
+| `adscope-connector` | 管理 Connector 配置、本地 state、HTTP 拉取确认和域控写入。 |
 
 crate 拆分只服务明确边界：共享契约、持久化、中心服务和域内执行。没有独立生命周期或复用价值的逻辑不单独拆 crate。
 

@@ -16,7 +16,7 @@ export function useUserApi() {
     if (!import.meta.client) {
       return ''
     }
-    const storedToken = window.localStorage.getItem('adss.userAccessToken') ?? ''
+    const storedToken = window.localStorage.getItem('adscope.userAccessToken') ?? ''
     accessToken.value = storedToken
     return storedToken
   }
@@ -25,7 +25,7 @@ export function useUserApi() {
     accessToken.value = ''
     profile.value = null
     if (import.meta.client) {
-      window.localStorage.removeItem('adss.userAccessToken')
+      window.localStorage.removeItem('adscope.userAccessToken')
     }
   }
 
@@ -99,7 +99,7 @@ export function useUserApi() {
       const payload = (await response.json()) as UserLoginResponse
       accessToken.value = payload.access_token
       if (import.meta.client) {
-        window.localStorage.setItem('adss.userAccessToken', payload.access_token)
+        window.localStorage.setItem('adscope.userAccessToken', payload.access_token)
       }
       const profileLoaded = await loadMe(false)
       if (!profileLoaded) {

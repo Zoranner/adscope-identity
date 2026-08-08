@@ -4,7 +4,7 @@ use tokio::sync::watch;
 fn main() -> anyhow::Result<()> {
     match ConnectorCommand::parse(std::env::args_os())? {
         ConnectorCommand::Version => {
-            println!("adss-connector {}", env!("CARGO_PKG_VERSION"));
+            println!("adscope-connector {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         ConnectorCommand::Console { runtime_dir } => {

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "adss-center-web",
+      "name": "adscope-center-web",
       "dependencies": {
         "lucide-vue-next": "^0.555.0",
         "nuxt": "^4.1.3",

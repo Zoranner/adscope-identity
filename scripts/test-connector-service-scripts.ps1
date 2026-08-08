@@ -33,7 +33,7 @@ function Assert-Contains {
 }
 
 $install = Get-Content -LiteralPath $installPath -Raw
-Assert-Contains $install 'ADStructureSyncConnector' 'fixed service name'
+Assert-Contains $install 'AdscopeConnector' 'fixed service name'
 Assert-Contains $install 'S-1-5-20|NetworkService' 'NetworkService identity'
 Assert-Contains $install '--service' 'service process switch'
 Assert-Contains $install '--runtime-dir' 'explicit runtime directory'
@@ -44,12 +44,12 @@ Assert-Contains $install '/inheritance:r' 'removes ACL inheritance'
 foreach ($identity in @('SYSTEM', 'Administrators', 'NetworkService')) {
     Assert-Contains $install $identity "explicit $identity ACL"
 }
-if ($install -match 'S-1-5-19|LocalService|ADSS_LDAP_BIND_DN|ADSS_LDAP_BIND_PASSWORD') {
+if ($install -match 'S-1-5-19|LocalService|ADSCOPE_LDAP_BIND_DN|ADSCOPE_LDAP_BIND_PASSWORD') {
     throw 'Install script must not use LocalService or LDAP bind credentials'
 }
 
 $uninstall = Get-Content -LiteralPath $uninstallPath -Raw
-Assert-Contains $uninstall 'ADStructureSyncConnector' 'fixed uninstall service name'
+Assert-Contains $uninstall 'AdscopeConnector' 'fixed uninstall service name'
 Assert-Contains $uninstall '(?i)stop' 'service stop'
 Assert-Contains $uninstall '(?i)delete' 'service deletion'
 if ($uninstall -match '(?i)Remove-Item.+(?:\.env|state|logs)') {

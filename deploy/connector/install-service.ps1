@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
-$serviceName = 'ADStructureSyncConnector'
+$serviceName = 'AdscopeConnector'
 $networkServiceSid = '*S-1-5-20'
 
 function Assert-Administrator {
@@ -77,9 +77,9 @@ if (-not [System.IO.Path]::IsPathFullyQualified($resolvedRuntimeDir)) {
     throw 'RuntimeDir must resolve to an absolute path.'
 }
 
-$executablePath = Join-Path $resolvedRuntimeDir 'adss-connector.exe'
+$executablePath = Join-Path $resolvedRuntimeDir 'adscope-connector.exe'
 $environmentPath = Join-Path $resolvedRuntimeDir '.env'
-$statePath = Join-Path $resolvedRuntimeDir 'adss-connector-state.json'
+$statePath = Join-Path $resolvedRuntimeDir 'adscope-connector-state.json'
 $logsPath = Join-Path $resolvedRuntimeDir 'logs'
 foreach ($path in @($executablePath, $environmentPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -112,7 +112,7 @@ $binaryPath = '"{0}" --service --runtime-dir "{1}"' -f $executablePath, $resolve
 $serviceCreated = $false
 try {
     Invoke-Native sc.exe create $serviceName "binPath= $binaryPath" 'start= auto' `
-        'obj= NT AUTHORITY\NetworkService' 'DisplayName= AD Structure Sync Connector'
+        'obj= NT AUTHORITY\NetworkService' 'DisplayName= Adscope Connector'
     $serviceCreated = $true
     Invoke-Native sc.exe description $serviceName 'Synchronizes Center directory state to Active Directory.'
     Invoke-Native sc.exe failure $serviceName 'reset= 86400' `

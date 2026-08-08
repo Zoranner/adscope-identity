@@ -8,7 +8,7 @@
 
 ## 密钥和配置
 
-主服务必须配置高熵 `ADSS_PASSWORD_ENCRYPTION_KEY`、`ADSS_USER_SESSION_KEY` 和 `ADSS_MANAGEMENT_TOKEN`。这些密钥通过受限 `.env`、系统环境变量、Windows DPAPI、Secret Manager 或等价机制注入，不进入源码、日志或配置仓库。
+主服务必须配置高熵 `ADSCOPE_PASSWORD_ENCRYPTION_KEY`、`ADSCOPE_USER_SESSION_KEY` 和 `ADSCOPE_MANAGEMENT_TOKEN`。这些密钥通过受限 `.env`、系统环境变量、Windows DPAPI、Secret Manager 或等价机制注入，不进入源码、日志或配置仓库。
 
 OIDC 使用独立 RSA 私钥签发 RS256 ID token 和 access token。私钥至少为 2048 位，通过受限文件提供给 Center，不写入仓库、`.env`、环境变量、容器镜像或日志。OIDC 私钥只用于 token 签名，不是反向代理使用的 TLS 证书。
 
@@ -16,7 +16,7 @@ Connector key 按域独立保存，是 Connector `.env` 中唯一的同步秘密
 
 ## SSO 会话
 
-用户登录成功后，Center 设置 `adss_sso` Cookie，用于浏览器内的 OIDC 授权流程。Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`，内容由 `ADSS_USER_SESSION_KEY` 签名。SSO Cookie 不替代普通用户 Bearer token、管理 token 或 Connector key，也不能用于 `/api/me/*`、`/api/admin/*` 或 Connector 接口。
+用户登录成功后，Center 设置 `adscope_sso` Cookie，用于浏览器内的 OIDC 授权流程。Cookie 使用 `HttpOnly`、`Secure`、`SameSite=Lax` 和 `Path=/`，内容由 `ADSCOPE_USER_SESSION_KEY` 签名。SSO Cookie 不替代普通用户 Bearer token、管理 token 或 Connector key，也不能用于 `/api/me/*`、`/api/admin/*` 或 Connector 接口。
 
 授权确认提交使用短期 CSRF token，并绑定登录用户和完整授权请求。`SameSite=Lax` 不能替代这项校验。
 

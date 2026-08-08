@@ -868,8 +868,16 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
     repository.seed_domain(domain(true)).await.unwrap();
     let web_root = test_web_root();
     std::fs::create_dir_all(web_root.join("_nuxt")).unwrap();
-    std::fs::write(web_root.join("index.html"), "<main>ADSS Web Shell</main>").unwrap();
-    std::fs::write(web_root.join("_nuxt").join("app.js"), "console.log('adss')").unwrap();
+    std::fs::write(
+        web_root.join("index.html"),
+        "<main>Adscope Web Shell</main>",
+    )
+    .unwrap();
+    std::fs::write(
+        web_root.join("_nuxt").join("app.js"),
+        "console.log('adscope')",
+    )
+    .unwrap();
     let app = build_router_with_web_root(
         AppState::new_for_tests(
             repository,
@@ -886,7 +894,7 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
         .await
         .expect("index response");
     assert_eq!(index.status(), StatusCode::OK);
-    assert_body_contains(index, "ADSS Web Shell").await;
+    assert_body_contains(index, "Adscope Web Shell").await;
 
     let frontend_route = app
         .clone()
@@ -894,7 +902,7 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
         .await
         .expect("frontend route response");
     assert_eq!(frontend_route.status(), StatusCode::OK);
-    assert_body_contains(frontend_route, "ADSS Web Shell").await;
+    assert_body_contains(frontend_route, "Adscope Web Shell").await;
 
     let asset = app
         .clone()
@@ -902,7 +910,7 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
         .await
         .expect("asset response");
     assert_eq!(asset.status(), StatusCode::OK);
-    assert_body_contains(asset, "console.log('adss')").await;
+    assert_body_contains(asset, "console.log('adscope')").await;
 
     let api_get = app
         .clone()
@@ -910,14 +918,14 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
         .await
         .expect("api response");
     assert_eq!(api_get.status(), StatusCode::NOT_FOUND);
-    assert_body_not_contains(api_get, "ADSS Web Shell").await;
+    assert_body_not_contains(api_get, "Adscope Web Shell").await;
 
     let api_post = app
         .oneshot(empty_request(Method::POST, "/api/not-found"))
         .await
         .expect("api response");
     assert_eq!(api_post.status(), StatusCode::NOT_FOUND);
-    assert_body_not_contains(api_post, "ADSS Web Shell").await;
+    assert_body_not_contains(api_post, "Adscope Web Shell").await;
 
     std::fs::remove_dir_all(web_root).unwrap();
 }
@@ -1244,7 +1252,7 @@ async fn login_returns_user_access_token_for_self_service() {
 
     let token = login_token(&app, "1001", "OldPass123!").await;
 
-    assert!(token.starts_with("adss-user-session:v2."));
+    assert!(token.starts_with("adscope-user-session:v2."));
 }
 
 #[tokio::test]
@@ -1264,7 +1272,7 @@ async fn login_uses_username_not_employee_id() {
         .await
         .expect("login response");
 
-    assert!(token.starts_with("adss-user-session:v2."));
+    assert!(token.starts_with("adscope-user-session:v2."));
     assert_eq!(employee_id_login.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -1756,7 +1764,11 @@ async fn app_state_from_env_requires_oidc_issuer() {
         Ok(_) => panic!("missing OIDC issuer must not configure AppState"),
         Err(error) => error,
     };
-    assert!(error.to_string().contains("ADSCOPE_OIDC_ISSUER is required"));
+    assert!(
+        error
+            .to_string()
+            .contains("ADSCOPE_OIDC_ISSUER is required")
+    );
     clear_server_env();
 }
 
@@ -2056,7 +2068,7 @@ fn management_session_cookie() -> String {
         }))
         .unwrap(),
     );
-    let signed = format!("adss-management-session:v1.{payload}");
+    let signed = format!("adscope-management-session:v1.{payload}");
     let mut key_derivation =
         <Hmac<Sha256> as Mac>::new_from_slice(MANAGEMENT_TOKEN.as_bytes()).unwrap();
     key_derivation.update(b"adscope:management-session:v1");
@@ -2263,7 +2275,7 @@ fn test_web_root() -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("adss-web-test-{suffix}"))
+    std::env::temp_dir().join(format!("adscope-web-test-{suffix}"))
 }
 
 async fn seed_user(repository: &Repository, employee_id: &str, email: &str) -> anyhow::Result<u64> {

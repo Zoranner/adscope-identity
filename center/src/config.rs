@@ -31,7 +31,10 @@ pub(crate) fn reject_retired_environment_variables() -> anyhow::Result<()> {
             "ADSS_PASSWORD_ENCRYPTION_KEY",
             "ADSCOPE_PASSWORD_ENCRYPTION_KEY",
         ),
-        ("ADSS_PASSWORD_HASH_PROVIDER", "ADSCOPE_PASSWORD_HASH_PROVIDER"),
+        (
+            "ADSS_PASSWORD_HASH_PROVIDER",
+            "ADSCOPE_PASSWORD_HASH_PROVIDER",
+        ),
         ("ADSS_USER_SESSION_KEY", "ADSCOPE_USER_SESSION_KEY"),
         (
             "ADSS_USER_SESSION_TTL_SECONDS",

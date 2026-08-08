@@ -1,11 +1,11 @@
 services:
   center:
-    image: adss-center:0.1.0
+    image: adscope-center:0.1.0
     restart: unless-stopped
     env_file:
       - center.env
     volumes:
-      - adss-center-data:/data
+      - adscope-center-data:/data
       - ./oidc-private-key.pem:/run/secrets/oidc-private-key.pem:ro
     expose:
       - "8080"
@@ -14,4 +14,4 @@ services:
       - /tmp
 
 volumes:
-  adss-center-data:
+  adscope-center-data:

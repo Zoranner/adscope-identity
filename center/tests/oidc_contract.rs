@@ -31,7 +31,7 @@ const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 const TEST_OIDC_ISSUER: &str = "https://center.example.test";
 const TEST_OIDC_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/oidc-private-key.pem");
 const OIDC_CLIENT_ID: &str = "client_oidc_contract";
-const OIDC_REDIRECT_URI: &str = "https://client.example.test/callback?source=adss";
+const OIDC_REDIRECT_URI: &str = "https://client.example.test/callback?source=adscope";
 const OIDC_STATE: &str = "state-original";
 const OIDC_NONCE: &str = "nonce-original";
 const OIDC_CODE_CHALLENGE: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -2099,7 +2099,7 @@ async fn authorization_context_requires_session_and_returns_confirmed_claims_and
         body["csrf_token"]
             .as_str()
             .unwrap()
-            .starts_with("adss-csrf:v1.")
+            .starts_with("adscope-csrf:v1.")
     );
     assert_eq!(body["authorization"]["redirect_uri"], OIDC_REDIRECT_URI);
     assert_eq!(body["authorization"]["state"], OIDC_STATE);
@@ -2437,7 +2437,7 @@ fn approved_code(response: Response<Body>) -> String {
         url.as_str().split('?').next().unwrap(),
         "https://client.example.test/callback"
     );
-    assert_eq!(query_value(&url, "source").as_deref(), Some("adss"));
+    assert_eq!(query_value(&url, "source").as_deref(), Some("adscope"));
     assert_eq!(query_value(&url, "state").as_deref(), Some(OIDC_STATE));
     query_value(&url, "code").unwrap()
 }
@@ -2762,7 +2762,7 @@ fn management_session_cookie() -> String {
         }))
         .unwrap(),
     );
-    let signed = format!("adss-management-session:v1.{payload}");
+    let signed = format!("adscope-management-session:v1.{payload}");
     let mut key_derivation =
         <Hmac<Sha256> as Mac>::new_from_slice(MANAGEMENT_TOKEN.as_bytes()).unwrap();
     key_derivation.update(b"adscope:management-session:v1");
