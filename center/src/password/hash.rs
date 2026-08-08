@@ -54,7 +54,7 @@ fn argon2id() -> Argon2<'static> {
 
 fn deterministic_password_verifier(password: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:test-password-verifier:v1");
+    hasher.update(b"adscope:test-password-verifier:v1");
     hasher.update(password.as_bytes());
     format!("test-verifier:v1:{}", hex::encode(hasher.finalize()))
 }

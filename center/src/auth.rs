@@ -3,13 +3,13 @@ use sha2::{Digest, Sha256};
 
 use crate::error::ApiError;
 
-const CONNECTOR_KEY_HEADER: &str = "x-adss-connector-key";
+const CONNECTOR_KEY_HEADER: &str = "x-adscope-connector-key";
 
 pub(crate) async fn authorize_domain_connector(
-    repository: &adss_store::Repository,
+    repository: &adscope_store::Repository,
     domain_id: &str,
     connector_key: Option<&str>,
-) -> Result<adss_store::DomainRecord, ApiError> {
+) -> Result<adscope_store::DomainRecord, ApiError> {
     let domain = repository
         .get_domain(domain_id)
         .await

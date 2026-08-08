@@ -3,11 +3,11 @@
 version = 4
 
 [[package]]
-name = "adss-center"
-version = "0.2.0-rc.1"
+name = "adscope-center"
+version = "0.1.0"
 dependencies = [
- "adss-protocol",
- "adss-store",
+ "adscope-protocol",
+ "adscope-store",
  "anyhow",
  "argon2",
  "axum",
@@ -31,10 +31,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adss-connector"
-version = "0.2.0-rc.1"
+name = "adscope-connector"
+version = "0.1.0"
 dependencies = [
- "adss-protocol",
+ "adscope-protocol",
  "anyhow",
  "async-trait",
  "ldap3",
@@ -48,17 +48,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "adss-protocol"
-version = "0.2.0-rc.1"
+name = "adscope-protocol"
+version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "adss-store"
-version = "0.2.0-rc.1"
+name = "adscope-store"
+version = "0.1.0"
 dependencies = [
- "adss-protocol",
+ "adscope-protocol",
  "anyhow",
  "sea-orm",
  "serde",

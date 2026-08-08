@@ -124,7 +124,7 @@ impl ManagementSessionIssuer {
     pub(crate) fn from_management_token(token: &str) -> Self {
         let mut mac = HmacSha256::new_from_slice(token.as_bytes())
             .expect("management token must be a valid HMAC key");
-        mac.update(b"adss:management-session:v1");
+        mac.update(b"adscope:management-session:v1");
         Self {
             key: mac.finalize().into_bytes().to_vec(),
             ttl: Duration::from_secs(MANAGEMENT_SESSION_TTL_SECONDS),

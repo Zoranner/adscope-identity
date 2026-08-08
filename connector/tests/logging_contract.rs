@@ -1,8 +1,8 @@
-use adss_connector::{
+use adscope_connector::{
     ConnectorLogger, ConnectorProcessConfig, ConnectorRunSummary, ExecutionFailure,
     LdapDirectoryConfig,
 };
-use adss_protocol::SyncSummary;
+use adscope_protocol::SyncSummary;
 use std::fs;
 
 #[test]

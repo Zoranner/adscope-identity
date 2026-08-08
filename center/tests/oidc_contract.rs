@@ -1,11 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use adss_center::{
+use adscope_center::{
     AppState, build_router,
     oidc::{AccessTokenClaims, OidcService, config::OidcConfig},
 };
-use adss_protocol::{OrganizationalUnit, UserLoginRequest, UserStatus};
-use adss_store::{
+use adscope_protocol::{OrganizationalUnit, UserLoginRequest, UserStatus};
+use adscope_store::{
     OAuthClientRecord, OAuthClientType, Repository, UserCredentialInput, UserDirectoryPatch,
 };
 use axum::{
@@ -1844,7 +1844,7 @@ async fn login_cookie_matches_json_token_and_logout_expires_it() {
         .unwrap();
     assert_eq!(logout.status(), StatusCode::NO_CONTENT);
     let cleared = logout.headers()[header::SET_COOKIE].to_str().unwrap();
-    assert!(cleared.starts_with("adss_sso="));
+    assert!(cleared.starts_with("adscope_sso="));
     assert!(cleared.contains("HttpOnly"));
     assert!(cleared.contains("Secure"));
     assert!(cleared.contains("SameSite=Lax"));
@@ -2289,7 +2289,7 @@ fn form_request(uri: &str, form: &str, cookie: &str) -> Request<Body> {
         .method(Method::POST)
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .header(header::COOKIE, format!("adss_sso={cookie}"))
+        .header(header::COOKIE, format!("adscope_sso={cookie}"))
         .body(Body::from(form.to_string()))
         .unwrap()
 }
@@ -2384,14 +2384,14 @@ fn cookie_request(method: Method, uri: &str, cookie: &str) -> Request<Body> {
     Request::builder()
         .method(method)
         .uri(uri)
-        .header(header::COOKIE, format!("adss_sso={cookie}"))
+        .header(header::COOKIE, format!("adscope_sso={cookie}"))
         .body(Body::empty())
         .unwrap()
 }
 
 fn session_cookie_value(set_cookie: &str) -> String {
     let cookie = Cookie::parse_encoded(set_cookie.to_string()).unwrap();
-    assert_eq!(cookie.name(), "adss_sso");
+    assert_eq!(cookie.name(), "adscope_sso");
     cookie.value().to_string()
 }
 
@@ -2526,7 +2526,7 @@ async fn seed_token_code(
     expires_at: i64,
 ) {
     repository
-        .store_authorization_code(adss_store::AuthorizationCodeRecord {
+        .store_authorization_code(adscope_store::AuthorizationCodeRecord {
             code_hash: sha256_token(code),
             client_id: client_id.to_string(),
             employee_id: "1001".to_string(),
@@ -2720,7 +2720,7 @@ fn admin_request(method: Method, uri: &str) -> Request<Body> {
         .method(method)
         .uri(uri)
         .header("cookie", management_session_cookie())
-        .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
+        .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
         .body(Body::empty())
         .unwrap()
 }
@@ -2747,7 +2747,7 @@ fn admin_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T)
         .method(method)
         .uri(uri)
         .header("cookie", management_session_cookie())
-        .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
+        .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()
@@ -2765,12 +2765,12 @@ fn management_session_cookie() -> String {
     let signed = format!("adss-management-session:v1.{payload}");
     let mut key_derivation =
         <Hmac<Sha256> as Mac>::new_from_slice(MANAGEMENT_TOKEN.as_bytes()).unwrap();
-    key_derivation.update(b"adss:management-session:v1");
+    key_derivation.update(b"adscope:management-session:v1");
     let key = key_derivation.finalize().into_bytes();
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key).unwrap();
     mac.update(signed.as_bytes());
     let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
-    format!("adss_management={signed}.{signature}")
+    format!("adscope_management={signed}.{signature}")
 }
 
 fn json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T) -> Request<Body> {
@@ -2788,7 +2788,7 @@ fn sha256_token(value: &str) -> String {
 
 fn password_verifier(password: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:test-password-verifier:v1");
+    hasher.update(b"adscope:test-password-verifier:v1");
     hasher.update(password.as_bytes());
     format!("test-verifier:v1:{}", hex::encode(hasher.finalize()))
 }

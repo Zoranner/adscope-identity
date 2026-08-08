@@ -1,4 +1,4 @@
-use adss_protocol::{
+use adscope_protocol::{
     CredentialEntry, DirectoryOperation, DirectoryOperationKind, DirectoryOperationTarget, Group,
     OrganizationalUnit, User, UserStatus,
 };
@@ -528,7 +528,7 @@ fn managed_search_bases(context: &DirectoryExecutionContext) -> Vec<String> {
 }
 
 fn managed_group_marker(group_id: &str) -> String {
-    format!("adss:group:{group_id}")
+    format!("adscope:group:{group_id}")
 }
 
 fn user_attrs(

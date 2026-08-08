@@ -1,9 +1,9 @@
-use adss_connector::{
+use adscope_connector::{
     DirectoryBatchSession, DirectoryClient, DirectoryExecutionContext, DirectoryExecutor,
     encode_ad_unicode_password, escape_ldap_dn_value, escape_ldap_filter_value,
     execute_credential_batch, execute_directory_plan,
 };
-use adss_protocol::{
+use adscope_protocol::{
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DirectoryOperationKind,
     DirectoryPlan, DomainDirectoryConfig, Group, OrganizationalUnit, User, UserStatus,
 };

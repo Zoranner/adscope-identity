@@ -1,4 +1,4 @@
-use adss_protocol::{Group, OrganizationalUnit, User, UserStatus};
+use adscope_protocol::{Group, OrganizationalUnit, User, UserStatus};
 use sea_orm::Set;
 
 use crate::{

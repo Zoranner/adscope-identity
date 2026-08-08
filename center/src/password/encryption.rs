@@ -60,7 +60,7 @@ impl PasswordEncryption for BuiltInPasswordEncryption {
 
 fn password_encryption_key(password_encryption_key: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:password-encryption:v1");
+    hasher.update(b"adscope:password-encryption:v1");
     hasher.update(password_encryption_key);
     hasher.finalize().into()
 }

@@ -1,4 +1,4 @@
-use adss_protocol::{User, UserStatus};
+use adscope_protocol::{User, UserStatus};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

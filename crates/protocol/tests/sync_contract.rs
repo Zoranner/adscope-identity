@@ -1,4 +1,4 @@
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, CredentialBatch, CredentialEntry, DirectoryBatch,
     DirectoryOperationKind, DirectoryOperationTarget, DirectoryPlan, DirectoryPlanError,
     DomainDirectoryConfig, Group, OrganizationalUnit, SyncChannel, User, UserStatus,

@@ -1,4 +1,4 @@
-use adss_connector::{ConnectorCommand, LoggingTarget, run_configured_connector};
+use adscope_connector::{ConnectorCommand, LoggingTarget, run_configured_connector};
 use tokio::sync::watch;
 
 fn main() -> anyhow::Result<()> {
@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 fn run_service(runtime_dir: std::path::PathBuf) -> anyhow::Result<()> {
-    adss_connector::run_service_dispatcher(runtime_dir)
+    adscope_connector::run_service_dispatcher(runtime_dir)
 }
 
 #[cfg(not(windows))]

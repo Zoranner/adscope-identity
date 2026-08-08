@@ -1,8 +1,8 @@
-use adss_connector::{
+use adscope_connector::{
     ConfiguredDirectoryClient, ConnectorProcessConfig, ControlPlaneClient, HttpControlPlaneClient,
     LdapDirectoryConfig,
 };
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorSyncRequest, CredentialBatch, DirectoryBatch, SyncChannel,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -49,7 +49,8 @@ async fn http_control_plane_client_posts_sync_request_with_connector_key() {
 
     let request = server.request().await;
     assert!(request.starts_with("POST /api/connector/sync HTTP/1.1"));
-    assert!(request.contains("x-adss-connector-key: connector-a-key"));
+    assert!(request.contains("x-adscope-connector-key: connector-a-key"));
+    assert!(!request.contains("x-adss-connector-key:"));
     assert!(request.contains(r#""applied_directory_revision":3"#));
     assert!(request.contains(r#""applied_credential_revision":7"#));
     assert!(request.contains(r#""rebuild_directory":true"#));
@@ -101,7 +102,8 @@ async fn http_control_plane_client_posts_confirm_request_with_connector_key() {
 
     let request = server.request().await;
     assert!(request.starts_with("POST /api/connector/confirm HTTP/1.1"));
-    assert!(request.contains("x-adss-connector-key: connector-a-key"));
+    assert!(request.contains("x-adscope-connector-key: connector-a-key"));
+    assert!(!request.contains("x-adss-connector-key:"));
     assert!(request.contains(r#""channel":"credential""#));
     assert!(request.contains(r#""target_revision":11"#));
     assert!(request.contains(r#""success":true"#));

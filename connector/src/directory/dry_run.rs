@@ -1,4 +1,4 @@
-use adss_protocol::{CredentialEntry, DirectoryOperation};
+use adscope_protocol::{CredentialEntry, DirectoryOperation};
 use async_trait::async_trait;
 
 use super::{DirectoryBatchSession, DirectoryClient, DirectoryExecutionContext};

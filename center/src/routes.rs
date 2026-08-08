@@ -2,12 +2,12 @@ mod admin;
 mod management_session;
 mod oauth_clients;
 
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
     CredentialBatch, CredentialEntry, DomainDirectoryConfig, PasswordChangeRequest,
     PasswordChangeResponse, SyncChannel, User, UserLoginRequest, UserLoginResponse, UserStatus,
 };
-use adss_store::{CredentialCiphertextBatch, UserContactPatch, UserCredentialInput};
+use adscope_store::{CredentialCiphertextBatch, UserContactPatch, UserCredentialInput};
 use axum::{
     Json, Router,
     extract::State,
@@ -122,7 +122,7 @@ fn sso_cookie(value: String, ttl_seconds: u64) -> Result<Cookie<'static>, ApiErr
     let max_age = std::time::Duration::from_secs(ttl_seconds)
         .try_into()
         .map_err(|_| ApiError::Persistence)?;
-    Ok(Cookie::build(("adss_sso", value))
+    Ok(Cookie::build(("adscope_sso", value))
         .http_only(true)
         .secure(true)
         .same_site(SameSite::Lax)

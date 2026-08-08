@@ -1,7 +1,7 @@
 pub mod dry_run;
 pub mod ldap;
 
-use adss_protocol::{
+use adscope_protocol::{
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DirectoryPlan,
     DomainDirectoryConfig, SyncSummary,
 };
@@ -383,8 +383,8 @@ fn batch_open_timeout(operation: &'static str, operation_timeout: Duration) -> E
     )
 }
 
-fn operation_name(kind: adss_protocol::DirectoryOperationKind) -> &'static str {
-    use adss_protocol::DirectoryOperationKind;
+fn operation_name(kind: adscope_protocol::DirectoryOperationKind) -> &'static str {
+    use adscope_protocol::DirectoryOperationKind;
 
     match kind {
         DirectoryOperationKind::EnsureOu => "ensure_ou",

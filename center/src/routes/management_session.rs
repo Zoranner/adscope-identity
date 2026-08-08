@@ -13,8 +13,8 @@ use crate::{auth::constant_time_eq, error::ApiError, state::AppState};
 
 use super::admin::{authorize_management, authorize_management_write};
 
-pub(super) const MANAGEMENT_COOKIE: &str = "adss_management";
-pub(super) const MANAGEMENT_CSRF_HEADER: &str = "x-adss-csrf-token";
+pub(super) const MANAGEMENT_COOKIE: &str = "adscope_management";
+pub(super) const MANAGEMENT_CSRF_HEADER: &str = "x-adscope-csrf-token";
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()

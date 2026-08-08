@@ -1,5 +1,5 @@
-use adss_protocol::{Group, OrganizationalUnit, PasswordChangeResponse, User, UserStatus};
-use adss_store::{
+use adscope_protocol::{Group, OrganizationalUnit, PasswordChangeResponse, User, UserStatus};
+use adscope_store::{
     DomainPatch, DomainRecord, UserCreateInput, UserCredentialInput, UserDirectoryPatch,
     UserListFilter,
 };

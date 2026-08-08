@@ -1,5 +1,5 @@
-use adss_center::{AppState, CenterConfig, build_router, load_env_file};
-use adss_store::Repository;
+use adscope_center::{AppState, CenterConfig, build_router, load_env_file};
+use adscope_store::Repository;
 use tokio::net::TcpListener;
 
 #[tokio::main]

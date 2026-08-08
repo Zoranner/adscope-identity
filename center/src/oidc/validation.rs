@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use adss_store::OAuthClientType;
+use adscope_store::OAuthClientType;
 use anyhow::{Context, ensure};
 use url::{Host, Url};
 
@@ -214,7 +214,7 @@ fn is_unreserved(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use adss_store::OAuthClientType;
+    use adscope_store::OAuthClientType;
 
     use super::{
         OIDC_BODY_LIMIT_BYTES, validate_client_id, validate_client_name, validate_code_challenge,

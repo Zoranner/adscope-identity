@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use adss_protocol::{User, UserStatus};
-use adss_store::{AuthorizationCodeRecord, OAuthClientRecord, OAuthClientType};
+use adscope_protocol::{User, UserStatus};
+use adscope_store::{AuthorizationCodeRecord, OAuthClientRecord, OAuthClientType};
 use axum::{
     Form, Json, Router,
     body::Bytes,
@@ -36,7 +36,7 @@ use crate::{
 };
 
 const PUBLIC_METADATA_CACHE_CONTROL: &str = "public, max-age=300";
-const SSO_COOKIE_NAME: &str = "adss_sso";
+const SSO_COOKIE_NAME: &str = "adscope_sso";
 const CSRF_TTL_SECONDS: u64 = 300;
 const AUTHORIZATION_CODE_CLEANUP_LIMIT: u64 = 100;
 
@@ -87,7 +87,7 @@ async fn authorize(
         }
     }
 
-    let mut login = Url::parse("https://adss.invalid/login").expect("fixed login URL");
+    let mut login = Url::parse("https://adscope.invalid/login").expect("fixed login URL");
     login
         .query_pairs_mut()
         .append_pair("continue", &authorization_path);
@@ -782,7 +782,7 @@ impl AuthorizationRequest {
     }
 
     fn internal_path(&self, path: &str) -> String {
-        let mut url = Url::parse("https://adss.invalid").expect("fixed internal origin");
+        let mut url = Url::parse("https://adscope.invalid").expect("fixed internal origin");
         url.set_path(path);
         self.append_query(&mut url);
         format!("{}?{}", url.path(), url.query().unwrap_or_default())

@@ -1,9 +1,9 @@
-use adss_center::{AppState, build_router, build_router_with_web_root};
-use adss_protocol::{
+use adscope_center::{AppState, build_router, build_router_with_web_root};
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorSyncRequest, ConnectorSyncResponse, PasswordChangeRequest,
     SyncChannel, UserLoginRequest, UserStatus,
 };
-use adss_store::{DomainRecord, Repository, UserCredentialInput, UserDirectoryPatch};
+use adscope_store::{DomainRecord, Repository, UserCredentialInput, UserDirectoryPatch};
 use argon2::{
     Algorithm, Argon2, Params, PasswordHasher, Version,
     password_hash::{SaltString, rand_core::OsRng},
@@ -90,7 +90,7 @@ async fn user_directory_update_returns_changed_user_with_ou_context() {
 
     repository
         .upsert_directory(
-            vec![adss_protocol::OrganizationalUnit {
+            vec![adscope_protocol::OrganizationalUnit {
                 id: "ou-root".to_string(),
                 name: "Root".to_string(),
                 parent_id: None,
@@ -132,13 +132,13 @@ async fn connector_sync_honors_the_configured_directory_batch_limit() {
     repository
         .upsert_directory(
             vec![
-                adss_protocol::OrganizationalUnit {
+                adscope_protocol::OrganizationalUnit {
                     id: "ou-root".to_string(),
                     name: "Root".to_string(),
                     parent_id: None,
                     changed_revision: 0,
                 },
-                adss_protocol::OrganizationalUnit {
+                adscope_protocol::OrganizationalUnit {
                     id: "ou-unused".to_string(),
                     name: "Unused".to_string(),
                     parent_id: None,
@@ -160,7 +160,7 @@ async fn connector_sync_honors_the_configured_directory_batch_limit() {
         .unwrap();
     repository
         .upsert_directory(
-            vec![adss_protocol::OrganizationalUnit {
+            vec![adscope_protocol::OrganizationalUnit {
                 id: "ou-child".to_string(),
                 name: "Child".to_string(),
                 parent_id: Some("ou-root".to_string()),
@@ -271,7 +271,7 @@ async fn management_session_exchanges_token_for_protected_cookie() {
         .get("set-cookie")
         .and_then(|value| value.to_str().ok())
         .expect("management session cookie");
-    assert!(set_cookie.starts_with("adss_management="));
+    assert!(set_cookie.starts_with("adscope_management="));
     assert!(set_cookie.contains("HttpOnly"));
     assert!(set_cookie.contains("Secure"));
     assert!(set_cookie.contains("SameSite=Strict"));
@@ -509,7 +509,7 @@ async fn management_cookie_session_restores_protects_writes_and_logs_out() {
                 .method(Method::POST)
                 .uri("/api/admin/ous")
                 .header("cookie", &management_cookie)
-                .header("x-adss-csrf-token", &csrf_token)
+                .header("x-adscope-csrf-token", &csrf_token)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"id":"ou-csrf","name":"CSRF","parent_id":null}"#,
@@ -526,7 +526,7 @@ async fn management_cookie_session_restores_protects_writes_and_logs_out() {
                 .method(Method::DELETE)
                 .uri("/api/admin/session")
                 .header("cookie", &management_cookie)
-                .header("x-adss-csrf-token", &csrf_token)
+                .header("x-adscope-csrf-token", &csrf_token)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -542,7 +542,7 @@ async fn management_cookie_session_restores_protects_writes_and_logs_out() {
         .get("set-cookie")
         .and_then(|value| value.to_str().ok())
         .expect("deleted management cookie");
-    assert!(deleted_cookie.starts_with("adss_management="));
+    assert!(deleted_cookie.starts_with("adscope_management="));
     assert!(deleted_cookie.contains("Path=/api/admin"));
     assert!(deleted_cookie.contains("Max-Age=0"));
 }
@@ -2003,7 +2003,7 @@ async fn admin_empty(app: &axum::Router, method: Method, uri: &str) -> serde_jso
                 .method(method)
                 .uri(uri)
                 .header("cookie", management_session_cookie())
-                .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
+                .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2020,7 +2020,7 @@ fn admin_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T)
         .method(method)
         .uri(uri)
         .header("cookie", management_session_cookie())
-        .header("x-adss-csrf-token", MANAGEMENT_CSRF_TOKEN)
+        .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()
@@ -2038,12 +2038,12 @@ fn management_session_cookie() -> String {
     let signed = format!("adss-management-session:v1.{payload}");
     let mut key_derivation =
         <Hmac<Sha256> as Mac>::new_from_slice(MANAGEMENT_TOKEN.as_bytes()).unwrap();
-    key_derivation.update(b"adss:management-session:v1");
+    key_derivation.update(b"adscope:management-session:v1");
     let key = key_derivation.finalize().into_bytes();
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key).unwrap();
     mac.update(signed.as_bytes());
     let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
-    format!("adss_management={signed}.{signature}")
+    format!("adscope_management={signed}.{signature}")
 }
 
 async fn change_password_with_current_password(
@@ -2173,7 +2173,7 @@ fn connector_json_request<T: serde::Serialize>(
         .method(Method::POST)
         .uri(uri)
         .header("content-type", "application/json")
-        .header("x-adss-connector-key", connector_key)
+        .header("x-adscope-connector-key", connector_key)
         .body(Body::from(serde_json::to_vec(value).unwrap()))
         .unwrap()
 }
@@ -2257,7 +2257,7 @@ async fn seed_user_with_username(
 ) -> anyhow::Result<u64> {
     repository
         .upsert_directory(
-            vec![adss_protocol::OrganizationalUnit {
+            vec![adscope_protocol::OrganizationalUnit {
                 id: "ou-root".to_string(),
                 name: "Root".to_string(),
                 parent_id: None,
@@ -2280,7 +2280,7 @@ async fn seed_user_with_username(
 
 fn password_verifier(password: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:test-password-verifier:v1");
+    hasher.update(b"adscope:test-password-verifier:v1");
     hasher.update(password.as_bytes());
     format!("test-verifier:v1:{}", hex::encode(hasher.finalize()))
 }
@@ -2308,7 +2308,7 @@ fn seal_password_for_storage(password: &str) -> String {
 
 fn test_password_encryption_key() -> [u8; 32] {
     let mut hasher = Sha256::new();
-    hasher.update(b"adss:password-encryption:v1");
+    hasher.update(b"adscope:password-encryption:v1");
     hasher.update(TEST_ENCRYPTION_KEY.as_bytes());
     hasher.finalize().into()
 }

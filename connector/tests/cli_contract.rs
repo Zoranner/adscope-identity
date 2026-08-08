@@ -1,4 +1,4 @@
-use adss_connector::ConnectorCommand;
+use adscope_connector::ConnectorCommand;
 use std::path::PathBuf;
 
 #[test]

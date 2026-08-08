@@ -1,4 +1,4 @@
-use adss_protocol::{DirectoryBatch, Group, OrganizationalUnit, User, UserStatus};
+use adscope_protocol::{DirectoryBatch, Group, OrganizationalUnit, User, UserStatus};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbErr,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlErr, Statement, TransactionTrait,

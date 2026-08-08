@@ -1,8 +1,8 @@
-use adss_connector::{
+use adscope_connector::{
     ConnectorRuntime, ControlPlaneClient, DirectoryBatchSession, DirectoryClient,
     DirectoryExecutionContext, LocalRevisionState, LocalStateStore, run_connector_loop,
 };
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DomainDirectoryConfig,
 };

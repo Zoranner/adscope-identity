@@ -1,4 +1,4 @@
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
 };
 use async_trait::async_trait;
@@ -52,7 +52,7 @@ impl ControlPlaneClient for HttpControlPlaneClient {
         Ok(self
             .client
             .post(self.endpoint("/api/connector/sync"))
-            .header("x-adss-connector-key", &self.connector_key)
+            .header("x-adscope-connector-key", &self.connector_key)
             .json(&request)
             .send()
             .await?
@@ -68,7 +68,7 @@ impl ControlPlaneClient for HttpControlPlaneClient {
         Ok(self
             .client
             .post(self.endpoint("/api/connector/confirm"))
-            .header("x-adss-connector-key", &self.connector_key)
+            .header("x-adscope-connector-key", &self.connector_key)
             .json(&request)
             .send()
             .await?

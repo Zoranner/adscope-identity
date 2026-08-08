@@ -1,5 +1,5 @@
-use adss_protocol::UserStatus;
-use adss_store::{
+use adscope_protocol::UserStatus;
+use adscope_store::{
     AuthorizationCodeExchange, AuthorizationCodeRecord, OAuthClientRecord, OAuthClientType,
     Repository, UserDirectoryPatch,
 };

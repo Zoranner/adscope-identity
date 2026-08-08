@@ -1,4 +1,4 @@
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorSyncRequest, DirectoryBatch, DirectoryPlan, SyncChannel,
     SyncSummary,
 };
@@ -257,7 +257,7 @@ struct ChannelExecutionResult {
 async fn execute_directory_batch<C>(
     client: &C,
     batch: &DirectoryBatch,
-    domain: &adss_protocol::DomainDirectoryConfig,
+    domain: &adscope_protocol::DomainDirectoryConfig,
     operation_timeout: Duration,
 ) -> ChannelExecutionResult
 where

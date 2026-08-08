@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use adss_store::Repository;
+use adscope_store::Repository;
 
 use crate::oidc::{OidcService, config::OidcConfig, crypto::CsrfSigner};
 use crate::password::{

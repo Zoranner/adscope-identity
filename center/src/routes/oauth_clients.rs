@@ -1,4 +1,4 @@
-use adss_store::{OAuthClientRecord, OAuthClientType};
+use adscope_store::{OAuthClientRecord, OAuthClientType};
 use axum::{
     Json, Router,
     extract::{Path, State},

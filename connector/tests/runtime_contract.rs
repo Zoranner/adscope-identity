@@ -1,8 +1,8 @@
-use adss_connector::{
+use adscope_connector::{
     ConnectorRuntime, ControlPlaneClient, DirectoryBatchSession, DirectoryClient,
     DirectoryExecutionContext, FileLocalStateStore, LocalRevisionState, LocalStateStore,
 };
-use adss_protocol::{
+use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorConfirmResponse, ConnectorSyncRequest, ConnectorSyncResponse,
     CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DomainDirectoryConfig,
     Group, OrganizationalUnit, SyncChannel, User, UserStatus,
@@ -585,15 +585,15 @@ fn empty_credential_batch() -> CredentialBatch {
     }
 }
 
-fn directory_kind_name(kind: adss_protocol::DirectoryOperationKind) -> &'static str {
+fn directory_kind_name(kind: adscope_protocol::DirectoryOperationKind) -> &'static str {
     match kind {
-        adss_protocol::DirectoryOperationKind::EnsureOu => "ensure_ou",
-        adss_protocol::DirectoryOperationKind::EnsureUser => "ensure_user",
-        adss_protocol::DirectoryOperationKind::EnsureUserPlacement => "ensure_user_placement",
-        adss_protocol::DirectoryOperationKind::EnsureGroup => "ensure_group",
-        adss_protocol::DirectoryOperationKind::EnsureGroupMembers => "ensure_group_members",
-        adss_protocol::DirectoryOperationKind::DisableUser => "disable_user",
-        adss_protocol::DirectoryOperationKind::MoveUserToQuarantine => "move_user_to_quarantine",
+        adscope_protocol::DirectoryOperationKind::EnsureOu => "ensure_ou",
+        adscope_protocol::DirectoryOperationKind::EnsureUser => "ensure_user",
+        adscope_protocol::DirectoryOperationKind::EnsureUserPlacement => "ensure_user_placement",
+        adscope_protocol::DirectoryOperationKind::EnsureGroup => "ensure_group",
+        adscope_protocol::DirectoryOperationKind::EnsureGroupMembers => "ensure_group_members",
+        adscope_protocol::DirectoryOperationKind::DisableUser => "disable_user",
+        adscope_protocol::DirectoryOperationKind::MoveUserToQuarantine => "move_user_to_quarantine",
     }
 }
 
