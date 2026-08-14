@@ -1,0 +1,172 @@
+name: 发布
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: 校验发布标签
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ "$RELEASE_TAG" == "$version" || -z "$version" ]]; then
+            echo "Release tag must have the form v<version>: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          for manifest in center/Cargo.toml connector/Cargo.toml; do
+            package_version="$(sed -nE 's/^version = "([^"]+)"$/\1/p' "$manifest")"
+            if [[ "$package_version" != "$version" ]]; then
+              echo "$manifest version $package_version does not match tag $RELEASE_TAG" >&2
+              exit 1
+            fi
+          done
+
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  connector:
+    name: 构建 Windows Connector
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 安装 Rust 工具链
+        shell: pwsh
+        run: rustup toolchain install 1.93.1 --profile minimal
+
+      - name: 编译并组装 Connector
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: pwsh
+        run: |
+          cargo +1.93.1 build --release --locked -p adscope-connector
+
+          $staging = Join-Path $env:RUNNER_TEMP 'adscope-connector'
+          $releaseDirectory = 'release'
+          $archive = Join-Path $releaseDirectory "adscope-connector-v$env:VERSION-windows-x86_64.zip"
+          New-Item -ItemType Directory -Path $staging, $releaseDirectory -Force | Out-Null
+          Copy-Item target\release\adscope-connector.exe (Join-Path $staging 'adscope-connector.exe')
+          Copy-Item connector\.env.example (Join-Path $staging '.env.example')
+          Copy-Item deploy\connector\install-service.ps1 (Join-Path $staging 'install-service.ps1')
+          Copy-Item deploy\connector\uninstall-service.ps1 (Join-Path $staging 'uninstall-service.ps1')
+          Copy-Item deploy\connector\README.md (Join-Path $staging 'README.md')
+          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connector-release
+          path: release/adscope-connector-v${{ needs.validate.outputs.version }}-windows-x86_64.zip
+          if-no-files-found: error
+
+  center:
+    name: 构建 Linux Center
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 构建并导出 Center 镜像
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          docker build --platform linux/amd64 \
+            --build-arg "VERSION=$VERSION" \
+            --build-arg "REVISION=$GITHUB_SHA" \
+            --tag "adscope-center:$VERSION" \
+            .
+          docker save --output "release/adscope-center-v$VERSION-linux-amd64.tar" "adscope-center:$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: center-release
+          path: release/adscope-center-v${{ needs.validate.outputs.version }}-linux-amd64.tar
+          if-no-files-found: error
+
+  release:
+    name: 创建 GitHub Release
+    needs:
+      - validate
+      - connector
+      - center
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: connector-release
+          path: release
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: center-release
+          path: release
+
+      - name: 生成发布清单与校验和
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          center_archive="release/adscope-center-v$VERSION-linux-amd64.tar"
+          connector_archive="release/adscope-connector-v$VERSION-windows-x86_64.zip"
+          for artifact in "$center_archive" "$connector_archive"; do
+            test -f "$artifact" || { echo "Missing release artifact: $artifact" >&2; exit 1; }
+          done
+
+          center_checksum="$(sha256sum "$center_archive" | awk '{print $1}')"
+          connector_checksum="$(sha256sum "$connector_archive" | awk '{print $1}')"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg revision "$REVISION" \
+            --arg center_checksum "$center_checksum" \
+            --arg connector_checksum "$connector_checksum" \
+            --arg center_name "$(basename "$center_archive")" \
+            --arg connector_name "$(basename "$connector_archive")" \
+            '{
+              version: $version,
+              revision: $revision,
+              target: "windows-x86_64,linux-amd64",
+              artifacts: [
+                { name: $center_name, sha256: $center_checksum },
+                { name: $connector_name, sha256: $connector_checksum }
+              ]
+            }' > release/manifest.json
+          printf '%s  %s\n%s  %s\n' \
+            "$center_checksum" "$(basename "$center_archive")" \
+            "$connector_checksum" "$(basename "$connector_archive")" > release/SHA256SUMS
+
+      - name: 创建或更新 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release/* --title "$RELEASE_TAG" --generate-notes
+          fi
