@@ -26,9 +26,9 @@ RUN apt-get update \
     && chown -R adscope:adscope /app /data
 COPY --from=rust-build /src/target/release/adscope-center /app/adscope-center
 COPY --from=web-build /src/center/web/.output/public/ /app/web/
-ENV ADSCOPE_BIND_ADDR=0.0.0.0:8080 \
-    ADSCOPE_WEB_ROOT=/app/web \
-    ADSCOPE_DATABASE_URL=sqlite:///data/adscope.db?mode=rwc
+ENV BIND_ADDR=0.0.0.0:8080 \
+    WEB_ROOT=/app/web \
+    DATABASE_URL=sqlite:///data/adscope.db?mode=rwc
 USER 10001:10001
 VOLUME ["/data"]
 EXPOSE 8080

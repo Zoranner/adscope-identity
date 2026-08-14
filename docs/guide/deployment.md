@@ -4,8 +4,14 @@
 
 Center 和 Connector 是两个独立部署单元，部署方式不同：
 
-- Center 使用 [deploy/center/compose.yaml](../../deploy/center/compose.yaml) 作为 Docker 服务。复制 [deploy/center/center.env.example](../../deploy/center/center.env.example) 为 `deploy/center/center.env`，替换所有占位值后通过 Compose 启动。
+- Center 使用 [deploy/center/docker-compose.yml](../../deploy/center/docker-compose.yml) 作为 Docker 服务。复制 [deploy/center/.env.example](../../deploy/center/.env.example) 为 `deploy/center/.env`，替换所有占位值后通过 Compose 启动。
 - Connector 作为原生 Windows 服务运行。复制 [connector/.env.example](../../connector/.env.example) 到 Connector 运行目录并命名为 `.env`，再使用发布包中的服务安装脚本安装。
+
+Center 加入预先创建的外部 Docker 网络 `adscope`：
+
+```text
+docker network create adscope
+```
 
 [center/.env.example](../../center/.env.example) 可用于查阅 Center 变量说明，不是 Docker 部署使用的配置文件。
 
@@ -15,9 +21,9 @@ Center 和 Connector 是两个独立部署单元，部署方式不同：
 
 ## 主服务
 
-主服务是中心 API 和同步控制面。主服务必须配置 `ADSCOPE_DATABASE_URL`、`ADSCOPE_PASSWORD_ENCRYPTION_KEY`、`ADSCOPE_PASSWORD_HASH_PROVIDER`、`ADSCOPE_USER_SESSION_KEY`、`ADSCOPE_MANAGEMENT_TOKEN`、`ADSCOPE_OIDC_ISSUER` 和 `ADSCOPE_OIDC_PRIVATE_KEY_FILE`。生产部署还应显式设置 `ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false`。
+主服务是中心 API 和同步控制面。主服务必须配置 `DATABASE_URL`、`PASSWORD_ENCRYPTION_KEY`、`PASSWORD_HASH_PROVIDER`、`SESSION_KEY`、`MANAGEMENT_TOKEN` 和 `OIDC_ISSUER`。生产部署还应显式设置 `OIDC_LOOPBACK_HTTP=false`。
 
-`ADSCOPE_PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
+`PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
 Web 使用 Nuxt 静态构建，由主服务统一托管。构建命令在 `center/web` 下执行：
 
@@ -26,46 +32,52 @@ bun install
 bun run build
 ```
 
-构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `ADSCOPE_WEB_ROOT` 指定静态文件目录。
+构建产物位于 `center/web/.output/public`。开发仓库中主服务会自动读取该目录；部署时也可以把该目录内容复制到主服务运行目录下的 `web` 目录，或通过 `WEB_ROOT` 指定静态文件目录。
 
 主服务会优先匹配 `/api/*`，非 API 请求由 Web 静态文件处理。普通用户入口为 `/login`，管理入口为 `/admin`。未知 `/api/*` 返回 API 404，不会回退到前端页面。
 
 ## OIDC 私钥
 
-OIDC 使用至少 2048 位的 RSA 私钥签发 RS256 token。以下命令适用于使用普通 rootful Docker、已安装 OpenSSL 的 Linux 主机。示例生成 3072 位 PKCS#8 PEM 私钥，再把文件设为 Center 容器用户 `10001:10001` 只读：
+OIDC 使用至少 2048 位的 RSA 私钥签发 RS256 token。以下命令适用于使用普通 rootful Docker、已安装 OpenSSL 的 Linux 主机。示例在部署目录的 `app/secrets/` 中生成 3072 位 PKCS#8 PEM 私钥，再把文件设为 Center 容器用户 `10001:10001` 只读：
 
 ```sh
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out oidc-private-key.pem
-sudo chown 10001:10001 oidc-private-key.pem
-sudo chmod 0400 oidc-private-key.pem
+mkdir -p app/secrets data
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out app/secrets/oidc-private-key.pem
+sudo chown 10001:10001 app/secrets/oidc-private-key.pem
+sudo chmod 0400 app/secrets/oidc-private-key.pem
 ```
 
-将 `oidc-private-key.pem` 放在 Center 部署目录，并限制为 Center 容器用户可读。镜像固定以 UID/GID `10001:10001` 运行；如部署镜像修改了运行 UID/GID，应同步调整私钥文件属主。rootless Docker 或启用用户命名空间映射时，应使用映射后的宿主机 UID 和 GID。私钥正文不得进入仓库、`.env`、环境变量或镜像。Compose 只读挂载该文件，环境变量只保存容器内路径：
+将 `oidc-private-key.pem` 放在 Center 部署目录的 `app/secrets/` 中，并限制为 Center 容器用户可读。镜像固定以 UID/GID `10001:10001` 运行；如部署镜像修改了运行 UID/GID，应同步调整私钥文件属主。rootless Docker 或启用用户命名空间映射时，应使用映射后的宿主机 UID 和 GID。私钥正文不得进入仓库、`.env`、环境变量或镜像。Compose 将该目录只读挂载到 `/run/secrets`，Center 固定读取 `/run/secrets/oidc-private-key.pem`：
 
 ```yaml
 services:
   center:
     env_file:
-      - center.env
+      - .env
     volumes:
-      - ./oidc-private-key.pem:/run/secrets/oidc-private-key.pem:ro
-    expose:
-      - "8080"
+      - ./data:/data
+      - ./app/secrets:/run/secrets:ro
+    ports:
+      - "8080:8080"
+
+networks:
+  default:
+    external: true
+    name: adscope
 ```
 
-`center.env` 中的 OIDC 配置如下：
+`.env` 中的 OIDC 配置如下：
 
 ```text
-ADSCOPE_OIDC_ISSUER=https://center.example.com
-ADSCOPE_OIDC_PRIVATE_KEY_FILE=/run/secrets/oidc-private-key.pem
-ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false
+OIDC_ISSUER=https://center.example.com
+OIDC_LOOPBACK_HTTP=false
 ```
 
-`ADSCOPE_OIDC_ISSUER` 必须填写反向代理对外提供的 HTTPS 地址，并与客户端访问的 Center 地址一致。该值只能是 HTTPS origin，不能包含路径、查询参数或片段。
+`OIDC_ISSUER` 必须填写反向代理对外提供的 HTTPS 地址，并与客户端访问的 Center 地址一致。该值只能是 HTTPS origin，不能包含路径、查询参数或片段。
 
-Compose 只通过 `expose` 提供 Center 内部 HTTP 端口，由同一容器网络中的反向代理终止 TLS 并转发请求。Center 不管理 TLS 证书，OIDC RSA 私钥也不是 TLS 证书，两类密钥应分别生成和保管。
+Compose 将宿主机 `8080` 端口发布到 Center 容器的 `8080` 端口。Center 不管理 TLS 证书，OIDC RSA 私钥也不是 TLS 证书，两类密钥应分别生成和保管。
 
-更换 `oidc-private-key.pem` 后，在 `deploy/center` 目录重建 Center 容器，使只读 bind mount 指向新文件并重新加载私钥。私钥可能通过原子替换写入，单独执行 `docker compose restart` 不保证容器重新挂载新文件。
+更换 `app/secrets/oidc-private-key.pem` 后，在 `deploy/center` 目录重建 Center 容器，使其重新加载密钥。私钥可能通过原子替换写入，单独执行 `docker compose restart` 不保证容器重新加载新文件。
 
 ```text
 docker compose up -d --force-recreate center
@@ -111,7 +123,7 @@ Connector 在运行目录下自动维护 `adscope-connector-state.json`。文件
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境配置本机高熵密码加密密钥。
-- `ADSCOPE_PASSWORD_ENCRYPTION_KEY`、`ADSCOPE_USER_SESSION_KEY`、`ADSCOPE_MANAGEMENT_TOKEN` 和 Connector key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
+- `PASSWORD_ENCRYPTION_KEY`、`SESSION_KEY`、`MANAGEMENT_TOKEN` 和 Connector key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
 - 管理入口使用独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 管理 Web 静态文件由主服务托管，不单独开放 Nuxt 开发服务。
 - 仅向 Connector 主机计算机账号委派镜像根和隔离 OU 范围内的必要权限，不使用 `superuser`、本地账户或其他内置本地服务身份。

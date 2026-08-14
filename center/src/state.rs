@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use adscope_store::Repository;
 
@@ -27,11 +27,26 @@ pub struct AppState {
 impl AppState {
     pub fn from_env(repository: Repository) -> anyhow::Result<Self> {
         crate::config::reject_retired_environment_variables()?;
+        Self::from_env_with_oidc(repository, OidcService::from_env()?)
+    }
+
+    #[doc(hidden)]
+    pub fn from_env_with_oidc_private_key_path_for_tests(
+        repository: Repository,
+        private_key_path: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
+        crate::config::reject_retired_environment_variables()?;
+        Self::from_env_with_oidc(
+            repository,
+            OidcService::from_env_with_private_key_path(private_key_path.as_ref())?,
+        )
+    }
+
+    fn from_env_with_oidc(repository: Repository, oidc: OidcService) -> anyhow::Result<Self> {
         let password_encryption = password_encryption_from_env()?;
         let password_hash = password_hash_from_env()?;
         let user_sessions = UserSessionIssuer::from_env()?;
         let management_token = management_token_from_env()?;
-        let oidc = OidcService::from_env()?;
         Ok(Self::with_password_providers(
             repository,
             DEFAULT_BATCH_LIMIT,
@@ -110,10 +125,10 @@ fn oidc_service_for_tests(issuer: &str, private_key_pem: &[u8]) -> OidcService {
 }
 
 fn management_token_from_env() -> anyhow::Result<String> {
-    let token = std::env::var("ADSCOPE_MANAGEMENT_TOKEN")
-        .map_err(|_| anyhow::anyhow!("ADSCOPE_MANAGEMENT_TOKEN is required"))?;
+    let token = std::env::var("MANAGEMENT_TOKEN")
+        .map_err(|_| anyhow::anyhow!("MANAGEMENT_TOKEN is required"))?;
     if token.trim().is_empty() {
-        anyhow::bail!("ADSCOPE_MANAGEMENT_TOKEN must not be empty");
+        anyhow::bail!("MANAGEMENT_TOKEN must not be empty");
     }
     Ok(token)
 }

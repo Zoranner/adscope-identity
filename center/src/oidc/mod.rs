@@ -3,7 +3,10 @@ pub mod crypto;
 pub(crate) mod routes;
 pub mod validation;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{
@@ -123,6 +126,12 @@ impl OidcService {
 
     pub fn from_env() -> anyhow::Result<Self> {
         Self::new(OidcConfig::from_env()?)
+    }
+
+    pub(crate) fn from_env_with_private_key_path(private_key_path: &Path) -> anyhow::Result<Self> {
+        Self::new(OidcConfig::from_env_with_private_key_path(
+            private_key_path,
+        )?)
     }
 
     pub fn config(&self) -> &OidcConfig {

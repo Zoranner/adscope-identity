@@ -3,8 +3,8 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $dockerfilePath = Join-Path $repositoryRoot 'Dockerfile'
 $dockerignorePath = Join-Path $repositoryRoot '.dockerignore'
-$composePath = Join-Path $repositoryRoot 'deploy\center\compose.yaml'
-$environmentExamplePath = Join-Path $repositoryRoot 'deploy\center\center.env.example'
+$composePath = Join-Path $repositoryRoot 'deploy\center\docker-compose.yml'
+$environmentExamplePath = Join-Path $repositoryRoot 'deploy\center\.env.example'
 $centerEnvironmentExamplePath = Join-Path $repositoryRoot 'center\.env.example'
 
 $requiredFiles = @(
@@ -40,8 +40,8 @@ Assert-Contains $dockerfile 'cargo build --release --locked -p adscope-center' '
 Assert-Contains $dockerfile 'USER 10001:10001' 'non-root runtime user'
 Assert-Contains $dockerfile '/api/health' 'container health check'
 Assert-Contains $dockerfile 'VOLUME \["/data"\]' 'SQLite data volume'
-Assert-Contains $dockerfile 'ADSCOPE_WEB_ROOT=/app/web' 'bundled Web root'
-Assert-Contains $dockerfile 'ADSCOPE_DATABASE_URL=sqlite:///data/adscope\.db\?mode=rwc' 'SQLite database URL'
+Assert-Contains $dockerfile 'WEB_ROOT=/app/web' 'bundled Web root'
+Assert-Contains $dockerfile 'DATABASE_URL=sqlite:///data/adscope\.db\?mode=rwc' 'SQLite database URL'
 
 $dockerignore = Get-Content -LiteralPath $dockerignorePath -Raw
 Assert-Contains $dockerignore '(?m)^\.env$' 'secret environment files excluded'
@@ -50,13 +50,30 @@ Assert-Contains $dockerignore '(?m)^node_modules/$' 'Node modules excluded'
 Assert-Contains $dockerignore '(?m)^\.output/$' 'Nuxt output excluded'
 
 $compose = Get-Content -LiteralPath $composePath -Raw
-Assert-Contains $compose '(?m)^\s+expose:$' 'internal-only port exposure'
-Assert-Contains $compose '(?m)^\s+read_only:\s+true$' 'read-only root filesystem'
 Assert-Contains $compose 'adscope-center:0\.1\.0' 'Center image name'
-Assert-Contains $compose 'adscope-center-data:/data' 'persistent SQLite volume'
-Assert-Contains $compose '(?m)^\s+-\s+\./oidc-private-key\.pem:/run/secrets/oidc-private-key\.pem:ro\s*$' 'read-only OIDC private key mount'
-if ($compose -match '(?m)^\s+ports:$') {
-    throw 'Center Compose must not publish a host port'
+Assert-Contains $compose '(?m)^\s+env_file:$' 'Center environment file declaration'
+Assert-Contains $compose '(?m)^\s+-\s+\.env\s*$' 'Center .env file'
+Assert-Contains $compose '(?m)^\s+-\s+\./data:/data\s*$' 'persistent SQLite bind mount'
+Assert-Contains $compose '(?m)^\s+-\s+\./app/secrets:/run/secrets:ro\s*$' 'read-only OIDC secret directory mount'
+Assert-Contains $compose '(?m)^\s+ports:$' 'published Center port'
+Assert-Contains $compose '(?m)^\s+-\s+["'']8080:8080["'']\s*$' 'Center host port mapping'
+Assert-Contains $compose '(?m)^\s+default:$' 'default Docker network'
+Assert-Contains $compose '(?m)^\s+external:\s+true$' 'external Docker network'
+Assert-Contains $compose '(?m)^\s+name:\s+adscope\s*$' 'adscope Docker network name'
+if ($compose -match '(?m)^\s+expose:$') {
+    throw 'Center Compose must publish its host port instead of using expose'
+}
+if ($compose -match '(?m)^\s+read_only:\s+true$') {
+    throw 'Center Compose must not use a read-only root filesystem'
+}
+if ($compose -match '(?m)^\s+tmpfs:$') {
+    throw 'Center Compose must not define tmpfs mounts'
+}
+if ($compose -match '(?m)^volumes:$') {
+    throw 'Center Compose must use bind mounts, not named volumes'
+}
+if ($compose -match '(?m)^\s*ADSCOPE_OIDC_PRIVATE_KEY_FILE=') {
+    throw 'Center Compose must not configure the fixed OIDC private key path'
 }
 if ($compose -match '(?i)certificate|/etc/(?:ssl|letsencrypt)|(?:tls|ssl)[_-]?(?:cert|key)') {
     throw 'Center Compose must not mount or manage TLS certificates'
@@ -65,22 +82,30 @@ if ($compose -match '(?i)certificate|/etc/(?:ssl|letsencrypt)|(?:tls|ssl)[_-]?(?
 $environmentExample = Get-Content -LiteralPath $environmentExamplePath -Raw
 $centerEnvironmentExample = Get-Content -LiteralPath $centerEnvironmentExamplePath -Raw
 foreach ($name in @(
-    'ADSCOPE_PASSWORD_ENCRYPTION_KEY',
-    'ADSCOPE_PASSWORD_HASH_PROVIDER',
-    'ADSCOPE_USER_SESSION_KEY',
-    'ADSCOPE_MANAGEMENT_TOKEN',
-    'ADSCOPE_OIDC_ISSUER',
-    'ADSCOPE_OIDC_PRIVATE_KEY_FILE',
-    'ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS'
+    'DATABASE_URL',
+    'PASSWORD_ENCRYPTION_KEY',
+    'PASSWORD_HASH_PROVIDER',
+    'SESSION_KEY',
+    'MANAGEMENT_TOKEN',
+    'OIDC_ISSUER',
+    'OIDC_LOOPBACK_HTTP'
 )) {
     Assert-Contains $environmentExample "(?m)^$name=" "environment variable $name"
     Assert-Contains $centerEnvironmentExample "(?m)^$name=" "Center environment variable $name"
 }
 
-Assert-Contains $environmentExample '(?m)^ADSCOPE_OIDC_ISSUER=https://center\.example\.com$' 'production HTTPS OIDC issuer example'
-Assert-Contains $environmentExample '(?m)^ADSCOPE_OIDC_PRIVATE_KEY_FILE=/run/secrets/oidc-private-key\.pem$' 'container OIDC private key path'
-Assert-Contains $environmentExample '(?m)^ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false$' 'secure OIDC loopback redirect default'
-Assert-Contains $centerEnvironmentExample '(?m)^ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS=false$' 'secure Center OIDC loopback redirect default'
+Assert-Contains $environmentExample '(?m)^OIDC_ISSUER=https://center\.example\.com$' 'production HTTPS OIDC issuer example'
+Assert-Contains $environmentExample '(?m)^OIDC_LOOPBACK_HTTP=false$' 'secure OIDC loopback redirect default'
+Assert-Contains $centerEnvironmentExample '(?m)^OIDC_LOOPBACK_HTTP=false$' 'secure Center OIDC loopback redirect default'
+
+foreach ($environmentFile in @($environmentExample, $centerEnvironmentExample)) {
+    if ($environmentFile -match '(?m)^ADSCOPE_') {
+        throw 'Center environment variables must use their category name without an ADSCOPE prefix'
+    }
+    if ($environmentFile -match '(?m)^ADSCOPE_OIDC_PRIVATE_KEY_FILE=') {
+        throw 'OIDC private key path must be fixed by the application, not configured through the environment'
+    }
+}
 
 foreach ($deliveryFilePath in @(
     $dockerfilePath,

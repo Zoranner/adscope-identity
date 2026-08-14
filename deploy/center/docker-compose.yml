@@ -1,0 +1,16 @@
+services:
+  center:
+    image: adscope-center:0.1.0
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+      - ./app/secrets:/run/secrets:ro
+    ports:
+      - "8080:8080"
+
+networks:
+  default:
+    external: true
+    name: adscope

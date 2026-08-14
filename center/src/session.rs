@@ -12,8 +12,8 @@ const TOKEN_PREFIX: &str = "adscope-user-session:v2";
 const MANAGEMENT_TOKEN_PREFIX: &str = "adscope-management-session:v1";
 const MANAGEMENT_SESSION_TTL_SECONDS: u64 = 8 * 60 * 60;
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 3600;
-const SESSION_KEY_ENV: &str = "ADSCOPE_USER_SESSION_KEY";
-const SESSION_TTL_ENV: &str = "ADSCOPE_USER_SESSION_TTL_SECONDS";
+const SESSION_KEY_ENV: &str = "SESSION_KEY";
+const SESSION_TTL_ENV: &str = "SESSION_TTL_SECONDS";
 
 type HmacSha256 = Hmac<Sha256>;
 

@@ -1,13 +1,13 @@
-use std::{path::PathBuf, time::Duration};
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context, ensure};
 use url::Url;
 
-const ISSUER_ENV: &str = "ADSCOPE_OIDC_ISSUER";
-const PRIVATE_KEY_FILE_ENV: &str = "ADSCOPE_OIDC_PRIVATE_KEY_FILE";
-const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "ADSCOPE_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS";
+const ISSUER_ENV: &str = "OIDC_ISSUER";
+const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "OIDC_LOOPBACK_HTTP";
 const AUTHORIZATION_CODE_TTL_SECONDS: u64 = 120;
 const TOKEN_TTL_SECONDS: u64 = 300;
+const PRIVATE_KEY_PATH: &str = "/run/secrets/oidc-private-key.pem";
 
 #[derive(Clone)]
 pub struct OidcConfig {
@@ -24,30 +24,24 @@ impl OidcConfig {
         private_key_pem: Vec<u8>,
         allow_insecure_web_loopback_redirects: bool,
     ) -> anyhow::Result<Self> {
-        let issuer = Url::parse(issuer).context("ADSCOPE_OIDC_ISSUER must be an absolute URL")?;
-        ensure!(
-            issuer.scheme() == "https",
-            "ADSCOPE_OIDC_ISSUER must use HTTPS"
-        );
-        ensure!(
-            issuer.host().is_some(),
-            "ADSCOPE_OIDC_ISSUER must include a host"
-        );
+        let issuer = Url::parse(issuer).context("OIDC_ISSUER must be an absolute URL")?;
+        ensure!(issuer.scheme() == "https", "OIDC_ISSUER must use HTTPS");
+        ensure!(issuer.host().is_some(), "OIDC_ISSUER must include a host");
         ensure!(
             issuer.username().is_empty() && issuer.password().is_none(),
-            "ADSCOPE_OIDC_ISSUER must not include userinfo"
+            "OIDC_ISSUER must not include userinfo"
         );
         ensure!(
             issuer.query().is_none(),
-            "ADSCOPE_OIDC_ISSUER must not include a query"
+            "OIDC_ISSUER must not include a query"
         );
         ensure!(
             issuer.fragment().is_none(),
-            "ADSCOPE_OIDC_ISSUER must not include a fragment"
+            "OIDC_ISSUER must not include a fragment"
         );
         ensure!(
             issuer.path() == "/",
-            "ADSCOPE_OIDC_ISSUER path must be '/' or empty"
+            "OIDC_ISSUER path must be '/' or empty"
         );
 
         Ok(Self {
@@ -60,18 +54,15 @@ impl OidcConfig {
     }
 
     pub fn from_env() -> anyhow::Result<Self> {
+        Self::from_env_with_private_key_path(Path::new(Self::private_key_path()))
+    }
+
+    pub(crate) fn from_env_with_private_key_path(private_key_path: &Path) -> anyhow::Result<Self> {
         let issuer =
             std::env::var(ISSUER_ENV).map_err(|_| anyhow::anyhow!("{ISSUER_ENV} is required"))?;
-        let private_key_file = std::env::var(PRIVATE_KEY_FILE_ENV)
-            .map_err(|_| anyhow::anyhow!("{PRIVATE_KEY_FILE_ENV} is required"))?;
-        ensure!(
-            !private_key_file.trim().is_empty(),
-            "{PRIVATE_KEY_FILE_ENV} must not be empty"
-        );
-        let private_key_path = PathBuf::from(&private_key_file);
-        let private_key_pem = std::fs::read(&private_key_path).with_context(|| {
+        let private_key_pem = std::fs::read(private_key_path).with_context(|| {
             format!(
-                "failed to read {PRIVATE_KEY_FILE_ENV} at {}",
+                "failed to read OIDC private key at {}",
                 private_key_path.display()
             )
         })?;
@@ -89,6 +80,10 @@ impl OidcConfig {
             private_key_pem,
             allow_insecure_web_loopback_redirects,
         )
+    }
+
+    pub(crate) fn private_key_path() -> &'static str {
+        PRIVATE_KEY_PATH
     }
 
     pub fn issuer(&self) -> &str {
@@ -143,5 +138,13 @@ mod tests {
             OidcConfig::new("https://center.example.test", PRIVATE_KEY.to_vec(), false).unwrap();
         assert_eq!(config.authorization_code_ttl().as_secs(), 120);
         assert_eq!(config.token_ttl().as_secs(), 300);
+    }
+
+    #[test]
+    fn private_key_path_is_fixed_inside_the_container() {
+        assert_eq!(
+            OidcConfig::private_key_path(),
+            "/run/secrets/oidc-private-key.pem"
+        );
     }
 }
