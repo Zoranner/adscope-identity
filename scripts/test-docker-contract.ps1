@@ -6,13 +6,17 @@ $dockerignorePath = Join-Path $repositoryRoot '.dockerignore'
 $composePath = Join-Path $repositoryRoot 'deploy\center\docker-compose.yml'
 $environmentExamplePath = Join-Path $repositoryRoot 'deploy\center\.env.example'
 $centerEnvironmentExamplePath = Join-Path $repositoryRoot 'center\.env.example'
+$releaseWorkflowPath = Join-Path $repositoryRoot '.github\workflows\release.yml'
+$deploymentGuidePath = Join-Path $repositoryRoot 'docs\guide\deployment.md'
 
 $requiredFiles = @(
     $dockerfilePath,
     $dockerignorePath,
     $composePath,
     $environmentExamplePath,
-    $centerEnvironmentExamplePath
+    $centerEnvironmentExamplePath,
+    $releaseWorkflowPath,
+    $deploymentGuidePath
 )
 $missingFiles = $requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }
 if ($missingFiles.Count -gt 0) {
@@ -53,7 +57,7 @@ Assert-Contains $dockerignore '(?m)^node_modules/$' 'Node modules excluded'
 Assert-Contains $dockerignore '(?m)^\.output/$' 'Nuxt output excluded'
 
 $compose = Get-Content -LiteralPath $composePath -Raw
-Assert-Contains $compose 'adscope-center:0\.1\.0' 'Center image name'
+Assert-Contains $compose 'ghcr\.io/zoranner/adscope-center:0\.1\.0' 'published Center image name'
 Assert-Contains $compose '(?m)^\s+env_file:$' 'Center environment file declaration'
 Assert-Contains $compose '(?m)^\s+-\s+\.env\s*$' 'Center .env file'
 Assert-Contains $compose '(?m)^\s+-\s+\./data:/data\s*$' 'persistent SQLite bind mount'
@@ -81,6 +85,16 @@ if ($compose -match '(?m)^\s*ADSCOPE_OIDC_PRIVATE_KEY_FILE=') {
 if ($compose -match '(?i)certificate|/etc/(?:ssl|letsencrypt)|(?:tls|ssl)[_-]?(?:cert|key)') {
     throw 'Center Compose must not mount or manage TLS certificates'
 }
+
+$releaseWorkflow = Get-Content -LiteralPath $releaseWorkflowPath -Raw
+Assert-Contains $releaseWorkflow '(?m)^\s+packages:\s+write$' 'GitHub Packages publish permission'
+Assert-Contains $releaseWorkflow 'ghcr\.io/zoranner/adscope-center' 'GitHub Container Registry image name'
+Assert-Contains $releaseWorkflow 'docker login ghcr\.io' 'GitHub Container Registry login'
+Assert-Contains $releaseWorkflow 'docker push "\$IMAGE:\$VERSION"' 'versioned Center image push'
+
+$deploymentGuide = Get-Content -LiteralPath $deploymentGuidePath -Raw
+Assert-Contains $deploymentGuide 'ghcr\.io/zoranner/adscope-center:0\.1\.0' 'published Center image deployment reference'
+Assert-Contains $deploymentGuide 'docker login ghcr\.io' 'private GitHub Container Registry login instruction'
 
 $environmentExample = Get-Content -LiteralPath $environmentExamplePath -Raw
 $centerEnvironmentExample = Get-Content -LiteralPath $centerEnvironmentExamplePath -Raw

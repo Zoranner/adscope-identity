@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -88,6 +89,8 @@ jobs:
       - name: 构建并导出 Center 镜像
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          IMAGE: ghcr.io/zoranner/adscope-center
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -95,9 +98,11 @@ jobs:
           docker build --platform linux/amd64 \
             --build-arg "VERSION=$VERSION" \
             --build-arg "REVISION=$GITHUB_SHA" \
-            --tag "adscope-center:$VERSION" \
+            --tag "$IMAGE:$VERSION" \
             .
-          docker save --output "release/adscope-center-v$VERSION-linux-amd64.tar" "adscope-center:$VERSION"
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$VERSION"
+          docker save --output "release/adscope-center-v$VERSION-linux-amd64.tar" "$IMAGE:$VERSION"
 
       - uses: actions/upload-artifact@v6
         with:

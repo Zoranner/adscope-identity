@@ -13,6 +13,21 @@ Center 加入预先创建的外部 Docker 网络 `adscope`：
 docker network create adscope
 ```
 
+Center 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
+`ghcr.io/zoranner/adscope-center:0.1.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包。
+如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
+
+```text
+docker login ghcr.io
+```
+
+升级镜像时，在 `deploy/center` 目录执行：
+
+```text
+docker compose pull center
+docker compose up -d center
+```
+
 [center/.env.example](../../center/.env.example) 可用于查阅 Center 变量说明，不是 Docker 部署使用的配置文件。
 
 系统环境变量优先级高于进程读取的配置文件。生产环境可以由容器平台、Windows 服务环境或 Secret 管理系统注入普通密钥变量；OIDC RSA 私钥仍通过受限文件挂载。生产密钥不得写入仓库。
