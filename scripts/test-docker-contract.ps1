@@ -91,9 +91,9 @@ Assert-Contains $releaseWorkflow '(?m)^\s+packages:\s+write$' 'GitHub Packages p
 Assert-Contains $releaseWorkflow 'ghcr\.io/zoranner/adscope-center' 'GitHub Container Registry image name'
 Assert-Contains $releaseWorkflow 'docker login ghcr\.io' 'GitHub Container Registry login'
 Assert-Contains $releaseWorkflow 'docker push "\$IMAGE:\$VERSION"' 'versioned Center image push'
-Assert-Contains $releaseWorkflow 'actions/download-artifact@v6' 'Node 24 artifact download action'
-if ($releaseWorkflow -match 'actions/(?:download|upload)-artifact@v[45]') {
-    throw 'Release workflow must not use Node 20 artifact actions'
+Assert-Contains $releaseWorkflow 'actions/download-artifact@v8' 'Node 24 artifact download action'
+if ($releaseWorkflow -match 'actions/download-artifact@v[1-7]') {
+    throw 'Release workflow must not use a Node 20 artifact download action'
 }
 
 $deploymentGuide = Get-Content -LiteralPath $deploymentGuidePath -Raw
