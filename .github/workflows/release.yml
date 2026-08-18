@@ -72,7 +72,7 @@ jobs:
           Copy-Item deploy\connector\README.md (Join-Path $staging 'README.md')
           Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: connector-release
           path: release/adscope-connector-v${{ needs.validate.outputs.version }}-windows-x86_64.zip
@@ -99,7 +99,7 @@ jobs:
             .
           docker save --output "release/adscope-center-v$VERSION-linux-amd64.tar" "adscope-center:$VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: center-release
           path: release/adscope-center-v${{ needs.validate.outputs.version }}-linux-amd64.tar
