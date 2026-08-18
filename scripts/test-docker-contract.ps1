@@ -35,7 +35,10 @@ function Assert-Contains {
 }
 
 $dockerfile = Get-Content -LiteralPath $dockerfilePath -Raw
-Assert-Contains $dockerfile 'bun install --frozen-lockfile' 'frozen Bun install'
+Assert-Contains $dockerfile '(?m)^RUN bun install$' 'Bun install without an internal registry override'
+if ($dockerfile -match 'center/web/bun\.lock') {
+    throw 'Release image must not copy the internal Bun lockfile'
+}
 Assert-Contains $dockerfile 'cargo build --release --locked -p adscope-center' 'locked Center build'
 Assert-Contains $dockerfile 'USER 10001:10001' 'non-root runtime user'
 Assert-Contains $dockerfile '/api/health' 'container health check'

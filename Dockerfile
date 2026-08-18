@@ -1,7 +1,7 @@
 FROM oven/bun:1.3.14-debian AS web-build
 WORKDIR /src/center/web
-COPY center/web/package.json center/web/bun.lock ./
-RUN bun install --frozen-lockfile
+COPY center/web/package.json ./
+RUN bun install
 COPY center/web/ ./
 RUN bun run build
 
