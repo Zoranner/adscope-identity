@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { FolderTree } from 'lucide-vue-next'
+import { Button } from '@stellar/ui'
 import type { OuTreeItem } from '~/types/admin'
 
 defineProps<{
@@ -21,10 +22,11 @@ defineEmits<{
     </div>
 
     <div v-if="items.length" class="ou-tree">
-      <button
+      <Button
         v-for="item in items"
         :key="item.ou.id"
         class="ou-tree-button"
+        variant="text"
         :class="{ active: selectedId === item.ou.id }"
         :style="{ paddingLeft: `${12 + item.depth * 16}px` }"
         @click="$emit('select', item.ou.id)"
@@ -32,7 +34,7 @@ defineEmits<{
         <FolderTree :size="16" />
         <span class="ou-tree-name">{{ item.ou.name }}</span>
         <span class="ou-tree-count">{{ item.userCount }} / {{ item.groupCount }}</span>
-      </button>
+      </Button>
     </div>
 
     <AdminEmptyState

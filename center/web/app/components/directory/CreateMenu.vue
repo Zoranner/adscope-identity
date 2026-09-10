@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ChevronDown, FolderTree, Plus, ShieldCheck, Users } from 'lucide-vue-next'
+import { Button } from '@stellar/ui'
 
 const props = defineProps<{
   disabled?: boolean
@@ -50,31 +51,29 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 <template>
   <div ref="root" class="create-menu" @keydown.esc.stop.prevent="close">
-    <button
+    <Button
       type="button"
-      class="primary-button create-menu-trigger"
+      variant="solid"
+      class="create-menu-trigger"
       :disabled="disabled"
       aria-haspopup="menu"
       :aria-expanded="open"
       @click="toggle"
     >
-      <Plus :size="16" />
       新建
-      <ChevronDown :size="15" />
-    </button>
+    </Button>
     <div v-if="open" class="create-menu-list" role="menu">
-      <button type="button" @click="choose('ou')">
+      <Button type="button" variant="text" @click="choose('ou')">
         <FolderTree :size="16" />
         子 OU
-      </button>
-      <button type="button" @click="choose('user')">
+      </Button>
+      <Button type="button" variant="text" @click="choose('user')">
         <Users :size="16" />
         用户
-      </button>
-      <button type="button" @click="choose('group')">
+      </Button>
         <ShieldCheck :size="16" />
         安全组
-      </button>
+      </Button>
     </div>
   </div>
 </template>
