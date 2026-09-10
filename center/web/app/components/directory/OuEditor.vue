@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Save } from 'lucide-vue-next'
+import { Button, Input, Select } from '@stellar/ui'
 import type { OuForm, OuTreeItem } from '~/types/admin'
 
 const form = defineModel<OuForm>({ required: true })
@@ -24,32 +25,32 @@ defineEmits<{
     </div>
     <div class="field">
       <label>OU 标识</label>
-      <input v-model="form.id" :disabled="!!editingId" required />
+      <Input v-model="form.id" label="OU 标识" :disabled="!!editingId" required />
     </div>
     <div class="field">
       <label>名称</label>
-      <input v-model="form.name" required />
+      <Input v-model="form.name" label="名称" required />
     </div>
     <div class="field">
       <label>父 OU</label>
-      <select v-model="form.parent_id">
-        <option value="">根 OU</option>
-        <option
-          v-for="item in items"
-          :key="item.ou.id"
-          :disabled="editingId === item.ou.id"
-          :value="item.ou.id"
-        >
-          {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
-        </option>
-      </select>
+      <Select
+        v-model="form.parent_id"
+        label="父 OU"
+        :options="[
+          { value: '', label: '根 OU' },
+          ...items.map((item) => ({
+            value: item.ou.id,
+            label: `${'　'.repeat(item.depth)}${item.ou.name}`,
+            disabled: editingId === item.ou.id,
+          })),
+        ]"
+      />
     </div>
     <div class="form-actions">
-      <button class="primary-button" :disabled="loading || disabled">
-        <Save :size="17" />
+      <Button type="submit" variant="solid" :disabled="loading || disabled">
         保存
-      </button>
-      <button type="button" class="secondary-button" @click="$emit('reset')">清空</button>
+      </Button>
+      <Button type="button" variant="outline" @click="$emit('reset')">清空</Button>
     </div>
   </form>
 </template>

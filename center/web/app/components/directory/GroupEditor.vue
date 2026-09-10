@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Save } from 'lucide-vue-next'
+import { Button, Input, Select, Textarea } from '@stellar/ui'
 import type { GroupForm, OuTreeItem } from '~/types/admin'
 
 const form = defineModel<GroupForm>({ required: true })
@@ -24,30 +25,29 @@ defineEmits<{
     </div>
     <div class="field">
       <label>组标识</label>
-      <input v-model="form.id" :disabled="!!editingId" required />
+      <Input v-model="form.id" label="组标识" :disabled="!!editingId" required />
     </div>
     <div class="field">
       <label>组名称</label>
-      <input v-model="form.name" required />
+      <Input v-model="form.name" label="组名称" required />
     </div>
     <div class="field">
       <label>所属 OU</label>
-      <select v-model="form.organizational_unit_id" required>
-        <option v-for="item in items" :key="item.ou.id" :value="item.ou.id">
-          {{ `${'　'.repeat(item.depth)}${item.ou.name}` }}
-        </option>
-      </select>
+      <Select
+        v-model="form.organizational_unit_id"
+        label="所属 OU"
+        :options="items.map((item) => ({ value: item.ou.id, label: `${'　'.repeat(item.depth)}${item.ou.name}` }))"
+      />
     </div>
     <div class="field">
       <label>成员工号</label>
-      <textarea v-model="form.member_employee_ids" placeholder="用英文逗号分隔"></textarea>
+      <Textarea v-model="form.member_employee_ids" label="成员工号" placeholder="用英文逗号分隔" />
     </div>
     <div class="form-actions">
-      <button class="primary-button" :disabled="loading || disabled">
-        <Save :size="17" />
+      <Button type="submit" variant="solid" :disabled="loading || disabled">
         保存
-      </button>
-      <button type="button" class="secondary-button" @click="$emit('reset')">清空</button>
+      </Button>
+      <Button type="button" variant="outline" @click="$emit('reset')">清空</Button>
     </div>
   </form>
 </template>
