@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { KeyRound, Pencil, Plus, Power, PowerOff, Search, Trash2 } from 'lucide-vue-next'
+import { Button, Input } from '@stellar/ui'
 import type { OAuthClient } from '~/types/admin'
 
 const props = defineProps<{
@@ -51,19 +52,19 @@ function redirectSummary(client: OAuthClient): string {
         <h2>登录客户端</h2>
         <AdminStatusBadge>{{ filteredClients.length }}</AdminStatusBadge>
       </div>
-      <button
-        class="primary-button compact-button"
+      <Button
+        variant="solid"
+        size="small"
         :disabled="busy"
         @click="$emit('create')"
       >
-        <Plus :size="15" />
         新建
-      </button>
+      </Button>
     </div>
 
     <div class="table-toolbar">
       <Search :size="16" />
-      <input
+      <Input
         v-model="query"
         :disabled="busy"
         placeholder="搜索名称、Client ID、类型、Redirect URI 或 scope"
@@ -106,17 +107,19 @@ function redirectSummary(client: OAuthClient): string {
             </td>
             <td class="actions-cell">
               <div class="row-actions">
-                <button
-                  class="icon-button"
+                <Button
+                  variant="ghost"
+                  square
                   title="编辑客户端"
                   aria-label="编辑客户端"
                   :disabled="busy"
                   @click="$emit('edit', client)"
                 >
                   <Pencil :size="16" />
-                </button>
-                <button
-                  class="icon-button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  square
                   :title="client.enabled ? '停用客户端' : '启用客户端'"
                   :aria-label="client.enabled ? '停用客户端' : '启用客户端'"
                   :disabled="busy"
@@ -124,26 +127,29 @@ function redirectSummary(client: OAuthClient): string {
                 >
                   <PowerOff v-if="client.enabled" :size="16" />
                   <Power v-else :size="16" />
-                </button>
-                <button
+                </Button>
+                <Button
                   v-if="client.client_type === 'web'"
-                  class="icon-button"
+                  variant="ghost"
+                  square
                   title="编辑并管理密钥"
                   aria-label="编辑并管理密钥"
                   :disabled="busy"
                   @click="$emit('edit', client)"
                 >
                   <KeyRound :size="16" />
-                </button>
-                <button
-                  class="danger-button compact-button"
+                </Button>
+                <Button
+                  variant="solid"
+                  semantic="error"
+                  size="small"
                   title="删除客户端"
                   aria-label="删除客户端"
                   :disabled="busy"
                   @click="$emit('delete', client)"
                 >
                   <Trash2 :size="16" />
-                </button>
+                </Button>
               </div>
             </td>
           </tr>
