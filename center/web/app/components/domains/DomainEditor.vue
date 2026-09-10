@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Save } from 'lucide-vue-next'
+import { Button, Input, Select } from '@stellar/ui'
 import type { DomainForm } from '~/types/admin'
 
 const form = defineModel<DomainForm>({ required: true })
@@ -24,55 +25,55 @@ defineEmits<{
     <div class="form-row">
       <div class="field">
         <label>域标识</label>
-        <input v-model="form.id" :disabled="!!editingId" required />
+        <Input v-model="form.id" label="域标识" :disabled="!!editingId" required />
       </div>
       <div class="field">
         <label>域名称</label>
-        <input v-model="form.name" required />
+        <Input v-model="form.name" label="域名称" required />
       </div>
     </div>
     <div class="field">
       <label>UPN 后缀</label>
-      <input v-model="form.upn_suffix" required />
+      <Input v-model="form.upn_suffix" label="UPN 后缀" required />
     </div>
     <div class="field">
       <label>镜像根 DN</label>
-      <input v-model="form.mirror_root_dn" required />
+      <Input v-model="form.mirror_root_dn" label="镜像根 DN" required />
     </div>
     <div class="field">
       <label>隔离 OU DN</label>
-      <input v-model="form.quarantine_ou_dn" required />
+      <Input v-model="form.quarantine_ou_dn" label="隔离 OU DN" required />
     </div>
     <div class="form-row">
       <div class="field">
         <label>工号属性</label>
-        <input v-model="form.employee_id_attribute" required />
+        <Input v-model="form.employee_id_attribute" label="工号属性" required />
       </div>
       <div class="field">
         <label>受管组标识属性</label>
-        <input v-model="form.managed_group_id_attribute" required />
+        <Input v-model="form.managed_group_id_attribute" label="受管组标识属性" required />
       </div>
     </div>
     <div class="field">
       <label>状态</label>
-      <select v-model="form.enabled">
-        <option :value="true">启用</option>
-        <option :value="false">停用</option>
-      </select>
+      <Select v-model="form.enabled" label="状态" :options="[
+        { value: true, label: '启用' },
+        { value: false, label: '停用' },
+      ]" />
     </div>
     <div class="form-actions">
-      <button class="primary-button" :disabled="loading || disabled">
+      <Button type="submit" variant="solid" :disabled="loading || disabled">
         <Save :size="17" />
         保存
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        class="secondary-button"
+        variant="outline"
         :disabled="loading || disabled"
         @click="$emit('reset')"
       >
         清空
-      </button>
+      </Button>
     </div>
   </form>
 </template>
