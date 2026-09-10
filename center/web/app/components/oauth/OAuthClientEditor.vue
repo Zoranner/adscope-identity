@@ -87,14 +87,14 @@ const scopes: Array<{ value: OAuthScope; label: string }> = [
     <div class="field">
       <label>授权范围</label>
       <div class="row-actions checkbox-group">
-        <label v-for="scope in scopes" :key="scope.value" class="checkbox-option">
+        <label v-for="scopeItem in scopes" :key="scopeItem.value" class="checkbox-option">
           <input
             v-model="form.allowed_scopes"
             type="checkbox"
-            :value="scope.value"
-            :disabled="scope.value === 'openid' || loading || disabled"
+            :value="scopeItem.value"
+            :disabled="scopeItem.value === 'openid' || loading || disabled"
           />
-          {{ scope.label }}
+          {{ scopeItem.label }}
         </label>
       </div>
     </div>

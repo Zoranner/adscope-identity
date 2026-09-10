@@ -96,13 +96,10 @@ async function exitUser() {
       </NuxtLink>
 
       <div class="topbar-actions">
-        <button class="icon-button" title="刷新" :disabled="loading || !tokenReady" @click="refreshProfile">
-          <RefreshCw :size="17" />
-        </button>
-        <button class="secondary-button" @click="exitUser">
-          <LogOut :size="16" />
+        <Button variant="ghost" square icon="refresh-cw" aria-label="刷新" :disabled="loading || !tokenReady" @click="refreshProfile" />
+        <Button variant="outline" icon="log-out" @click="exitUser">
           退出
-        </button>
+        </Button>
       </div>
     </header>
 
@@ -156,18 +153,17 @@ async function exitUser() {
             <div class="form-row">
               <div class="field">
                 <label>邮箱</label>
-                <input v-model="contactForm.email" type="email" autocomplete="email" />
+                <Input v-model="contactForm.email" type="email" label="邮箱" autocomplete="email" />
               </div>
               <div class="field">
                 <label>手机</label>
-                <input v-model="contactForm.mobile" autocomplete="tel" />
+                <Input v-model="contactForm.mobile" label="手机" autocomplete="tel" />
               </div>
             </div>
             <div class="form-actions">
-              <button class="primary-button" :disabled="loading || !tokenReady">
-                <Save :size="16" />
+              <Button type="submit" variant="solid" icon="save" :disabled="loading || !tokenReady">
                 保存联系方式
-              </button>
+              </Button>
             </div>
           </form>
         </section>

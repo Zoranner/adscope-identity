@@ -63,18 +63,22 @@ async function submitLogin() {
           <h1>用户登录</h1>
           <p>使用中心账号登录，维护本人资料和密码。</p>
         </div>
-        <div class="field">
-          <label>用户名</label>
-          <input v-model="username" autocomplete="username" autofocus />
-        </div>
-        <div class="field">
-          <label>密码</label>
-          <input v-model="password" type="password" autocomplete="current-password" />
-        </div>
-        <button class="primary-button" :disabled="loading || !username.trim() || !password">
-          <LogIn :size="16" />
+        <Input v-model="username" label="用户名" autocomplete="username" autofocus required />
+        <Input
+          v-model="password"
+          label="密码"
+          type="password"
+          autocomplete="current-password"
+          required
+        />
+        <Button
+          type="submit"
+          variant="solid"
+          icon="log-in"
+          :disabled="loading || !username.trim() || !password"
+        >
           登录
-        </button>
+        </Button>
       </form>
     </main>
   </div>

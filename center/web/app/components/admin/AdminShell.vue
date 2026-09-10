@@ -87,18 +87,17 @@ function preventBusyNavigation(event: MouseEvent) {
       </NuxtLink>
 
       <div v-if="tokenReady" class="topbar-actions">
-        <button
-          class="icon-button"
-          title="刷新"
+        <Button
+          variant="ghost"
+          square
+          icon="refresh-cw"
+          aria-label="刷新"
           :disabled="loading || !tokenReady || busy"
           @click="refreshAll"
-        >
-          <RefreshCw :size="17" />
-        </button>
-        <button class="secondary-button" :disabled="busy" @click="exitManagement">
-          <LogOut :size="16" />
+        />
+        <Button variant="outline" icon="log-out" :disabled="busy" @click="exitManagement">
           退出
-        </button>
+        </Button>
       </div>
     </header>
 
@@ -108,13 +107,17 @@ function preventBusyNavigation(event: MouseEvent) {
           <h1>管理入口</h1>
           <p>输入中心服务的管理凭证后进入控制台。</p>
         </div>
-        <div class="field">
-          <label>管理凭证</label>
-          <input v-model="credentialDraft" type="password" autocomplete="current-password" autofocus />
-        </div>
-        <button class="primary-button" :disabled="!credentialDraft.trim() || loading">
+        <Input
+          v-model="credentialDraft"
+          label="管理凭证"
+          type="password"
+          autocomplete="current-password"
+          required
+          autofocus
+        />
+        <Button type="submit" variant="solid" :disabled="!credentialDraft.trim() || loading">
           进入
-        </button>
+        </Button>
       </form>
     </main>
 

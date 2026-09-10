@@ -1,6 +1,7 @@
 export default defineNuxtConfig({
   ssr: false,
   compatibilityDate: '2026-07-24',
+  modules: ['@stellar/ui/nuxt'],
   devtools: {
     enabled: false,
   },
