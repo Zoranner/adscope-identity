@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Database, KeyRound, LogOut, RefreshCw, Save, UserRound } from 'lucide-vue-next'
+import { Button, Input } from '@stellar/ui'
 import { nullable } from '~/utils/forms'
 
 const {
@@ -179,16 +180,18 @@ async function exitUser() {
             <div class="form-row">
               <div class="field">
                 <label>当前密码</label>
-                <input
+                <Input
                   v-model="passwordForm.currentPassword"
+                  label="当前密码"
                   type="password"
                   autocomplete="current-password"
                 />
               </div>
               <div class="field">
                 <label>新密码</label>
-                <input
+                <Input
                   v-model="passwordForm.newPassword"
+                  label="新密码"
                   type="password"
                   autocomplete="new-password"
                 />
@@ -196,21 +199,22 @@ async function exitUser() {
             </div>
             <div class="field">
               <label>确认新密码</label>
-              <input
+              <Input
                 v-model="passwordForm.confirmPassword"
+                label="确认新密码"
                 type="password"
                 autocomplete="new-password"
               />
             </div>
             <p v-if="passwordMismatch" class="form-error">两次输入的新密码不一致</p>
             <div class="form-actions">
-              <button
-                class="primary-button"
+              <Button
+                type="submit"
+                variant="solid"
                 :disabled="loading || !tokenReady || passwordMismatch"
               >
-                <KeyRound :size="16" />
                 修改密码
-              </button>
+              </Button>
             </div>
           </form>
         </section>

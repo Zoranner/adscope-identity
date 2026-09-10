@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Copy } from 'lucide-vue-next'
+import { Button, Input } from '@stellar/ui'
 import { onBeforeRouteLeave } from 'vue-router'
 import DomainEditor from '~/components/domains/DomainEditor.vue'
 import DomainTable from '~/components/domains/DomainTable.vue'
@@ -217,7 +218,7 @@ async function saveDomain() {
         <div class="field">
           <label for="generated-connector-key">ADSCOPE_CONNECTOR_KEY</label>
           <div class="connector-key-row">
-            <input
+            <Input
               id="generated-connector-key"
               ref="connectorKeyInput"
               :value="connectorKey"
@@ -225,7 +226,9 @@ async function saveDomain() {
               readonly
               spellcheck="false"
             />
-            <button
+            <Button
+              variant="ghost"
+              square
               type="button"
               class="icon-button"
               title="复制 ADSCOPE_CONNECTOR_KEY"
@@ -233,13 +236,13 @@ async function saveDomain() {
               @click="copyConnectorKey"
             >
               <Copy :size="17" />
-            </button>
+            </Button>
           </div>
         </div>
         <div class="form-actions">
-          <button type="button" class="secondary-button" :disabled="saving" @click="closeModal">
+          <Button type="button" variant="outline" :disabled="saving" @click="closeModal">
             关闭
-          </button>
+          </Button>
         </div>
       </section>
     </AdminModal>

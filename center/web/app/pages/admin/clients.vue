@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Copy, Trash2 } from 'lucide-vue-next'
+import { Button, Input } from '@stellar/ui'
 import { onBeforeRouteLeave } from 'vue-router'
 import OAuthClientEditor from '~/components/oauth/OAuthClientEditor.vue'
 import OAuthClientTable from '~/components/oauth/OAuthClientTable.vue'
@@ -406,7 +407,7 @@ watch(tokenReady, (ready) => {
         </div>
         <div class="field">
           <label for="oauth-client-secret-id">Client ID</label>
-          <input
+          <Input
             id="oauth-client-secret-id"
             :value="oneTimeSecret.client_id"
             readonly
@@ -416,15 +417,17 @@ watch(tokenReady, (ready) => {
         <div class="field">
           <label for="oauth-client-secret">Client Secret</label>
           <div class="connector-key-row">
-            <input
+          <Input
               id="oauth-client-secret"
               ref="secretInput"
               :value="oneTimeSecret.client_secret"
               aria-describedby="oauth-client-secret-notice"
               readonly
               spellcheck="false"
-            />
-            <button
+          />
+            <Button
+              variant="ghost"
+              square
               type="button"
               class="icon-button"
               title="复制 Client Secret"
@@ -432,11 +435,11 @@ watch(tokenReady, (ready) => {
               @click="copySecret"
             >
               <Copy :size="17" />
-            </button>
+            </Button>
           </div>
         </div>
         <div class="form-actions">
-          <button type="button" class="secondary-button" @click="closeModal">关闭</button>
+          <Button type="button" variant="outline" @click="closeModal">关闭</Button>
         </div>
       </section>
 
@@ -446,23 +449,24 @@ watch(tokenReady, (ready) => {
           <p>{{ selectedClient.client_id }}</p>
         </div>
         <div class="form-actions">
-          <button
+          <Button
             type="button"
-            class="danger-button"
+            variant="solid"
+            semantic="error"
             :disabled="operationBusy"
             @click="confirmDelete"
           >
             <Trash2 :size="16" />
             删除
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            class="secondary-button"
+            variant="outline"
             :disabled="operationBusy"
             @click="closeModal"
           >
             取消
-          </button>
+          </Button>
         </div>
       </section>
     </AdminModal>
