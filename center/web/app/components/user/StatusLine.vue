@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { X } from 'lucide-vue-next'
+import { Button } from '@stellar/ui'
 
 const { message, isError, visible, clearStatus } = useUserStatus()
 </script>
@@ -9,9 +10,9 @@ const { message, isError, visible, clearStatus } = useUserStatus()
     <div v-if="visible" class="toast-stack">
       <div class="toast" :class="{ error: isError }" role="status">
         <span>{{ message }}</span>
-        <button class="toast-close" title="关闭通知" @click="clearStatus">
+        <Button variant="text" square aria-label="关闭通知" @click="clearStatus">
           <X :size="15" />
-        </button>
+        </Button>
       </div>
     </div>
   </Teleport>
