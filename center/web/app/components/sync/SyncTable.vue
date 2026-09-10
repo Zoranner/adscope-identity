@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Search } from 'lucide-vue-next'
+import { Input } from '@stellar/ui'
 import type { SyncDomain } from '~/types/admin'
 
 const props = defineProps<{
@@ -39,7 +40,7 @@ watch(query, () => pagination.resetPage())
 
     <div class="table-toolbar">
       <Search :size="16" />
-      <input v-model="query" placeholder="搜索域标识" />
+      <Input v-model="query" placeholder="搜索域标识" />
     </div>
 
     <div class="table-wrap">

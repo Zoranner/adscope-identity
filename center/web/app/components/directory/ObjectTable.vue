@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Search } from 'lucide-vue-next'
+import { Button, Input } from '@stellar/ui'
 import type { GroupRecord, UserRecord } from '~/types/admin'
 
 type DirectoryObjectRow =
@@ -82,7 +83,7 @@ watch(query, () => pagination.resetPage())
       <div class="panel-tools">
         <label class="inline-search">
           <Search :size="16" />
-          <input v-model="query" placeholder="搜索类型、标识、名称或详情" />
+          <Input v-model="query" placeholder="搜索类型、标识、名称或详情" />
         </label>
       </div>
     </div>
@@ -113,20 +114,22 @@ watch(query, () => pagination.resetPage())
             <td>{{ row.state }}</td>
             <td>{{ row.revision }}</td>
             <td class="actions-cell">
-              <button
+              <Button
                 v-if="row.type === 'user'"
-                class="secondary-button compact-button"
+                variant="outline"
+                size="small"
                 @click="$emit('editUser', row.record)"
               >
                 编辑
-              </button>
-              <button
+              </Button>
+              <Button
                 v-else
-                class="secondary-button compact-button"
+                variant="outline"
+                size="small"
                 @click="$emit('editGroup', row.record)"
               >
                 编辑
-              </button>
+              </Button>
             </td>
           </tr>
         </tbody>

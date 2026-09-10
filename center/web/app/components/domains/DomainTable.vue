@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Search, ServerCog } from 'lucide-vue-next'
+import { Button, Input } from '@stellar/ui'
 import type { Domain } from '~/types/admin'
 
 const props = defineProps<{
@@ -34,15 +35,15 @@ watch(query, () => pagination.resetPage())
         <h2>域列表</h2>
         <AdminStatusBadge>{{ filteredDomains.length }}</AdminStatusBadge>
       </div>
-      <button class="primary-button compact-button" @click="$emit('create')">
+      <Button variant="solid" size="small" @click="$emit('create')">
         <ServerCog :size="15" />
         新建
-      </button>
+      </Button>
     </div>
 
     <div class="table-toolbar">
       <Search :size="16" />
-      <input v-model="query" placeholder="搜索域、UPN 后缀或镜像根 DN" />
+      <Input v-model="query" placeholder="搜索域、UPN 后缀或镜像根 DN" />
     </div>
 
     <div class="table-wrap">
@@ -72,7 +73,7 @@ watch(query, () => pagination.resetPage())
             <td>{{ domain.applied_directory_revision }}</td>
             <td>{{ domain.applied_credential_revision }}</td>
             <td class="actions-cell">
-              <button class="secondary-button compact-button" @click="$emit('edit', domain)">编辑</button>
+              <Button variant="outline" size="small" @click="$emit('edit', domain)">编辑</Button>
             </td>
           </tr>
         </tbody>
