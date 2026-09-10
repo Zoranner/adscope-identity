@@ -5,7 +5,7 @@
 Center 和 Connector 是两个独立部署单元，部署方式不同：
 
 - Center 使用 [deploy/center/docker-compose.yml](../../deploy/center/docker-compose.yml) 作为 Docker 服务。复制 [deploy/center/.env.example](../../deploy/center/.env.example) 为 `deploy/center/.env`，替换所有占位值后通过 Compose 启动。
-- Connector 作为原生 Windows 服务运行。复制 [connector/.env.example](../../connector/.env.example) 到 Connector 运行目录并命名为 `.env`，再使用发布包中的服务安装脚本安装。
+- Connector 作为 MSI 安装包运行。安装时通过 MSI 参数写入运行配置并注册 Windows 服务。
 
 Center 加入预先创建的外部 Docker 网络 `adscope`：
 
@@ -28,7 +28,7 @@ docker compose pull center
 docker compose up -d center
 ```
 
-[center/.env.example](../../center/.env.example) 可用于查阅 Center 变量说明，不是 Docker 部署使用的配置文件。
+Center 的变量说明只维护在 [deploy/center/.env.example](../../deploy/center/.env.example)。Connector 配置由 MSI 安装参数或配置命令写入，不分发示例文件。
 
 系统环境变量优先级高于进程读取的配置文件。生产环境可以由容器平台、Windows 服务环境或 Secret 管理系统注入普通密钥变量；OIDC RSA 私钥仍通过受限文件挂载。生产密钥不得写入仓库。
 
@@ -108,18 +108,17 @@ Center 只发布一个活动公钥，不提供新旧密钥并行验证窗口。�
 
 ## Connector
 
-Connector 是域内常驻同步进程。默认 [adscope-connector .env 示例](../../connector/.env.example) 使用 dry-run，不写入 AD。
+Connector 是域内常驻同步进程。安装 MSI 时填写配置后，Connector 会把 Center 的期望状态写入目标 AD。
 
-启用真实域控写入时，设置：
+Connector 至少需要设置域控制器 LDAP 地址：
 
 ```text
-ADSCOPE_CONNECTOR_DRY_RUN=0
-ADSCOPE_LDAP_URL=ldap://dc01.rd.kim:389
+DOMAIN_CONTROLLER_LDAP_URL=ldap://dc01.rd.kim:389
 ```
 
-Connector 主机必须加入 `rd.kim` 域，并以 `NetworkService` 服务身份运行。真实模式只接受 `ldap://<FQDN>:389`；Connector 使用主机计算机账号 `RD\<CONNECTOR-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
+Connector 主机必须加入 `rd.kim` 域，并以 `NetworkService` 服务身份运行。LDAP 地址只接受 `ldap://<FQDN>:389`；Connector 使用主机计算机账号 `RD\<CONNECTOR-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
 
-历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `ADSCOPE_ADOPT_EXISTING_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写中心 `employee_id`。迁移完成后应关闭该开关。
+历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `MATCH_LEGACY_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写 Center 中的 `employee_id`。迁移完成后应关闭该开关。
 
 本地 state 文件只保存：
 

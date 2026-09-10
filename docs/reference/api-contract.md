@@ -559,7 +559,7 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
 }
 ```
 
-创建和修改请求不得携带 `connector_key` 或 `connector_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Connector key。管理员必须把本次响应中的新 key 配置到对应 Connector 的 `ADSCOPE_CONNECTOR_KEY`。域列表及其他查询响应不返回 Connector key 或其摘要。
+创建和修改请求不得携带 `connector_key` 或 `connector_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Connector key。管理员必须把本次响应中的新 key 配置到对应 Connector 的 `CONNECTOR_ACCESS_KEY`。域列表及其他查询响应不返回 Connector key 或其摘要。
 
 ### OU 管理
 

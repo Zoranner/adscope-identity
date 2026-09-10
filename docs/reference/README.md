@@ -20,11 +20,11 @@ crates/store     数据库访问和事实源读写
 
 ## 本地运行
 
-主服务和 Connector 是两个独立进程，各自在自己的运行目录读取 `.env`。本地调试时可以从示例文件创建运行配置：
+主服务和 Connector 是两个独立进程，各自在自己的运行目录读取 `.env`。环境变量示例统一维护在部署目录：
 
 ```text
-cp center/.env.example <center-runtime-dir>/.env
-cp connector/.env.example <connector-runtime-dir>/.env
+cp deploy/center/.env.example deploy/center/.env
+msiexec /i adscope-connector-v<version>-windows-x64.msi CENTER_URL=https://center.example.com DIRECTORY_DOMAIN_ID=domain-a CONNECTOR_ACCESS_KEY=<connector-key> DOMAIN_CONTROLLER_LDAP_URL=ldap://dc01.example.com:389
 ```
 
 启动主服务：
@@ -49,7 +49,7 @@ bun run build
 cargo run -p adscope-connector
 ```
 
-Connector dry-run 可用于验证同步协议和本地 state，不写入 AD。
+Connector 使用域控制器 LDAP 地址和主机计算机账号执行同步；配置说明见 [部署指南](../guide/deployment.md#connector)。
 
 ## 验证命令
 
