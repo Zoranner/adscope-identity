@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RefreshCw } from 'lucide-vue-next'
+import { Button } from '@stellar/ui'
 
 defineProps<{
   title: string
@@ -19,9 +20,8 @@ defineEmits<{
       <h1>{{ title }}</h1>
       <p>{{ description }}</p>
     </div>
-    <button class="primary-button" :disabled="loading || disabled" @click="$emit('refresh')">
-      <RefreshCw :size="17" />
+    <Button variant="solid" :disabled="loading || disabled" @click="$emit('refresh')">
       刷新
-    </button>
+    </Button>
   </section>
 </template>

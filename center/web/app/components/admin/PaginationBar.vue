@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@stellar/ui'
 defineProps<{
   page: number
   pageCount: number
@@ -17,17 +18,18 @@ defineEmits<{
   <div class="pagination-bar">
     <span>显示 {{ total === 0 ? 0 : start + 1 }}-{{ end }} / {{ total }}</span>
     <div class="row-actions">
-      <button class="secondary-button compact-button" :disabled="page <= 1" @click="$emit('previous')">
+      <Button variant="outline" size="small" :disabled="page <= 1" @click="$emit('previous')">
         上一页
-      </button>
+      </Button>
       <span class="page-indicator">{{ page }} / {{ pageCount }}</span>
-      <button
-        class="secondary-button compact-button"
+      <Button
+        variant="outline"
+        size="small"
         :disabled="page >= pageCount"
         @click="$emit('next')"
       >
         下一页
-      </button>
+      </Button>
     </div>
   </div>
 </template>

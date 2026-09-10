@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@stellar/ui'
 defineProps<{
   title: string
   actionLabel?: string
@@ -12,8 +13,8 @@ defineEmits<{
 <template>
   <div class="empty-state">
     <p>{{ title }}</p>
-    <button v-if="actionLabel" class="primary-button" @click="$emit('action')">
+    <Button v-if="actionLabel" variant="solid" @click="$emit('action')">
       {{ actionLabel }}
-    </button>
+    </Button>
   </div>
 </template>
