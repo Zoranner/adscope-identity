@@ -19,12 +19,11 @@ fn file_logger_writes_failure_details_without_configuration_secrets() {
         "connector-a-key",
         "adscope-connector-state.json",
         60,
-        false,
-        Some(LdapDirectoryConfig {
+        LdapDirectoryConfig {
             url: "ldap://dc-a.example.com:389".to_string(),
             server_fqdn: "dc-a.example.com".to_string(),
             adopt_existing_users_by_username: false,
-        }),
+        },
     );
     let summary = ConnectorRunSummary {
         directory: SyncSummary {

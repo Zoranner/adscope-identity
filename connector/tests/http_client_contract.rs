@@ -162,24 +162,26 @@ async fn http_control_plane_client_times_out_when_server_does_not_respond() {
 #[test]
 fn connector_process_config_uses_explicit_values_and_defaults() {
     let config = ConnectorProcessConfig::new(
-        "http://127.0.0.1:8080",
+        "https://sync.example.com",
         "domain-a",
         "connector-a-key",
         "connector-state.json",
         15,
-        true,
-        None,
+        LdapDirectoryConfig {
+            url: "ldap://dc-a.example.com:389".to_string(),
+            server_fqdn: "dc-a.example.com".to_string(),
+            adopt_existing_users_by_username: false,
+        },
     );
 
-    assert_eq!(config.center_url, "http://127.0.0.1:8080");
+    assert_eq!(config.center_url, "https://sync.example.com");
     assert_eq!(config.domain_id, "domain-a");
     assert_eq!(config.connector_key, "connector-a-key");
     assert_eq!(config.state_path, "connector-state.json");
     assert_eq!(config.interval_seconds, 15);
     assert_eq!(config.http_timeout_seconds, 60);
     assert_eq!(config.operation_timeout_seconds, 60);
-    assert!(config.dry_run);
-    assert!(config.ldap.is_none());
+    assert_eq!(config.ldap.url, "ldap://dc-a.example.com:389");
 }
 
 #[test]
@@ -190,12 +192,11 @@ fn connector_process_config_debug_redacts_secrets() {
         "connector-a-key",
         "connector-state.json",
         30,
-        false,
-        Some(LdapDirectoryConfig {
+        LdapDirectoryConfig {
             url: "ldap://dc-a.example.com:389".to_string(),
             server_fqdn: "dc-a.example.com".to_string(),
             adopt_existing_users_by_username: false,
-        }),
+        },
     );
 
     let debug = format!("{config:?}");
@@ -210,14 +211,15 @@ fn connector_process_config_rejects_zero_timeouts_from_env() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     for name in [
-        "ADSCOPE_CONNECTOR_HTTP_TIMEOUT_SECONDS",
-        "ADSCOPE_CONNECTOR_OPERATION_TIMEOUT_SECONDS",
+        "CENTER_REQUEST_TIMEOUT_SECONDS",
+        "DIRECTORY_OPERATION_TIMEOUT_SECONDS",
     ] {
         clear_connector_env();
         unsafe {
-            std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-            std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-            std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "1");
+            std::env::set_var("CENTER_URL", "https://sync.example.com");
+            std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+            std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+            std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", "ldap://dc-a.example.com:389");
             std::env::set_var(name, "0");
         }
 
@@ -245,32 +247,94 @@ fn connector_process_config_rejects_retired_adss_environment_variables() {
 
     assert_eq!(
         error.to_string(),
-        "ADSS_CENTER_URL is retired; use ADSCOPE_CENTER_URL"
+        "ADSS_CENTER_URL is retired; use CENTER_URL"
     );
     clear_connector_env();
 }
 
 #[test]
-fn connector_process_config_requires_https_for_real_ldap_mode() {
+fn connector_process_config_uses_aligned_environment_variable_names() {
     let _guard = ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_connector_env();
     unsafe {
-        std::env::set_var("ADSCOPE_CENTER_URL", "http://sync.example.com");
-        std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-        std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-        std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "0");
-        std::env::set_var("ADSCOPE_LDAP_URL", "ldap://dc-a.example.com:389");
+        std::env::set_var("CENTER_URL", "https://sync.example.com");
+        std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+        std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+        std::env::set_var("SYNC_INTERVAL_SECONDS", "15");
+        std::env::set_var("CENTER_REQUEST_TIMEOUT_SECONDS", "20");
+        std::env::set_var("DIRECTORY_OPERATION_TIMEOUT_SECONDS", "30");
+        std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", "ldap://dc-a.example.com:389");
+        std::env::set_var("MATCH_LEGACY_USERS_BY_USERNAME", "true");
+    }
+
+    let config = ConnectorProcessConfig::from_env().unwrap();
+
+    assert_eq!(config.center_url, "https://sync.example.com");
+    assert_eq!(config.domain_id, "domain-a");
+    assert_eq!(config.connector_key, "connector-a-key");
+    assert_eq!(config.interval_seconds, 15);
+    assert_eq!(config.http_timeout_seconds, 20);
+    assert_eq!(config.operation_timeout_seconds, 30);
+    assert_eq!(config.ldap.url, "ldap://dc-a.example.com:389");
+    clear_connector_env();
+}
+
+#[test]
+fn connector_process_config_rejects_retired_adscope_environment_variables() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clear_connector_env();
+    unsafe {
+        std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
     }
 
     let error = ConnectorProcessConfig::from_env().unwrap_err();
 
-    assert!(
-        error
-            .to_string()
-            .contains("ADSCOPE_CENTER_URL must use https://")
+    assert_eq!(
+        error.to_string(),
+        "ADSCOPE_CENTER_URL is retired; use CENTER_URL"
     );
+    clear_connector_env();
+}
+
+#[test]
+fn connector_process_config_rejects_removed_dry_run_variable() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clear_connector_env();
+    unsafe {
+        std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "1");
+    }
+
+    let error = ConnectorProcessConfig::from_env().unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "ADSCOPE_CONNECTOR_DRY_RUN is retired; no replacement is available"
+    );
+    clear_connector_env();
+}
+
+#[test]
+fn connector_process_config_requires_https_center_url() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clear_connector_env();
+    unsafe {
+        std::env::set_var("CENTER_URL", "http://sync.example.com");
+        std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+        std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+        std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", "ldap://dc-a.example.com:389");
+    }
+
+    let error = ConnectorProcessConfig::from_env().unwrap_err();
+
+    assert!(error.to_string().contains("CENTER_URL must use https://"));
     clear_connector_env();
 }
 
@@ -280,11 +344,10 @@ fn connector_process_config_rejects_zero_interval_from_env() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     unsafe {
-        std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
-        std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-        std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-        std::env::set_var("ADSCOPE_CONNECTOR_INTERVAL_SECONDS", "0");
-        std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "1");
+        std::env::set_var("CENTER_URL", "https://sync.example.com");
+        std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+        std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+        std::env::set_var("SYNC_INTERVAL_SECONDS", "0");
     }
 
     let error = ConnectorProcessConfig::from_env().unwrap_err();
@@ -292,74 +355,29 @@ fn connector_process_config_rejects_zero_interval_from_env() {
     assert!(
         error
             .to_string()
-            .contains("ADSCOPE_CONNECTOR_INTERVAL_SECONDS must be greater than 0")
+            .contains("SYNC_INTERVAL_SECONDS must be greater than 0")
     );
 
     unsafe {
-        std::env::remove_var("ADSCOPE_CENTER_URL");
-        std::env::remove_var("ADSCOPE_DOMAIN_ID");
-        std::env::remove_var("ADSCOPE_CONNECTOR_KEY");
-        std::env::remove_var("ADSCOPE_CONNECTOR_INTERVAL_SECONDS");
-        std::env::remove_var("ADSCOPE_CONNECTOR_HTTP_TIMEOUT_SECONDS");
-        std::env::remove_var("ADSCOPE_CONNECTOR_OPERATION_TIMEOUT_SECONDS");
-        std::env::remove_var("ADSCOPE_CONNECTOR_DRY_RUN");
+        std::env::remove_var("CENTER_URL");
+        std::env::remove_var("DIRECTORY_DOMAIN_ID");
+        std::env::remove_var("CONNECTOR_ACCESS_KEY");
+        std::env::remove_var("SYNC_INTERVAL_SECONDS");
+        std::env::remove_var("CENTER_REQUEST_TIMEOUT_SECONDS");
+        std::env::remove_var("DIRECTORY_OPERATION_TIMEOUT_SECONDS");
     }
 }
 
 #[test]
-fn connector_process_config_requires_ldap_settings_without_dry_run() {
+fn connector_process_config_requires_domain_controller_ldap_url() {
     let _guard = ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     clear_connector_env();
     unsafe {
-        std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
-        std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-        std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-        std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "0");
-    }
-
-    let error = ConnectorProcessConfig::from_env().unwrap_err();
-
-    assert!(error.to_string().contains("ADSCOPE_LDAP_URL is required"));
-
-    clear_connector_env();
-}
-
-#[test]
-fn connector_process_config_accepts_ldap_url_without_dry_run() {
-    let _guard = ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    clear_connector_env();
-    unsafe {
-        std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
-        std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-        std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-        std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "0");
-        std::env::set_var("ADSCOPE_LDAP_URL", "ldap://dc-a.example.com:389");
-    }
-
-    let config = ConnectorProcessConfig::from_env().unwrap();
-    let ldap = config.ldap.expect("LDAP settings should be parsed");
-
-    assert_eq!(ldap.url, "ldap://dc-a.example.com:389");
-
-    clear_connector_env();
-}
-
-#[test]
-fn connector_process_config_rejects_non_ldap_url_without_dry_run() {
-    let _guard = ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    clear_connector_env();
-    unsafe {
-        std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
-        std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-        std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-        std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "0");
-        std::env::set_var("ADSCOPE_LDAP_URL", "http://dc-a.example.com");
+        std::env::set_var("CENTER_URL", "https://sync.example.com");
+        std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+        std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
     }
 
     let error = ConnectorProcessConfig::from_env().unwrap_err();
@@ -367,7 +385,50 @@ fn connector_process_config_rejects_non_ldap_url_without_dry_run() {
     assert!(
         error
             .to_string()
-            .contains("ADSCOPE_LDAP_URL must be ldap://<FQDN>:389")
+            .contains("DOMAIN_CONTROLLER_LDAP_URL is required")
+    );
+
+    clear_connector_env();
+}
+
+#[test]
+fn connector_process_config_accepts_domain_controller_ldap_url() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clear_connector_env();
+    unsafe {
+        std::env::set_var("CENTER_URL", "https://sync.example.com");
+        std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+        std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+        std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", "ldap://dc-a.example.com:389");
+    }
+
+    let config = ConnectorProcessConfig::from_env().unwrap();
+    assert_eq!(config.ldap.url, "ldap://dc-a.example.com:389");
+
+    clear_connector_env();
+}
+
+#[test]
+fn connector_process_config_rejects_invalid_domain_controller_ldap_url() {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clear_connector_env();
+    unsafe {
+        std::env::set_var("CENTER_URL", "https://sync.example.com");
+        std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+        std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+        std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", "http://dc-a.example.com");
+    }
+
+    let error = ConnectorProcessConfig::from_env().unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("DOMAIN_CONTROLLER_LDAP_URL must be ldap://<FQDN>:389")
     );
 
     clear_connector_env();
@@ -389,11 +450,10 @@ fn connector_process_config_rejects_ldap_downgrade_and_legacy_credentials() {
     ] {
         clear_connector_env();
         unsafe {
-            std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
-            std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-            std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-            std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "false");
-            std::env::set_var("ADSCOPE_LDAP_URL", url);
+            std::env::set_var("CENTER_URL", "https://sync.example.com");
+            std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+            std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+            std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", url);
         }
         assert!(
             ConnectorProcessConfig::from_env().is_err(),
@@ -408,11 +468,10 @@ fn connector_process_config_rejects_ldap_downgrade_and_legacy_credentials() {
     ] {
         clear_connector_env();
         unsafe {
-            std::env::set_var("ADSCOPE_CENTER_URL", "https://sync.example.com");
-            std::env::set_var("ADSCOPE_DOMAIN_ID", "domain-a");
-            std::env::set_var("ADSCOPE_CONNECTOR_KEY", "connector-a-key");
-            std::env::set_var("ADSCOPE_CONNECTOR_DRY_RUN", "false");
-            std::env::set_var("ADSCOPE_LDAP_URL", "ldap://dc-a.example.com:389");
+            std::env::set_var("CENTER_URL", "https://sync.example.com");
+            std::env::set_var("DIRECTORY_DOMAIN_ID", "domain-a");
+            std::env::set_var("CONNECTOR_ACCESS_KEY", "connector-a-key");
+            std::env::set_var("DOMAIN_CONTROLLER_LDAP_URL", "ldap://dc-a.example.com:389");
             std::env::set_var(legacy_name, "legacy");
         }
         let error = ConnectorProcessConfig::from_env().unwrap_err();
@@ -423,43 +482,21 @@ fn connector_process_config_rejects_ldap_downgrade_and_legacy_credentials() {
 }
 
 #[test]
-fn configured_directory_client_selects_ldap_without_dry_run() {
+fn configured_directory_client_selects_ldap() {
     let config = ConnectorProcessConfig::new(
         "https://sync.example.com",
         "domain-a",
         "connector-a-key",
         "connector-state.json",
         30,
-        false,
-        Some(LdapDirectoryConfig {
+        LdapDirectoryConfig {
             url: "ldap://dc-a.example.com:389".to_string(),
             server_fqdn: "dc-a.example.com".to_string(),
             adopt_existing_users_by_username: false,
-        }),
+        },
     );
 
-    assert!(matches!(
-        ConfiguredDirectoryClient::from_process_config(&config).unwrap(),
-        ConfiguredDirectoryClient::Ldap(_)
-    ));
-}
-
-#[test]
-fn configured_directory_client_keeps_explicit_dry_run() {
-    let config = ConnectorProcessConfig::new(
-        "https://sync.example.com",
-        "domain-a",
-        "connector-a-key",
-        "connector-state.json",
-        30,
-        true,
-        None,
-    );
-
-    assert!(matches!(
-        ConfiguredDirectoryClient::from_process_config(&config).unwrap(),
-        ConfiguredDirectoryClient::DryRun(_)
-    ));
+    let _client = ConfiguredDirectoryClient::from_process_config(&config).unwrap();
 }
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -467,18 +504,26 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn clear_connector_env() {
     unsafe {
         std::env::remove_var("ADSS_CENTER_URL");
+        std::env::remove_var("CENTER_URL");
         std::env::remove_var("ADSCOPE_CENTER_URL");
         std::env::remove_var("ADSCOPE_DOMAIN_ID");
+        std::env::remove_var("DIRECTORY_DOMAIN_ID");
         std::env::remove_var("ADSCOPE_CONNECTOR_KEY");
+        std::env::remove_var("CONNECTOR_ACCESS_KEY");
         std::env::remove_var("ADSCOPE_CONNECTOR_INTERVAL_SECONDS");
+        std::env::remove_var("SYNC_INTERVAL_SECONDS");
         std::env::remove_var("ADSCOPE_CONNECTOR_HTTP_TIMEOUT_SECONDS");
+        std::env::remove_var("CENTER_REQUEST_TIMEOUT_SECONDS");
         std::env::remove_var("ADSCOPE_CONNECTOR_OPERATION_TIMEOUT_SECONDS");
+        std::env::remove_var("DIRECTORY_OPERATION_TIMEOUT_SECONDS");
         std::env::remove_var("ADSCOPE_CONNECTOR_DRY_RUN");
         std::env::remove_var("ADSCOPE_LDAP_URL");
+        std::env::remove_var("DOMAIN_CONTROLLER_LDAP_URL");
         std::env::remove_var("ADSCOPE_LDAP_BIND_DN");
         std::env::remove_var("ADSCOPE_LDAP_BIND_PASSWORD");
         std::env::remove_var("ADSCOPE_LDAP_ACCEPT_INVALID_CERTS");
         std::env::remove_var("ADSCOPE_ADOPT_EXISTING_USERS_BY_USERNAME");
+        std::env::remove_var("MATCH_LEGACY_USERS_BY_USERNAME");
     }
 }
 

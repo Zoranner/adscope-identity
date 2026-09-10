@@ -1,10 +1,25 @@
-use adscope_connector::{ConnectorCommand, LoggingTarget, run_configured_connector};
+use adscope_connector::{
+    ConnectorCommand, LoggingTarget, protect_runtime_config, run_configured_connector,
+    write_install_config,
+};
 use tokio::sync::watch;
 
 fn main() -> anyhow::Result<()> {
     match ConnectorCommand::parse(std::env::args_os())? {
         ConnectorCommand::Version => {
             println!("adscope-connector {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        ConnectorCommand::Configure {
+            runtime_dir,
+            config,
+        } => {
+            write_install_config(&runtime_dir, &config)?;
+            protect_runtime_config(&runtime_dir)?;
+            println!(
+                "Connector configuration written to {}",
+                runtime_dir.display()
+            );
             Ok(())
         }
         ConnectorCommand::Console { runtime_dir } => {

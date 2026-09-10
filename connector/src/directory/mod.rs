@@ -1,4 +1,3 @@
-pub mod dry_run;
 pub mod ldap;
 
 use adscope_protocol::{
@@ -11,7 +10,6 @@ use std::time::Duration;
 
 use crate::config::ConnectorProcessConfig;
 
-pub use dry_run::{DryRunDirectoryBatch, DryRunDirectoryClient};
 pub use ldap::{
     LdapDirectoryBatch, LdapDirectoryClient, encode_ad_unicode_password, escape_ldap_dn_value,
     escape_ldap_filter_value,
@@ -45,28 +43,14 @@ pub trait DirectoryClient {
     async fn open_batch(&self) -> anyhow::Result<Self::Batch>;
 }
 
-pub enum ConfiguredDirectoryClient {
-    DryRun(DryRunDirectoryClient),
-    Ldap(LdapDirectoryClient),
-}
+pub struct ConfiguredDirectoryClient(LdapDirectoryClient);
 
-pub enum ConfiguredDirectoryBatch {
-    DryRun(DryRunDirectoryBatch),
-    Ldap(LdapDirectoryBatch),
-}
+pub struct ConfiguredDirectoryBatch(LdapDirectoryBatch);
 
 impl ConfiguredDirectoryClient {
     pub fn from_process_config(config: &ConnectorProcessConfig) -> anyhow::Result<Self> {
-        if config.dry_run {
-            return Ok(Self::DryRun(DryRunDirectoryClient));
-        }
-
-        let ldap = config
-            .ldap
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("LDAP settings are required without dry-run"))?;
-        Ok(Self::Ldap(LdapDirectoryClient::with_connection_timeout(
-            ldap,
+        Ok(Self(LdapDirectoryClient::with_connection_timeout(
+            config.ldap.clone(),
             Duration::from_secs(config.operation_timeout_seconds),
         )))
     }
@@ -77,12 +61,7 @@ impl DirectoryClient for ConfiguredDirectoryClient {
     type Batch = ConfiguredDirectoryBatch;
 
     async fn open_batch(&self) -> anyhow::Result<Self::Batch> {
-        match self {
-            Self::DryRun(client) => {
-                Ok(ConfiguredDirectoryBatch::DryRun(client.open_batch().await?))
-            }
-            Self::Ldap(client) => Ok(ConfiguredDirectoryBatch::Ldap(client.open_batch().await?)),
-        }
+        Ok(ConfiguredDirectoryBatch(self.0.open_batch().await?))
     }
 }
 
@@ -93,10 +72,7 @@ impl DirectoryBatchSession for ConfiguredDirectoryBatch {
         operation: &DirectoryOperation,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        match self {
-            Self::DryRun(batch) => batch.apply(operation, context).await,
-            Self::Ldap(batch) => batch.apply(operation, context).await,
-        }
+        self.0.apply(operation, context).await
     }
 
     async fn set_password(
@@ -104,17 +80,11 @@ impl DirectoryBatchSession for ConfiguredDirectoryBatch {
         credential: &CredentialEntry,
         context: &DirectoryExecutionContext,
     ) -> anyhow::Result<()> {
-        match self {
-            Self::DryRun(batch) => batch.set_password(credential, context).await,
-            Self::Ldap(batch) => batch.set_password(credential, context).await,
-        }
+        self.0.set_password(credential, context).await
     }
 
     async fn close(self) -> anyhow::Result<()> {
-        match self {
-            Self::DryRun(batch) => batch.close().await,
-            Self::Ldap(batch) => batch.close().await,
-        }
+        self.0.close().await
     }
 }
 
