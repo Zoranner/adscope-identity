@@ -71,6 +71,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         <Users :size="16" />
         用户
       </Button>
+      <Button type="button" variant="text" @click="choose('group')">
         <ShieldCheck :size="16" />
         安全组
       </Button>
