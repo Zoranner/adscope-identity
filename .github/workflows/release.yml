@@ -62,21 +62,18 @@ jobs:
         run: |
           cargo +1.93.1 build --release --locked -p adscope-connector
 
-          $staging = Join-Path $env:RUNNER_TEMP 'adscope-connector'
-          $releaseDirectory = 'release'
-          $archive = Join-Path $releaseDirectory "adscope-connector-v$env:VERSION-windows-x86_64.zip"
-          New-Item -ItemType Directory -Path $staging, $releaseDirectory -Force | Out-Null
-          Copy-Item target\release\adscope-connector.exe (Join-Path $staging 'adscope-connector.exe')
-          Copy-Item connector\.env.example (Join-Path $staging '.env.example')
-          Copy-Item deploy\connector\install-service.ps1 (Join-Path $staging 'install-service.ps1')
-          Copy-Item deploy\connector\uninstall-service.ps1 (Join-Path $staging 'uninstall-service.ps1')
-          Copy-Item deploy\connector\README.md (Join-Path $staging 'README.md')
-          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
+          dotnet tool install --global wix --version 5.0.2
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          wix build connector\installer\AdscopeConnector.wxs -arch x64 `
+            -d "ConnectorBinary=$((Resolve-Path target\release\adscope-connector.exe).Path)" `
+            -d "ProductVersion=$env:VERSION" `
+            -o "release\adscope-connector-v$env:VERSION-windows-x64.msi"
 
       - uses: actions/upload-artifact@v6
         with:
           name: connector-release
-          path: release/adscope-connector-v${{ needs.validate.outputs.version }}-windows-x86_64.zip
+          path: release/adscope-connector-v${{ needs.validate.outputs.version }}-windows-x64.msi
           if-no-files-found: error
 
   center:
@@ -136,20 +133,20 @@ jobs:
         run: |
           set -euo pipefail
           center_archive="release/adscope-center-v$VERSION-linux-amd64.tar"
-          connector_archive="release/adscope-connector-v$VERSION-windows-x86_64.zip"
-          for artifact in "$center_archive" "$connector_archive"; do
+          connector_installer="release/adscope-connector-v$VERSION-windows-x64.msi"
+          for artifact in "$center_archive" "$connector_installer"; do
             test -f "$artifact" || { echo "Missing release artifact: $artifact" >&2; exit 1; }
           done
 
           center_checksum="$(sha256sum "$center_archive" | awk '{print $1}')"
-          connector_checksum="$(sha256sum "$connector_archive" | awk '{print $1}')"
+          connector_checksum="$(sha256sum "$connector_installer" | awk '{print $1}')"
           jq -n \
             --arg version "$VERSION" \
             --arg revision "$REVISION" \
             --arg center_checksum "$center_checksum" \
             --arg connector_checksum "$connector_checksum" \
             --arg center_name "$(basename "$center_archive")" \
-            --arg connector_name "$(basename "$connector_archive")" \
+            --arg connector_name "$(basename "$connector_installer")" \
             '{
               version: $version,
               revision: $revision,
@@ -161,7 +158,7 @@ jobs:
             }' > release/manifest.json
           printf '%s  %s\n%s  %s\n' \
             "$center_checksum" "$(basename "$center_archive")" \
-            "$connector_checksum" "$(basename "$connector_archive")" > release/SHA256SUMS
+            "$connector_checksum" "$(basename "$connector_installer")" > release/SHA256SUMS
 
       - name: 创建或更新 GitHub Release
         env:

@@ -4,12 +4,11 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    volumes:
-      - ./data:/data
-      - ./app/secrets:/run/secrets:ro
     ports:
-      - "8080:8080"
-
+      - 8080:8080
+    volumes:
+      - ./app/secrets:/run/secrets:ro
+      - ./data:/data
 networks:
   default:
     external: true
