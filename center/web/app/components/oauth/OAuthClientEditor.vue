@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { KeyRound, Save } from 'lucide-vue-next'
+import { Button, Checkbox, Input, Textarea, Toggle } from '@stellar/ui'
 import type { OAuthClientType, OAuthScope } from '~/types/admin'
 
 interface OAuthClientEditorModel {
@@ -39,15 +40,15 @@ const scopes: Array<{ value: OAuthScope; label: string }> = [
   <form class="form" @submit.prevent="$emit('save')">
     <div v-if="editingId" class="field">
       <label for="oauth-client-id">Client ID</label>
-      <input id="oauth-client-id" :value="editingId" readonly spellcheck="false" />
+      <Input :model-value="editingId" label="Client ID" readonly />
     </div>
 
     <div class="field">
       <label for="oauth-client-name">名称</label>
-      <input
-        id="oauth-client-name"
+      <Input
         v-model="form.name"
-        maxlength="100"
+        label="名称"
+        :maxlength="100"
         :disabled="loading || disabled"
         required
       />
@@ -56,11 +57,12 @@ const scopes: Array<{ value: OAuthScope; label: string }> = [
     <div class="field">
       <label>类型</label>
       <div class="row-actions segmented-control" role="radiogroup" aria-label="客户端类型">
-        <button
+        <Button
           v-for="clientType in clientTypes"
           :key="clientType.value"
           type="button"
-          class="secondary-button segmented-option"
+          variant="outline"
+          size="small"
           :class="{ active: form.client_type === clientType.value }"
           role="radio"
           :aria-checked="form.client_type === clientType.value"
@@ -68,29 +70,28 @@ const scopes: Array<{ value: OAuthScope; label: string }> = [
           @click="form.client_type = clientType.value"
         >
           {{ clientType.label }}
-        </button>
+        </Button>
       </div>
     </div>
 
     <div class="field">
       <label for="oauth-client-redirect-uris">Redirect URI</label>
-      <textarea
-        id="oauth-client-redirect-uris"
+      <Textarea
         v-model="form.redirect_uris"
+        label="Redirect URI"
         :disabled="loading || disabled"
         placeholder="每行一个完整 URI"
         spellcheck="false"
         required
-      ></textarea>
+      />
     </div>
 
     <div class="field">
       <label>授权范围</label>
       <div class="row-actions checkbox-group">
         <label v-for="scopeItem in scopes" :key="scopeItem.value" class="checkbox-option">
-          <input
+          <Checkbox
             v-model="form.allowed_scopes"
-            type="checkbox"
             :value="scopeItem.value"
             :disabled="scopeItem.value === 'openid' || loading || disabled"
           />
@@ -101,30 +102,27 @@ const scopes: Array<{ value: OAuthScope; label: string }> = [
 
     <div class="field">
       <label class="checkbox-option">
-        <input
+        <Toggle
           v-model="form.enabled"
-          type="checkbox"
+          label="启用客户端"
           :disabled="loading || disabled"
         />
-        启用客户端
       </label>
     </div>
 
     <div class="form-actions">
-      <button class="primary-button" :disabled="loading || disabled">
-        <Save :size="17" />
+      <Button type="submit" variant="solid" :disabled="loading || disabled">
         保存
-      </button>
-      <button
+      </Button>
+      <Button
         v-if="editingId && form.client_type === 'web'"
         type="button"
-        class="secondary-button"
+        variant="outline"
         :disabled="loading || disabled"
         @click="$emit('regenerateSecret')"
       >
-        <KeyRound :size="16" />
         重新生成密钥
-      </button>
+      </Button>
     </div>
   </form>
 </template>
