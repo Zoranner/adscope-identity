@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Database, LogIn, ShieldCheck, UserRound, X } from 'lucide-vue-next'
+import { Button, Spinner } from '@stellar/ui'
 import type { OidcAuthorizationContext } from '~/types/oidc'
 import { authorizationFormFields } from '~/utils/oidc'
 
@@ -124,6 +125,7 @@ watch(
 
     <main class="credential-screen">
       <section v-if="loading" class="credential-card" aria-live="polite">
+        <Spinner />
         <div>
           <h1>正在读取授权请求</h1>
           <p>请稍候。</p>
@@ -135,10 +137,10 @@ watch(
           <h1>无法继续授权</h1>
           <p class="form-error">{{ errorMessage }}</p>
         </div>
-        <button class="secondary-button" type="button" @click="loadAuthorizationContext">
-          <LogIn :size="16" />
+        <Button variant="outline" type="button" @click="loadAuthorizationContext">
+          <template #icon><LogIn :size="16" /></template>
           重新读取
-        </button>
+        </Button>
       </section>
 
       <form
@@ -196,35 +198,35 @@ watch(
         <input type="hidden" name="csrf_token" :value="context.csrf_token" />
 
         <div class="form-actions">
-          <button
-            class="primary-button"
+          <Button
+            variant="solid"
             type="submit"
             name="decision"
             value="approve"
             :disabled="switchingAccount"
           >
-            <ShieldCheck :size="16" />
+            <template #icon><ShieldCheck :size="16" /></template>
             确认授权
-          </button>
-          <button
-            class="secondary-button"
+          </Button>
+          <Button
+            variant="outline"
             type="submit"
             name="decision"
             value="cancel"
             :disabled="switchingAccount"
           >
-            <X :size="16" />
+            <template #icon><X :size="16" /></template>
             取消
-          </button>
-          <button
-            class="secondary-button"
+          </Button>
+          <Button
+            variant="text"
             type="button"
             :disabled="switchingAccount"
             @click="switchAccount"
           >
-            <LogIn :size="16" />
+            <template #icon><LogIn :size="16" /></template>
             切换账号
-          </button>
+          </Button>
         </div>
       </form>
     </main>
