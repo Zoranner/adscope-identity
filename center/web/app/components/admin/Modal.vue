@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { X } from 'lucide-vue-next'
+import { Button } from '@stellar/ui'
 
 const props = defineProps<{
   open: boolean
@@ -137,9 +138,15 @@ onBeforeUnmount(() => {
       >
         <header class="modal-header">
           <h2>{{ title }}</h2>
-          <button class="icon-button" title="关闭" :disabled="closeDisabled" @click="requestClose">
+          <Button
+            variant="text"
+            square
+            aria-label="关闭"
+            :disabled="closeDisabled"
+            @click="requestClose"
+          >
             <X :size="18" />
-          </button>
+          </Button>
         </header>
         <div class="modal-body">
           <slot />
