@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@stellar/ui'
 import CreateMenu from '~/components/directory/CreateMenu.vue'
 import GroupEditor from '~/components/directory/GroupEditor.vue'
 import ObjectTable from '~/components/directory/ObjectTable.vue'
@@ -343,7 +344,7 @@ function closeModal() {
               <p>{{ selectedOu.id }} / 父级 {{ ouName(organizationalUnits, selectedOu.parent_id) }}</p>
             </div>
             <div class="row-actions">
-              <button class="secondary-button" :disabled="!tokenReady" @click="editOu(selectedOu.id)">编辑 OU</button>
+              <Button variant="outline" :disabled="!tokenReady" @click="editOu(selectedOu.id)">编辑 OU</Button>
               <CreateMenu
                 :disabled="!tokenReady"
                 @create-ou="newOu(selectedOu.id)"
