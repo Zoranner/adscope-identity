@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { Copy, Trash2 } from 'lucide-vue-next'
-import { Button, Input } from '@stellar/ui'
-import { onBeforeRouteLeave } from 'vue-router'
+import { Alert, Button, Drawer, Input, useNotification } from '@stellar/ui'
 import OAuthClientEditor from '~/components/oauth/OAuthClientEditor.vue'
 import OAuthClientTable from '~/components/oauth/OAuthClientTable.vue'
 import type {
@@ -10,11 +8,9 @@ import type {
   OAuthClientSecretResponse,
   OAuthClientType,
   OAuthScope,
-  UpdateOAuthClientRequest,
 } from '~/types/admin'
 
-type ModalView = 'editor' | 'secret' | 'delete'
-type ClientOperation = 'save' | 'toggle' | 'delete' | 'secret'
+type DrawerView = 'editor' | 'secret'
 
 interface OAuthClientEditorModel {
   name: string
@@ -23,44 +19,6 @@ interface OAuthClientEditorModel {
   allowed_scopes: OAuthScope[]
   enabled: boolean
 }
-
-const oauthScopes: OAuthScope[] = ['openid', 'profile', 'email', 'phone']
-const {
-  tokenReady,
-  loading,
-  oauthClients,
-  loadOAuthClients,
-  createOAuthClient,
-  updateOAuthClient,
-  deleteOAuthClient,
-  regenerateOAuthClientSecret,
-  runAction,
-} = useAdminApi()
-const { setStatus } = useAdminStatus()
-
-const modalView = ref<ModalView | null>(null)
-const selectedClientId = ref<string | null>(null)
-const operation = ref<ClientOperation | null>(null)
-const oneTimeSecret = ref<OAuthClientSecretResponse | null>(null)
-const secretInput = ref<HTMLInputElement | null>(null)
-const editorForm = reactive<OAuthClientEditorModel>(blankEditorForm())
-let modalContextGeneration = 0
-let tableActionGeneration = 0
-
-const modalOpen = computed(() => modalView.value !== null)
-const operationBusy = computed(() => operation.value !== null)
-const selectedClient = computed(
-  () => oauthClients.value.find((client) => client.client_id === selectedClientId.value) ?? null,
-)
-const modalTitle = computed(() => {
-  if (modalView.value === 'secret') {
-    return '客户端密钥'
-  }
-  if (modalView.value === 'delete') {
-    return '删除客户端'
-  }
-  return selectedClientId.value ? '编辑登录客户端' : '创建登录客户端'
-})
 
 function blankEditorForm(): OAuthClientEditorModel {
   return {
@@ -72,68 +30,52 @@ function blankEditorForm(): OAuthClientEditorModel {
   }
 }
 
-function assignEditorForm(source: OAuthClientEditorModel) {
-  Object.assign(editorForm, source)
-}
+const {
+  oauthClients,
+  clientsLoading,
+  pending,
+  createOAuthClient,
+  updateOAuthClient,
+  deleteOAuthClient,
+  regenerateOAuthClientSecret,
+  loadOAuthClients,
+  runAction,
+} = useAdminApi()
+const notifications = useNotification()
+const { confirm } = useConfirm()
 
-function resetModalContext() {
-  modalContextGeneration += 1
-  modalView.value = null
-  selectedClientId.value = null
-  oneTimeSecret.value = null
-}
+const drawerOpen = ref(false)
+const drawerView = ref<DrawerView>('editor')
+const selectedClientId = ref<string | null>(null)
+const saving = ref(false)
+const secret = ref<OAuthClientSecretResponse | null>(null)
+const editorForm = reactive<OAuthClientEditorModel>(blankEditorForm())
 
-function closeModal() {
-  if (operationBusy.value) {
-    return
+const busy = computed(() => saving.value || pending.value > 0)
+const drawerTitle = computed(() => {
+  if (drawerView.value === 'secret') {
+    return '客户端密钥'
   }
-  resetModalContext()
-}
+  return selectedClientId.value ? '编辑接入应用' : '新建接入应用'
+})
 
-function newClient() {
-  if (operationBusy.value) {
-    return
-  }
-  modalContextGeneration += 1
-  selectedClientId.value = null
-  oneTimeSecret.value = null
-  assignEditorForm(blankEditorForm())
-  modalView.value = 'editor'
-}
-
-function editClient(client: OAuthClient) {
-  if (operationBusy.value) {
-    return
-  }
-  modalContextGeneration += 1
-  selectedClientId.value = client.client_id
-  oneTimeSecret.value = null
-  assignEditorForm({
-    name: client.name,
-    client_type: client.client_type,
-    redirect_uris: client.redirect_uris.join('\n'),
-    allowed_scopes: [...client.allowed_scopes],
-    enabled: client.enabled,
+function openEditor(client?: OAuthClient) {
+  selectedClientId.value = client?.client_id ?? null
+  secret.value = null
+  drawerView.value = 'editor'
+  Object.assign(editorForm, {
+    ...blankEditorForm(),
+    ...(client
+      ? {
+          name: client.name,
+          client_type: client.client_type,
+          redirect_uris: client.redirect_uris.join('\n'),
+          allowed_scopes: [...client.allowed_scopes],
+          enabled: client.enabled,
+        }
+      : {}),
   })
-  modalView.value = 'editor'
-}
-
-function requestDelete(client: OAuthClient) {
-  if (operationBusy.value) {
-    return
-  }
-  modalContextGeneration += 1
-  selectedClientId.value = client.client_id
-  oneTimeSecret.value = null
-  modalView.value = 'delete'
-}
-
-function modalContextMatches(generation: number, view: ModalView, clientId: string | null): boolean {
-  return (
-    modalContextGeneration === generation &&
-    modalView.value === view &&
-    selectedClientId.value === clientId
-  )
+  drawerOpen.value = true
 }
 
 function redirectUris(): string[] {
@@ -143,332 +85,222 @@ function redirectUris(): string[] {
     .filter(Boolean)
 }
 
-function allowedScopes(): OAuthScope[] {
-  return oauthScopes.filter((scope) => editorForm.allowed_scopes.includes(scope))
-}
-
-function updateRequest(enabled = editorForm.enabled): UpdateOAuthClientRequest {
-  return {
-    name: editorForm.name.trim(),
-    redirect_uris: redirectUris(),
-    allowed_scopes: allowedScopes(),
-    enabled,
-  }
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
-}
-
-async function focusSecret(generation: number) {
-  await nextTick()
-  if (
-    modalContextGeneration === generation &&
-    modalView.value === 'secret' &&
-    oneTimeSecret.value
-  ) {
-    secretInput.value?.focus()
-  }
-}
-
 async function saveClient() {
-  if (operationBusy.value || modalView.value !== 'editor') {
+  if (saving.value) {
     return
   }
-  const request = updateRequest()
-  if (!request.name) {
-    setStatus('请输入客户端名称', true)
+  if (!editorForm.name.trim()) {
+    notifications.error('请输入应用名称')
     return
   }
-  if (request.redirect_uris.length === 0) {
-    setStatus('请至少输入一个 Redirect URI', true)
+  if (redirectUris().length === 0) {
+    notifications.error('请至少填写一个 Redirect URI')
     return
   }
+
+  saving.value = true
   const clientId = selectedClientId.value
-  const generation = ++modalContextGeneration
-  operation.value = 'save'
-
   try {
-    if (clientId) {
-      await updateOAuthClient(clientId, request)
-      if (modalContextMatches(generation, 'editor', clientId)) {
-        resetModalContext()
-        setStatus('登录客户端已更新')
-      }
-      return
-    }
-
-    const createRequest: CreateOAuthClientRequest = {
-      ...request,
-      client_type: editorForm.client_type,
-    }
-    const response = await createOAuthClient(createRequest)
-    if (!modalContextMatches(generation, 'editor', null)) {
-      return
-    }
-
-    if (response.client_secret) {
-      selectedClientId.value = response.client.client_id
-      oneTimeSecret.value = {
-        client_id: response.client.client_id,
-        client_secret: response.client_secret,
-      }
-      modalView.value = 'secret'
-      setStatus('Web 客户端已创建，请保存一次性密钥')
-      await focusSecret(generation)
-    } else {
-      resetModalContext()
-      setStatus('Desktop 客户端已创建')
-    }
-  } catch (error) {
-    if (modalContextGeneration === generation) {
-      setStatus(errorMessage(error, clientId ? '更新登录客户端失败' : '创建登录客户端失败'), true)
-    }
+    await runAction(
+      async () => {
+        const request = {
+          name: editorForm.name.trim(),
+          redirect_uris: redirectUris(),
+          allowed_scopes: editorForm.allowed_scopes,
+          enabled: editorForm.enabled,
+        }
+        if (clientId) {
+          await updateOAuthClient(clientId, request)
+          drawerOpen.value = false
+          return
+        }
+        const createRequest: CreateOAuthClientRequest = {
+          ...request,
+          client_type: editorForm.client_type,
+        }
+        const response = await createOAuthClient(createRequest)
+        selectedClientId.value = response.client.client_id
+        if (response.client_secret) {
+          secret.value = {
+            client_id: response.client.client_id,
+            client_secret: response.client_secret,
+          }
+          drawerView.value = 'secret'
+          return
+        }
+        drawerOpen.value = false
+      },
+      { successMessage: clientId ? '接入应用已更新' : '接入应用已创建' },
+    )
   } finally {
-    operation.value = null
+    saving.value = false
   }
 }
 
 async function toggleClient(client: OAuthClient) {
-  if (operationBusy.value) {
-    return
-  }
-  const generation = ++tableActionGeneration
-  operation.value = 'toggle'
   const enabled = !client.enabled
-
+  saving.value = true
   try {
-    await updateOAuthClient(client.client_id, {
-      name: client.name,
-      redirect_uris: [...client.redirect_uris],
-      allowed_scopes: [...client.allowed_scopes],
-      enabled,
-    })
-    if (tableActionGeneration === generation) {
-      setStatus(enabled ? '登录客户端已启用' : '登录客户端已停用')
-    }
-  } catch (error) {
-    if (tableActionGeneration === generation) {
-      setStatus(errorMessage(error, '更新客户端状态失败'), true)
-    }
+    await runAction(
+      async () => {
+        await updateOAuthClient(client.client_id, {
+          name: client.name,
+          redirect_uris: [...client.redirect_uris],
+          allowed_scopes: [...client.allowed_scopes],
+          enabled,
+        })
+      },
+      { successMessage: enabled ? '接入应用已启用' : '接入应用已停用' },
+    )
   } finally {
-    operation.value = null
+    saving.value = false
   }
 }
 
-async function confirmDelete() {
-  const clientId = selectedClientId.value
-  if (operationBusy.value || modalView.value !== 'delete' || !clientId) {
+async function removeClient(client: OAuthClient) {
+  const confirmed = await confirm({
+    title: '删除接入应用',
+    message: `删除“${client.name}”？`,
+    description: '删除后该应用已签发的登录会话仍然有效，但无法再次发起授权。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!confirmed) {
     return
   }
-  const generation = ++modalContextGeneration
-  operation.value = 'delete'
 
+  saving.value = true
   try {
-    await deleteOAuthClient(clientId)
-    if (modalContextMatches(generation, 'delete', clientId)) {
-      resetModalContext()
-      setStatus('登录客户端已删除')
-    }
-  } catch (error) {
-    if (modalContextGeneration === generation) {
-      setStatus(errorMessage(error, '删除登录客户端失败'), true)
-    }
+    await runAction(
+      async () => {
+        await deleteOAuthClient(client.client_id)
+      },
+      { successMessage: '接入应用已删除' },
+    )
   } finally {
-    operation.value = null
+    saving.value = false
   }
 }
 
 async function regenerateSecret() {
   const clientId = selectedClientId.value
-  if (operationBusy.value || modalView.value !== 'editor' || !clientId) {
+  if (!clientId) {
     return
   }
-  const generation = ++modalContextGeneration
-  operation.value = 'secret'
-  oneTimeSecret.value = null
+  const confirmed = await confirm({
+    title: '重新生成密钥',
+    message: `为“${editorForm.name}”生成新的客户端密钥？`,
+    description: '旧密钥立即失效，使用旧密钥的应用需要更新配置。',
+    confirmText: '重新生成',
+    danger: true,
+  })
+  if (!confirmed) {
+    return
+  }
 
+  saving.value = true
   try {
-    const response = await regenerateOAuthClientSecret(clientId)
-    if (!modalContextMatches(generation, 'editor', clientId)) {
-      return
-    }
-    oneTimeSecret.value = response
-    modalView.value = 'secret'
-    setStatus('客户端密钥已重新生成，请立即保存')
-    await focusSecret(generation)
-  } catch (error) {
-    if (modalContextGeneration === generation) {
-      setStatus(errorMessage(error, '重新生成客户端密钥失败'), true)
-    }
+    await runAction(async () => {
+      const response = await regenerateOAuthClientSecret(clientId)
+      secret.value = response
+      drawerView.value = 'secret'
+    })
   } finally {
-    operation.value = null
+    saving.value = false
   }
 }
 
 async function copySecret() {
-  const secret = oneTimeSecret.value?.client_secret
-  const generation = modalContextGeneration
-  if (!secret || !import.meta.client || !navigator.clipboard) {
-    setStatus('无法访问剪贴板，请手动复制客户端密钥', true)
+  const value = secret.value?.client_secret
+  if (!value || !import.meta.client || !navigator.clipboard) {
+    notifications.error('无法访问剪贴板，请手动复制客户端密钥')
     return
   }
-
   try {
-    await navigator.clipboard.writeText(secret)
-    if (modalContextGeneration === generation && modalView.value === 'secret') {
-      setStatus('客户端密钥已复制')
-    }
+    await navigator.clipboard.writeText(value)
+    notifications.success('客户端密钥已复制')
   } catch {
-    if (modalContextGeneration === generation && modalView.value === 'secret') {
-      setStatus('复制失败，请手动复制客户端密钥', true)
-    }
+    notifications.error('复制失败，请手动复制客户端密钥')
   }
 }
 
 async function refreshClients() {
-  await runAction(async () => {
-    await loadOAuthClients()
-  }, { successMessage: '登录客户端已刷新' })
+  await runAction(
+    async () => {
+      await loadOAuthClients()
+    },
+    { successMessage: '接入应用已刷新' },
+  )
 }
-
-function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (operationBusy.value) {
-    event.preventDefault()
-    event.returnValue = ''
-  }
-}
-
-onBeforeRouteLeave(() => {
-  if (operationBusy.value) {
-    return false
-  }
-})
-
-onMounted(() => {
-  window.addEventListener('beforeunload', handleBeforeUnload)
-})
-
-onBeforeUnmount(() => {
-  modalContextGeneration += 1
-  tableActionGeneration += 1
-  window.removeEventListener('beforeunload', handleBeforeUnload)
-})
-
-watch(tokenReady, (ready) => {
-  if (!ready) {
-    resetModalContext()
-  }
-})
 </script>
 
 <template>
-  <AdminShell :busy="operationBusy">
-    <AdminPageHeader
-      title="登录客户端"
-      description="维护 OIDC 登录客户端、回调地址和授权范围。"
-      :loading="loading || operationBusy"
-      :disabled="!tokenReady"
-      @refresh="refreshClients"
+  <AdminShell title="应用接入">
+    <template #actions>
+      <Button icon="ph:arrows-clockwise" @click="refreshClients">刷新</Button>
+      <Button
+        variant="solid"
+        semantic="primary"
+        icon="ph:plus"
+        :disabled="busy"
+        @click="openEditor()"
+      >
+        新建
+      </Button>
+    </template>
+
+    <OAuthClientTable
+      :clients="oauthClients"
+      :loading="clientsLoading"
+      :busy="busy"
+      @edit="openEditor"
+      @toggle="toggleClient"
+      @remove="removeClient"
     />
 
-    <section class="single-column-page">
-      <OAuthClientTable
-        :clients="oauthClients"
-        :busy="loading || operationBusy"
-        @create="newClient"
-        @edit="editClient"
-        @toggle="toggleClient"
-        @delete="requestDelete"
-      />
-    </section>
-
-    <AdminModal
-      :open="modalOpen"
-      :title="modalTitle"
-      :close-disabled="operationBusy"
-      width="wide"
-      @close="closeModal"
+    <Drawer
+      v-model:visible="drawerOpen"
+      :title="drawerTitle"
+      :blocked="saving"
+      :disabled="saving"
+      size="large"
     >
+      <div v-if="drawerView === 'secret' && secret" class="grid gap-[var(--spacing-lg)]">
+        <Alert semantic="warning" title="客户端密钥仅显示一次">
+          关闭后无法再次查看，需要重新生成密钥。
+        </Alert>
+        <Input label="Client ID" :model-value="secret.client_id" readonly spellcheck="false" />
+        <Input label="Client Secret" :model-value="secret.client_secret" readonly spellcheck="false" />
+        <div class="flex gap-[var(--spacing-sm)]">
+          <Button icon="ph:copy" @click="copySecret">复制密钥</Button>
+        </div>
+      </div>
+
       <OAuthClientEditor
-        v-if="modalView === 'editor'"
+        v-else
         v-model="editorForm"
         :editing-id="selectedClientId"
-        :loading="operationBusy"
-        :disabled="!tokenReady"
+        :saving="saving"
         @save="saveClient"
         @regenerate-secret="regenerateSecret"
       />
 
-      <section v-else-if="modalView === 'secret' && oneTimeSecret" class="form connector-key-result">
-        <div role="status" aria-live="polite" aria-atomic="true">
-          <h3>客户端密钥已生成</h3>
-          <p id="oauth-client-secret-notice">密钥仅显示一次，关闭后无法再次查看。</p>
-        </div>
-        <div class="field">
-          <label for="oauth-client-secret-id">Client ID</label>
-          <Input
-            id="oauth-client-secret-id"
-            :value="oneTimeSecret.client_id"
-            readonly
-            spellcheck="false"
-          />
-        </div>
-        <div class="field">
-          <label for="oauth-client-secret">Client Secret</label>
-          <div class="connector-key-row">
-          <Input
-              id="oauth-client-secret"
-              ref="secretInput"
-              :value="oneTimeSecret.client_secret"
-              aria-describedby="oauth-client-secret-notice"
-              readonly
-              spellcheck="false"
-          />
-            <Button
-              variant="ghost"
-              square
-              type="button"
-              class="icon-button"
-              title="复制 Client Secret"
-              aria-label="复制 Client Secret"
-              @click="copySecret"
-            >
-              <Copy :size="17" />
-            </Button>
-          </div>
-        </div>
-        <div class="form-actions">
-          <Button type="button" variant="outline" @click="closeModal">关闭</Button>
-        </div>
-      </section>
-
-      <section v-else-if="modalView === 'delete' && selectedClient" class="form connector-key-result">
-        <div>
-          <h3>确认删除 {{ selectedClient.name }}？</h3>
-          <p>{{ selectedClient.client_id }}</p>
-        </div>
-        <div class="form-actions">
-          <Button
-            type="button"
-            variant="solid"
-            semantic="error"
-            :disabled="operationBusy"
-            @click="confirmDelete"
-          >
-            <Trash2 :size="16" />
-            删除
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            :disabled="operationBusy"
-            @click="closeModal"
-          >
-            取消
-          </Button>
-        </div>
-      </section>
-    </AdminModal>
+      <template #footer>
+        <Button :disabled="saving" @click="drawerOpen = false">
+          {{ drawerView === 'secret' ? '关闭' : '取消' }}
+        </Button>
+        <Button
+          v-if="drawerView === 'editor'"
+          form="oauth-client-form"
+          type="submit"
+          variant="solid"
+          semantic="primary"
+          icon="ph:floppy-disk"
+          :disabled="saving"
+        >
+          保存
+        </Button>
+      </template>
+    </Drawer>
   </AdminShell>
 </template>

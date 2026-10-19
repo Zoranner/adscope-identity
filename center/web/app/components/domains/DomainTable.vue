@@ -1,94 +1,72 @@
 <script setup lang="ts">
-import { Search, ServerCog } from 'lucide-vue-next'
-import { Button, Input } from '@stellar/ui'
+import { Badge, Button, Table } from '@stellar/ui'
 import type { Domain } from '~/types/admin'
 
 const props = defineProps<{
   domains: Domain[]
+  loading?: boolean
+  busy?: boolean
 }>()
 
-defineEmits<{
-  create: []
+const emit = defineEmits<{
   edit: [domain: Domain]
 }>()
 
-const query = ref('')
-const filteredDomains = computed(() => {
-  const value = query.value.trim().toLowerCase()
-  if (!value) {
-    return props.domains
-  }
-  return props.domains.filter((domain) =>
-    [domain.id, domain.name, domain.upn_suffix, domain.mirror_root_dn]
-      .some((field) => field.toLowerCase().includes(value)),
-  )
-})
-const pagination = usePagination(filteredDomains, 10)
+const columns = [
+  { key: 'domain', title: '域', minWidth: 200, ellipsis: true },
+  { key: 'upn_suffix', title: 'UPN 后缀', width: 180, ellipsis: true },
+  { key: 'mirror_root_dn', title: '镜像根 DN', minWidth: 220, ellipsis: true },
+  { key: 'enabled', title: '状态', width: 96 },
+  { key: 'applied_directory_revision', title: '目录版本', width: 108, align: 'right' as const },
+  { key: 'applied_credential_revision', title: '凭据版本', width: 108, align: 'right' as const },
+  { key: 'actions', title: '操作', width: 72, align: 'right' as const, fixed: 'right' as const },
+]
 
-watch(query, () => pagination.resetPage())
+const rows = computed(() => props.domains as unknown as Record<string, unknown>[])
+
+function domainRow(row: Record<string, unknown>): Domain {
+  return row as unknown as Domain
+}
+
+function openEditor(row: Record<string, unknown>) {
+  emit('edit', domainRow(row))
+}
 </script>
 
 <template>
-  <section class="panel">
-    <div class="panel-header">
-      <div class="panel-title">
-        <h2>域列表</h2>
-        <AdminStatusBadge>{{ filteredDomains.length }}</AdminStatusBadge>
+  <Table
+    :columns="columns"
+    :data="rows"
+    :loading="loading"
+    empty-text="还没有配置 AD 域"
+    layout="fixed"
+    fixed-header
+    row-key="id"
+    @row-click="openEditor"
+  >
+    <template #cell-domain="{ row }">
+      <div class="grid min-w-0 gap-[var(--spacing-2xs)]">
+        <strong>{{ domainRow(row).name }}</strong>
+        <span class="text-[var(--text-sm)] text-[var(--st-text-muted)]">{{ domainRow(row).id }}</span>
       </div>
-      <Button variant="solid" size="small" @click="$emit('create')">
-        <ServerCog :size="15" />
-        新建
-      </Button>
-    </div>
-
-    <div class="table-toolbar">
-      <Search :size="16" />
-      <Input v-model="query" placeholder="搜索域、UPN 后缀或镜像根 DN" />
-    </div>
-
-    <div class="table-wrap">
-      <table v-if="filteredDomains.length">
-        <thead>
-          <tr>
-            <th>域</th>
-            <th>UPN</th>
-            <th>状态</th>
-            <th>目录</th>
-            <th>凭据</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="domain in pagination.pageItems.value" :key="domain.id">
-            <td>
-              <strong>{{ domain.name }}</strong>
-              <span class="muted-cell">{{ domain.id }}</span>
-            </td>
-            <td>{{ domain.upn_suffix }}</td>
-            <td>
-              <AdminStatusBadge :tone="domain.enabled ? 'default' : 'warn'">
-                {{ domain.enabled ? '启用' : '停用' }}
-              </AdminStatusBadge>
-            </td>
-            <td>{{ domain.applied_directory_revision }}</td>
-            <td>{{ domain.applied_credential_revision }}</td>
-            <td class="actions-cell">
-              <Button variant="outline" size="small" @click="$emit('edit', domain)">编辑</Button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <AdminEmptyState v-else title="暂无域配置" />
-    </div>
-
-    <AdminPaginationBar
-      :page="pagination.page.value"
-      :page-count="pagination.pageCount.value"
-      :total="pagination.total.value"
-      :start="pagination.start.value"
-      :end="pagination.end.value"
-      @previous="pagination.previousPage"
-      @next="pagination.nextPage"
-    />
-  </section>
+    </template>
+    <template #cell-enabled="{ row }">
+      <Badge :semantic="domainRow(row).enabled ? 'success' : 'warning'">
+        {{ domainRow(row).enabled ? '启用' : '停用' }}
+      </Badge>
+    </template>
+    <template #cell-actions="{ row }">
+      <div class="flex justify-end">
+        <Button
+          size="small"
+          square
+          icon="ph:pencil-simple"
+          title="编辑域"
+          aria-label="编辑域"
+          :disabled="busy"
+          @click.stop="emit('edit', domainRow(row))"
+        />
+      </div>
+    </template>
+  </Table>
 </template>

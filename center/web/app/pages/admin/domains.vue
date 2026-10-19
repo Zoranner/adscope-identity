@@ -1,122 +1,55 @@
 <script setup lang="ts">
-import { Copy } from 'lucide-vue-next'
-import { Button, Input } from '@stellar/ui'
-import { onBeforeRouteLeave } from 'vue-router'
+import { Alert, Button, Drawer, Input, useNotification } from '@stellar/ui'
 import DomainEditor from '~/components/domains/DomainEditor.vue'
 import DomainTable from '~/components/domains/DomainTable.vue'
 import type { Domain, DomainForm, DomainMutationResponse } from '~/types/admin'
 import { blankDomainForm } from '~/utils/forms'
 
 const {
-  tokenReady,
-  loading,
   domains,
+  domainAttributeDefaults,
+  domainsLoading,
+  pending,
   adminFetch,
   runAction,
   loadDomains,
   loadSyncDomains,
 } = useAdminApi()
+const notifications = useNotification()
 
 const selectedDomainId = ref<string | null>(null)
-const modalOpen = ref(false)
+const drawerOpen = ref(false)
 const saving = ref(false)
 const connectorKey = ref<string | null>(null)
-const connectorKeyInput = ref<HTMLInputElement | null>(null)
 const domainForm = reactive<DomainForm>(blankDomainForm())
-const { setStatus } = useAdminStatus()
-let domainContextGeneration = 0
 
-function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (saving.value) {
-    event.preventDefault()
-    event.returnValue = ''
+const busy = computed(() => saving.value || pending.value > 0)
+const drawerTitle = computed(() => {
+  if (connectorKey.value) {
+    return 'Connector key'
   }
-}
-
-onBeforeRouteLeave(() => {
-  if (saving.value) {
-    return false
-  }
+  return selectedDomainId.value ? '编辑域' : '新建域'
 })
 
-onMounted(() => {
-  window.addEventListener('beforeunload', handleBeforeUnload)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('beforeunload', handleBeforeUnload)
-})
-
-watch(tokenReady, (ready) => {
-  if (!ready) {
-    domainContextGeneration += 1
-    modalOpen.value = false
-    connectorKey.value = null
-  }
-})
-
-function assignForm<T extends object>(target: T, source: T) {
-  Object.assign(target, source)
-}
-
-function newDomain() {
-  if (saving.value) {
-    return
-  }
-  domainContextGeneration += 1
-  selectedDomainId.value = null
+function openEditor(domain?: Domain) {
+  selectedDomainId.value = domain?.id ?? null
   connectorKey.value = null
-  assignForm(domainForm, blankDomainForm())
-  modalOpen.value = true
-}
-
-function editDomain(domain: Domain) {
-  if (saving.value) {
-    return
-  }
-  domainContextGeneration += 1
-  selectedDomainId.value = domain.id
-  connectorKey.value = null
-  modalOpen.value = true
-  assignForm(domainForm, {
-    id: domain.id,
-    name: domain.name,
-    enabled: domain.enabled,
-    mirror_root_dn: domain.mirror_root_dn,
-    quarantine_ou_dn: domain.quarantine_ou_dn,
-    upn_suffix: domain.upn_suffix,
-    employee_id_attribute: domain.employee_id_attribute,
-    managed_group_id_attribute: domain.managed_group_id_attribute,
+  Object.assign(domainForm, {
+    ...blankDomainForm(),
+    ...(domain
+      ? {
+          id: domain.id,
+          name: domain.name,
+          enabled: domain.enabled,
+          mirror_root_dn: domain.mirror_root_dn,
+          quarantine_ou_dn: domain.quarantine_ou_dn,
+          upn_suffix: domain.upn_suffix,
+          employee_id_attribute: domain.employee_id_attribute,
+          managed_group_id_attribute: domain.managed_group_id_attribute,
+        }
+      : {}),
   })
-}
-
-function closeModal() {
-  if (saving.value) {
-    return
-  }
-  domainContextGeneration += 1
-  modalOpen.value = false
-  connectorKey.value = null
-}
-
-async function copyConnectorKey() {
-  if (!connectorKey.value || !import.meta.client || !navigator.clipboard) {
-    setStatus('无法访问剪贴板，请手动复制 Connector key', true)
-    return
-  }
-
-  try {
-    await navigator.clipboard.writeText(connectorKey.value)
-    setStatus('Connector key 已复制')
-  } catch {
-    setStatus('复制失败，请手动复制 Connector key', true)
-  }
-}
-
-async function refreshDomains() {
-  await runAction(async () => {
-    await Promise.all([loadDomains(), loadSyncDomains()])
-  }, { successMessage: '域数据已刷新' })
+  drawerOpen.value = true
 }
 
 async function saveDomain() {
@@ -124,127 +57,126 @@ async function saveDomain() {
     return
   }
   saving.value = true
-  connectorKey.value = null
-  const contextDomainId = selectedDomainId.value
-  const contextGeneration = ++domainContextGeneration
-  const editing = contextDomainId !== null
+  const editingId = selectedDomainId.value
   try {
-    await runAction(async () => {
-      const payload = {
-        name: domainForm.name,
-        enabled: domainForm.enabled,
-        mirror_root_dn: domainForm.mirror_root_dn,
-        quarantine_ou_dn: domainForm.quarantine_ou_dn,
-        upn_suffix: domainForm.upn_suffix,
-        employee_id_attribute: domainForm.employee_id_attribute,
-        managed_group_id_attribute: domainForm.managed_group_id_attribute,
-      }
-      let response: DomainMutationResponse
-      if (contextDomainId) {
-        response = await adminFetch<DomainMutationResponse>(
-          `/api/admin/domains/${encodeURIComponent(contextDomainId)}`,
-          {
-            method: 'PATCH',
-            body: JSON.stringify(payload),
-          },
-        )
-      } else {
-        response = await adminFetch<DomainMutationResponse>('/api/admin/domains', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: domainForm.id,
-            ...payload,
-          }),
-        })
-      }
-      if (
-        domainContextGeneration === contextGeneration &&
-        modalOpen.value &&
-        selectedDomainId.value === contextDomainId
-      ) {
+    await runAction(
+      async () => {
+        const payload = {
+          name: domainForm.name,
+          enabled: domainForm.enabled,
+          mirror_root_dn: domainForm.mirror_root_dn,
+          quarantine_ou_dn: domainForm.quarantine_ou_dn,
+          upn_suffix: domainForm.upn_suffix,
+          employee_id_attribute: domainForm.employee_id_attribute,
+          managed_group_id_attribute: domainForm.managed_group_id_attribute,
+        }
+        const response: DomainMutationResponse = editingId
+          ? await adminFetch<DomainMutationResponse>(
+              `/api/admin/domains/${encodeURIComponent(editingId)}`,
+              { method: 'PATCH', body: JSON.stringify(payload) },
+            )
+          : await adminFetch<DomainMutationResponse>('/api/admin/domains', {
+              method: 'POST',
+              body: JSON.stringify({ id: domainForm.id, ...payload }),
+            })
         selectedDomainId.value = response.domain.id
         connectorKey.value = response.connector_key
-        await nextTick()
-        if (domainContextGeneration === contextGeneration && modalOpen.value) {
-          connectorKeyInput.value?.focus()
-        }
-      }
-      await Promise.all([loadDomains(), loadSyncDomains()])
-      if (domainContextGeneration === contextGeneration && modalOpen.value) {
-        setStatus(editing ? '域配置已更新' : '域配置已创建')
-      }
-    })
+        await Promise.all([loadDomains(), loadSyncDomains()])
+      },
+      { successMessage: editingId ? '域配置已更新' : '域配置已创建' },
+    )
   } finally {
     saving.value = false
   }
 }
+
+async function copyConnectorKey() {
+  if (!connectorKey.value || !import.meta.client || !navigator.clipboard) {
+    notifications.error('无法访问剪贴板，请手动复制 Connector key')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(connectorKey.value)
+    notifications.success('Connector key 已复制')
+  } catch {
+    notifications.error('复制失败，请手动复制 Connector key')
+  }
+}
+
+async function refreshDomains() {
+  await runAction(
+    async () => {
+      await Promise.all([loadDomains(), loadSyncDomains()])
+    },
+    { successMessage: '域数据已刷新' },
+  )
+}
 </script>
 
 <template>
-  <AdminShell :busy="saving">
-    <AdminPageHeader
-      title="域管理"
-      description="维护独立 AD 域配置和 Connector 读取边界。"
-      :loading="loading"
-      :disabled="!tokenReady"
-      @refresh="refreshDomains"
+  <AdminShell title="域">
+    <template #actions>
+      <Button icon="ph:arrows-clockwise" @click="refreshDomains">刷新</Button>
+      <Button
+        variant="solid"
+        semantic="primary"
+        icon="ph:plus"
+        :disabled="busy"
+        @click="openEditor()"
+      >
+        新建
+      </Button>
+    </template>
+
+    <DomainTable
+      :domains="domains"
+      :loading="domainsLoading"
+      :busy="busy"
+      @edit="openEditor"
     />
 
-    <section class="single-column-page">
-      <DomainTable :domains="domains" @create="newDomain" @edit="editDomain" />
-    </section>
-
-    <AdminModal
-      :open="modalOpen"
-      :title="connectorKey ? 'Connector key' : selectedDomainId ? '编辑域' : '创建域'"
-      :close-disabled="saving"
-      width="wide"
-      @close="closeModal"
+    <Drawer
+      v-model:visible="drawerOpen"
+      :title="drawerTitle"
+      :blocked="saving"
+      :disabled="saving"
+      size="large"
     >
+      <div v-if="connectorKey" class="grid gap-[var(--spacing-lg)]">
+        <Alert semantic="warning" title="Connector key 仅显示一次">
+          关闭后需要重新保存域配置才能生成新的 key。
+        </Alert>
+        <Input label="ADSCOPE_CONNECTOR_KEY" :model-value="connectorKey" readonly spellcheck="false" />
+        <div class="flex gap-[var(--spacing-sm)]">
+          <Button icon="ph:copy" @click="copyConnectorKey">复制 key</Button>
+        </div>
+      </div>
+
       <DomainEditor
-        v-if="!connectorKey"
+        v-else
         v-model="domainForm"
         :editing-id="selectedDomainId"
-        :loading="loading || saving"
-        :disabled="!tokenReady"
+        :saving="saving"
+        :attribute-defaults="domainAttributeDefaults"
         @save="saveDomain"
-        @reset="newDomain"
       />
-      <section v-else class="form connector-key-result">
-        <div role="status" aria-live="polite" aria-atomic="true">
-          <h3>Connector key 已生成</h3>
-          <p id="connector-key-notice">仅显示一次；关闭后需重新保存域配置才能生成新 key。</p>
-        </div>
-        <div class="field">
-          <label for="generated-connector-key">ADSCOPE_CONNECTOR_KEY</label>
-          <div class="connector-key-row">
-            <Input
-              id="generated-connector-key"
-              ref="connectorKeyInput"
-              :value="connectorKey"
-              aria-describedby="connector-key-notice"
-              readonly
-              spellcheck="false"
-            />
-            <Button
-              variant="ghost"
-              square
-              type="button"
-              class="icon-button"
-              title="复制 ADSCOPE_CONNECTOR_KEY"
-              aria-label="复制 ADSCOPE_CONNECTOR_KEY"
-              @click="copyConnectorKey"
-            >
-              <Copy :size="17" />
-            </Button>
-          </div>
-        </div>
-        <div class="form-actions">
-          <Button type="button" variant="outline" :disabled="saving" @click="closeModal">
-            关闭
-          </Button>
-        </div>
-      </section>
-    </AdminModal>
+
+      <template #footer>
+        <Button :disabled="saving" @click="drawerOpen = false">
+          {{ connectorKey ? '关闭' : '取消' }}
+        </Button>
+        <Button
+          v-if="!connectorKey"
+          form="domain-form"
+          type="submit"
+          variant="solid"
+          semantic="primary"
+          icon="ph:floppy-disk"
+          :disabled="saving"
+        >
+          保存
+        </Button>
+      </template>
+    </Drawer>
   </AdminShell>
 </template>

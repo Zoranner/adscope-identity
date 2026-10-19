@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { KeyRound, Save } from 'lucide-vue-next'
-import { Button, Checkbox, Input, Textarea, Toggle } from '@stellar/ui'
+import { Button, Checkbox, Input, RadioGroup, Textarea, Toggle } from '@stellar/ui'
 import type { OAuthClientType, OAuthScope } from '~/types/admin'
+import EditorForm from '~/components/shell/EditorForm.vue'
 
 interface OAuthClientEditorModel {
   name: string
@@ -15,8 +15,7 @@ const form = defineModel<OAuthClientEditorModel>({ required: true })
 
 defineProps<{
   editingId: string | null
-  loading?: boolean
-  disabled?: boolean
+  saving?: boolean
 }>()
 
 defineEmits<{
@@ -24,12 +23,12 @@ defineEmits<{
   regenerateSecret: []
 }>()
 
-const clientTypes: Array<{ value: OAuthClientType; label: string }> = [
+const clientTypes = [
   { value: 'web', label: 'Web' },
   { value: 'desktop', label: 'Desktop' },
 ]
 const scopes: Array<{ value: OAuthScope; label: string }> = [
-  { value: 'openid', label: 'OpenID' },
+  { value: 'openid', label: 'OpenID（必选）' },
   { value: 'profile', label: '用户资料' },
   { value: 'email', label: '邮箱' },
   { value: 'phone', label: '电话' },
@@ -37,92 +36,52 @@ const scopes: Array<{ value: OAuthScope; label: string }> = [
 </script>
 
 <template>
-  <form class="form" @submit.prevent="$emit('save')">
-    <div v-if="editingId" class="field">
-      <label for="oauth-client-id">Client ID</label>
-      <Input :model-value="editingId" label="Client ID" readonly />
-    </div>
+  <EditorForm form-id="oauth-client-form" @submit="$emit('save')">
+    <Input v-if="editingId" :model-value="editingId" label="Client ID" readonly />
 
-    <div class="field">
-      <label for="oauth-client-name">名称</label>
-      <Input
-        v-model="form.name"
-        label="名称"
-        :maxlength="100"
-        :disabled="loading || disabled"
-        required
+    <Input v-model="form.name" label="名称" :maxlength="100" required />
+
+    <RadioGroup
+      v-model="form.client_type"
+      label="类型"
+      :options="clientTypes"
+      :disabled="!!editingId"
+    />
+
+    <Textarea
+      v-model="form.redirect_uris"
+      label="Redirect URI"
+      placeholder="每行一个完整 URI"
+      :rows="4"
+      spellcheck="false"
+      required
+    />
+
+    <div class="flex flex-wrap items-center gap-[var(--spacing-lg)]">
+      <Checkbox
+        v-for="scopeOption in scopes"
+        :key="scopeOption.value"
+        v-model="form.allowed_scopes"
+        :value="scopeOption.value"
+        :label="scopeOption.label"
+        :disabled="scopeOption.value === 'openid' || saving"
       />
     </div>
 
-    <div class="field">
-      <label>类型</label>
-      <div class="row-actions segmented-control" role="radiogroup" aria-label="客户端类型">
-        <Button
-          v-for="clientType in clientTypes"
-          :key="clientType.value"
-          type="button"
-          variant="outline"
-          size="small"
-          :class="{ active: form.client_type === clientType.value }"
-          role="radio"
-          :aria-checked="form.client_type === clientType.value"
-          :disabled="!!editingId || loading || disabled"
-          @click="form.client_type = clientType.value"
-        >
-          {{ clientType.label }}
-        </Button>
-      </div>
-    </div>
+    <Toggle v-model="form.enabled" label="启用应用" :disabled="saving" />
 
-    <div class="field">
-      <label for="oauth-client-redirect-uris">Redirect URI</label>
-      <Textarea
-        v-model="form.redirect_uris"
-        label="Redirect URI"
-        :disabled="loading || disabled"
-        placeholder="每行一个完整 URI"
-        spellcheck="false"
-        required
-      />
-    </div>
-
-    <div class="field">
-      <label>授权范围</label>
-      <div class="row-actions checkbox-group">
-        <label v-for="scopeItem in scopes" :key="scopeItem.value" class="checkbox-option">
-          <Checkbox
-            v-model="form.allowed_scopes"
-            :value="scopeItem.value"
-            :disabled="scopeItem.value === 'openid' || loading || disabled"
-          />
-          {{ scopeItem.label }}
-        </label>
-      </div>
-    </div>
-
-    <div class="field">
-      <label class="checkbox-option">
-        <Toggle
-          v-model="form.enabled"
-          label="启用客户端"
-          :disabled="loading || disabled"
-        />
-      </label>
-    </div>
-
-    <div class="form-actions">
-      <Button type="submit" variant="solid" :disabled="loading || disabled">
-        保存
-      </Button>
+    <section
+      v-if="editingId && form.client_type === 'web'"
+      class="flex flex-wrap items-center gap-[var(--spacing-md)] border-t border-[var(--st-border-divider)] pt-[var(--spacing-md)]"
+    >
       <Button
-        v-if="editingId && form.client_type === 'web'"
         type="button"
-        variant="outline"
-        :disabled="loading || disabled"
+        icon="ph:arrows-clockwise"
+        :disabled="saving"
         @click="$emit('regenerateSecret')"
       >
         重新生成密钥
       </Button>
-    </div>
-  </form>
+    </section>
+  </EditorForm>
 </template>
