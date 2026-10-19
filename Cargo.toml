@@ -2,6 +2,7 @@
 members = [
     "center",
     "connector",
+    "gateway",
 ]
 exclude = [
     "crates/protocol",
@@ -28,7 +29,7 @@ jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust
 ldap3 = { version = "0.12.1", default-features = false, features = ["gssapi"] }
 mime = "0.3.17"
 rand = "0.9.4"
-reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rsa = { version = "0.9.10", features = ["pem"] }
 sea-orm = { version = "2.0.0-rc.38", features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 serde = { version = "1.0.228", features = ["derive"] }

@@ -34,7 +34,7 @@ jobs:
             exit 1
           fi
 
-          for manifest in center/Cargo.toml connector/Cargo.toml; do
+          for manifest in center/Cargo.toml gateway/Cargo.toml connector/Cargo.toml; do
             package_version="$(sed -nE 's/^version = "([^"]+)"$/\1/p' "$manifest")"
             if [[ "$package_version" != "$version" ]]; then
               echo "$manifest version $package_version does not match tag $RELEASE_TAG" >&2
@@ -107,12 +107,45 @@ jobs:
           path: release/adscope-center-v${{ needs.validate.outputs.version }}-linux-amd64.tar
           if-no-files-found: error
 
+  gateway:
+    name: 构建 Linux Gateway
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 构建并导出 Gateway 镜像
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          IMAGE: ghcr.io/zoranner/adscope-gateway
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          docker build --platform linux/amd64 \
+            --build-arg "VERSION=$VERSION" \
+            --build-arg "REVISION=$GITHUB_SHA" \
+            --tag "$IMAGE:$VERSION" \
+            -f gateway/Dockerfile \
+            .
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$VERSION"
+          docker save --output "release/adscope-gateway-v$VERSION-linux-amd64.tar" "$IMAGE:$VERSION"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: gateway-release
+          path: release/adscope-gateway-v${{ needs.validate.outputs.version }}-linux-amd64.tar
+          if-no-files-found: error
+
   release:
     name: 创建 GitHub Release
     needs:
       - validate
       - connector
       - center
+      - gateway
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -125,6 +158,11 @@ jobs:
           name: center-release
           path: release
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: gateway-release
+          path: release
+
       - name: 生成发布清单与校验和
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -133,19 +171,23 @@ jobs:
         run: |
           set -euo pipefail
           center_archive="release/adscope-center-v$VERSION-linux-amd64.tar"
+          gateway_archive="release/adscope-gateway-v$VERSION-linux-amd64.tar"
           connector_installer="release/adscope-connector-v$VERSION-windows-x64.msi"
-          for artifact in "$center_archive" "$connector_installer"; do
+          for artifact in "$center_archive" "$gateway_archive" "$connector_installer"; do
             test -f "$artifact" || { echo "Missing release artifact: $artifact" >&2; exit 1; }
           done
 
           center_checksum="$(sha256sum "$center_archive" | awk '{print $1}')"
+          gateway_checksum="$(sha256sum "$gateway_archive" | awk '{print $1}')"
           connector_checksum="$(sha256sum "$connector_installer" | awk '{print $1}')"
           jq -n \
             --arg version "$VERSION" \
             --arg revision "$REVISION" \
             --arg center_checksum "$center_checksum" \
+            --arg gateway_checksum "$gateway_checksum" \
             --arg connector_checksum "$connector_checksum" \
             --arg center_name "$(basename "$center_archive")" \
+            --arg gateway_name "$(basename "$gateway_archive")" \
             --arg connector_name "$(basename "$connector_installer")" \
             '{
               version: $version,
@@ -153,11 +195,13 @@ jobs:
               target: "windows-x86_64,linux-amd64",
               artifacts: [
                 { name: $center_name, sha256: $center_checksum },
+                { name: $gateway_name, sha256: $gateway_checksum },
                 { name: $connector_name, sha256: $connector_checksum }
               ]
             }' > release/manifest.json
-          printf '%s  %s\n%s  %s\n' \
+          printf '%s  %s\n%s  %s\n%s  %s\n' \
             "$center_checksum" "$(basename "$center_archive")" \
+            "$gateway_checksum" "$(basename "$gateway_archive")" \
             "$connector_checksum" "$(basename "$connector_installer")" > release/SHA256SUMS
 
       - name: 创建或更新 GitHub Release
