@@ -1,12 +1,13 @@
 use adscope_protocol::{Group, OrganizationalUnit, PasswordChangeResponse, User, UserStatus};
 use adscope_store::{
+    DEFAULT_EMPLOYEE_ID_ATTRIBUTE, DEFAULT_MANAGED_GROUP_ID_ATTRIBUTE, DeleteOuOutcome,
     DomainPatch, DomainRecord, UserCreateInput, UserCredentialInput, UserDirectoryPatch,
-    UserListFilter,
+    UserListFilter, attribute_or_default,
 };
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     routing::{get, patch, post, put},
 };
 use axum_extra::extract::cookie::Cookie;
@@ -28,11 +29,15 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/admin/domains/{domain_id}", patch(update_domain))
         .route("/admin/ous/tree", get(list_organizational_units))
         .route("/admin/ous", post(create_organizational_unit))
-        .route("/admin/ous/{ou_id}", patch(update_organizational_unit))
+        .route(
+            "/admin/ous/{ou_id}",
+            patch(update_organizational_unit).delete(delete_organizational_unit),
+        )
         .route("/admin/users", get(list_users).post(create_user))
+        .route("/admin/users/next-employee-id", get(next_employee_id))
         .route(
             "/admin/users/{employee_id}",
-            get(get_user).patch(update_user),
+            get(get_user).patch(update_user).delete(delete_user),
         )
         .route("/admin/users/{employee_id}/disable", post(disable_user))
         .route("/admin/users/{employee_id}/enable", post(enable_user))
@@ -66,7 +71,10 @@ async fn list_domains(
         .map(DomainResponse::from)
         .collect();
 
-    Ok(Json(DomainListResponse { domains }))
+    Ok(Json(DomainListResponse {
+        domains,
+        attribute_defaults: DomainAttributeDefaults::canonical(),
+    }))
 }
 
 async fn create_domain(
@@ -85,8 +93,14 @@ async fn create_domain(
             mirror_root_dn: request.mirror_root_dn,
             quarantine_ou_dn: request.quarantine_ou_dn,
             upn_suffix: request.upn_suffix,
-            employee_id_attribute: request.employee_id_attribute,
-            managed_group_id_attribute: request.managed_group_id_attribute,
+            employee_id_attribute: attribute_or_default(
+                request.employee_id_attribute,
+                DEFAULT_EMPLOYEE_ID_ATTRIBUTE,
+            ),
+            managed_group_id_attribute: attribute_or_default(
+                request.managed_group_id_attribute,
+                DEFAULT_MANAGED_GROUP_ID_ATTRIBUTE,
+            ),
             connector_key_hash: connector_key_hash(&connector_key),
             applied_directory_revision: 0,
             applied_credential_revision: 0,
@@ -116,8 +130,12 @@ async fn update_domain(
                 mirror_root_dn: Some(request.mirror_root_dn),
                 quarantine_ou_dn: Some(request.quarantine_ou_dn),
                 upn_suffix: Some(request.upn_suffix),
-                employee_id_attribute: Some(request.employee_id_attribute),
-                managed_group_id_attribute: Some(request.managed_group_id_attribute),
+                employee_id_attribute: request
+                    .employee_id_attribute
+                    .map(|value| attribute_or_default(Some(value), DEFAULT_EMPLOYEE_ID_ATTRIBUTE)),
+                managed_group_id_attribute: request.managed_group_id_attribute.map(|value| {
+                    attribute_or_default(Some(value), DEFAULT_MANAGED_GROUP_ID_ATTRIBUTE)
+                }),
                 connector_key_hash: Some(connector_key_hash(&connector_key)),
             },
         )
@@ -163,6 +181,24 @@ async fn update_organizational_unit(
     write_organizational_unit(&state, ou_id, request.name, request.parent_id).await
 }
 
+async fn delete_organizational_unit(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(ou_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    authorize_management_write(&headers, &state)?;
+    match state
+        .repository
+        .delete_ou(&ou_id)
+        .await
+        .map_err(|_| ApiError::Persistence)?
+    {
+        DeleteOuOutcome::Deleted => Ok(StatusCode::NO_CONTENT),
+        DeleteOuOutcome::NotFound => Err(ApiError::NotFound),
+        DeleteOuOutcome::NotEmpty => Err(ApiError::Conflict),
+    }
+}
+
 async fn list_users(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -186,16 +222,34 @@ async fn list_users(
     Ok(Json(UserListResponse { users }))
 }
 
+async fn next_employee_id(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<NextEmployeeIdResponse>, ApiError> {
+    authorize_management(&headers, &state)?;
+    let employee_id = state
+        .repository
+        .preview_next_employee_id()
+        .await
+        .map_err(|_| ApiError::Persistence)?;
+    Ok(Json(NextEmployeeIdResponse { employee_id }))
+}
+
 async fn create_user(
     headers: HeaderMap,
     State(state): State<AppState>,
     Json(request): Json<CreateUserRequest>,
 ) -> Result<Json<UserCreateResponse>, ApiError> {
     authorize_management_write(&headers, &state)?;
+    let employee_id = normalize_employee_id(request.employee_id);
+    let (display_name, surname, given_name) =
+        resolve_person_name(request.display_name, request.surname, request.given_name);
     let user_patch = UserDirectoryPatch {
-        employee_id: request.employee_id.clone(),
+        employee_id: employee_id.clone(),
         username: request.username,
-        display_name: request.display_name,
+        display_name,
+        surname,
+        given_name,
         email: request.email,
         mobile: request.mobile,
         telephone: request.telephone,
@@ -203,7 +257,7 @@ async fn create_user(
         status: request.status,
     };
     let credential = UserCredentialInput {
-        employee_id: request.employee_id,
+        employee_id,
         password_ciphertext: state
             .password_encryption
             .seal(&request.initial_password)
@@ -246,6 +300,21 @@ async fn get_user(
     Ok(Json(UserProfileResponse::from(user)))
 }
 
+async fn delete_user(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(employee_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    authorize_management_write(&headers, &state)?;
+    state
+        .repository
+        .delete_user(&employee_id)
+        .await
+        .map_err(|_| ApiError::Persistence)?
+        .map(|_| StatusCode::NO_CONTENT)
+        .ok_or(ApiError::NotFound)
+}
+
 async fn update_user(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -253,6 +322,8 @@ async fn update_user(
     Json(request): Json<UpdateUserDirectoryRequest>,
 ) -> Result<Json<UserDirectoryUpdateResponse>, ApiError> {
     authorize_management_write(&headers, &state)?;
+    let (display_name, surname, given_name) =
+        resolve_person_name(request.display_name, request.surname, request.given_name);
     let directory_revision = state
         .repository
         .upsert_directory(
@@ -260,7 +331,9 @@ async fn update_user(
             vec![UserDirectoryPatch {
                 employee_id: employee_id.clone(),
                 username: request.username,
-                display_name: request.display_name,
+                display_name,
+                surname,
+                given_name,
                 email: request.email,
                 mobile: request.mobile,
                 telephone: request.telephone,
@@ -571,6 +644,8 @@ fn user_patch_with_status(user: User, status: UserStatus) -> UserDirectoryPatch 
         employee_id: user.employee_id,
         username: user.username,
         display_name: user.display_name,
+        surname: user.surname,
+        given_name: user.given_name,
         email: user.email,
         mobile: user.mobile,
         telephone: user.telephone,
@@ -654,6 +729,23 @@ impl From<DomainRecord> for DomainResponse {
 #[derive(Debug, Serialize)]
 struct DomainListResponse {
     domains: Vec<DomainResponse>,
+    /// 属性字段的默认值：表单用它做占位，留空时后端按这里回填。
+    attribute_defaults: DomainAttributeDefaults,
+}
+
+#[derive(Debug, Serialize)]
+struct DomainAttributeDefaults {
+    employee_id_attribute: String,
+    managed_group_id_attribute: String,
+}
+
+impl DomainAttributeDefaults {
+    fn canonical() -> Self {
+        Self {
+            employee_id_attribute: DEFAULT_EMPLOYEE_ID_ATTRIBUTE.to_string(),
+            managed_group_id_attribute: DEFAULT_MANAGED_GROUP_ID_ATTRIBUTE.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -664,6 +756,41 @@ struct DomainMutationResponse {
 
 fn generate_connector_key() -> String {
     hex::encode(XChaCha20Poly1305::generate_key(&mut OsRng))
+}
+
+/// 工号未填写（或只填空白）时留空，由仓库在创建事务内自动编号。
+fn normalize_employee_id(employee_id: Option<String>) -> String {
+    employee_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+/// 姓名三件套：姓/名缺失时用显示名与空串兜底，显示名留空时由姓 + 名拼出。
+fn resolve_person_name(
+    display_name: Option<String>,
+    surname: Option<String>,
+    given_name: Option<String>,
+) -> (String, String, String) {
+    let trimmed = |value: Option<String>| value.unwrap_or_default().trim().to_string();
+    let display_name = trimmed(display_name);
+    let mut surname = trimmed(surname);
+    let given_name = trimmed(given_name);
+
+    if surname.is_empty() {
+        surname = if display_name.is_empty() {
+            String::new()
+        } else {
+            display_name.clone()
+        };
+    }
+    let display_name = if display_name.is_empty() {
+        format!("{surname}{given_name}")
+    } else {
+        display_name
+    };
+
+    (display_name, surname, given_name)
 }
 
 fn domain_mutation_response(
@@ -690,8 +817,10 @@ struct CreateDomainRequest {
     mirror_root_dn: String,
     quarantine_ou_dn: String,
     upn_suffix: String,
-    employee_id_attribute: String,
-    managed_group_id_attribute: String,
+    #[serde(default)]
+    employee_id_attribute: Option<String>,
+    #[serde(default)]
+    managed_group_id_attribute: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -702,8 +831,10 @@ struct DomainPatchRequest {
     mirror_root_dn: String,
     quarantine_ou_dn: String,
     upn_suffix: String,
-    employee_id_attribute: String,
-    managed_group_id_attribute: String,
+    #[serde(default)]
+    employee_id_attribute: Option<String>,
+    #[serde(default)]
+    managed_group_id_attribute: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -735,6 +866,8 @@ struct UserProfileResponse {
     employee_id: String,
     username: String,
     display_name: String,
+    surname: String,
+    given_name: String,
     email: Option<String>,
     mobile: Option<String>,
     telephone: Option<String>,
@@ -748,6 +881,8 @@ impl From<User> for UserProfileResponse {
             employee_id: user.employee_id,
             username: user.username,
             display_name: user.display_name,
+            surname: user.surname,
+            given_name: user.given_name,
             email: user.email,
             mobile: user.mobile,
             telephone: user.telephone,
@@ -770,11 +905,26 @@ struct UserListResponse {
     users: Vec<UserProfileResponse>,
 }
 
+#[derive(Debug, Serialize)]
+struct NextEmployeeIdResponse {
+    employee_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateUserRequest {
-    employee_id: String,
+    /// 留空时由仓库在创建事务内自动分配数字工号。
+    #[serde(default)]
+    employee_id: Option<String>,
     username: String,
-    display_name: String,
+    /// 留空时由姓 + 名拼出来。
+    #[serde(default)]
+    display_name: Option<String>,
+    /// 姓写 AD 的 sn；留空时回落到显示名。
+    #[serde(default)]
+    surname: Option<String>,
+    /// 名写 AD 的 givenName。
+    #[serde(default)]
+    given_name: Option<String>,
     email: Option<String>,
     mobile: Option<String>,
     telephone: Option<String>,
@@ -786,7 +936,12 @@ struct CreateUserRequest {
 #[derive(Debug, Deserialize)]
 struct UpdateUserDirectoryRequest {
     username: String,
-    display_name: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    surname: Option<String>,
+    #[serde(default)]
+    given_name: Option<String>,
     email: Option<String>,
     mobile: Option<String>,
     telephone: Option<String>,

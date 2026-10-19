@@ -1,4 +1,4 @@
-use adscope_center::{AppState, build_router, build_router_with_web_root};
+use adscope_center::{AppState, build_router};
 use adscope_protocol::{
     ConnectorConfirmRequest, ConnectorSyncRequest, ConnectorSyncResponse, PasswordChangeRequest,
     SyncChannel, UserLoginRequest, UserStatus,
@@ -632,6 +632,67 @@ async fn creating_domain_generates_one_time_connector_key() {
 }
 
 #[tokio::test]
+async fn domain_attribute_fields_fall_back_to_server_defaults() {
+    let TestApp { app, repository } = test_app().await;
+
+    let created = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/domains",
+        &json!({
+            "id": "domain-default-attributes",
+            "name": "Default Attributes Domain",
+            "enabled": true,
+            "mirror_root_dn": "OU=Mirror,DC=defaults,DC=example,DC=com",
+            "quarantine_ou_dn": "OU=Quarantine,DC=defaults,DC=example,DC=com",
+            "upn_suffix": "defaults.example.com"
+        }),
+    )
+    .await;
+    assert_eq!(created["domain"]["employee_id_attribute"], "employeeID");
+    assert_eq!(
+        created["domain"]["managed_group_id_attribute"],
+        "adminDescription"
+    );
+
+    let stored = repository
+        .get_domain("domain-default-attributes")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.employee_id_attribute, "employeeID");
+    assert_eq!(stored.managed_group_id_attribute, "adminDescription");
+
+    // 空白字符串按未填写处理，同样回落到默认值
+    let patched = admin_json(
+        &app,
+        Method::PATCH,
+        "/api/admin/domains/domain-default-attributes",
+        &json!({
+            "name": "Default Attributes Domain",
+            "enabled": true,
+            "mirror_root_dn": "OU=Mirror,DC=defaults,DC=example,DC=com",
+            "quarantine_ou_dn": "OU=Quarantine,DC=defaults,DC=example,DC=com",
+            "upn_suffix": "defaults.example.com",
+            "employee_id_attribute": "   "
+        }),
+    )
+    .await;
+    assert_eq!(patched["domain"]["employee_id_attribute"], "employeeID");
+
+    // 列表接口一并把默认值交给前端做占位
+    let domains = admin_empty(&app, Method::GET, "/api/admin/domains").await;
+    assert_eq!(
+        domains["attribute_defaults"]["employee_id_attribute"],
+        "employeeID"
+    );
+    assert_eq!(
+        domains["attribute_defaults"]["managed_group_id_attribute"],
+        "adminDescription"
+    );
+}
+
+#[tokio::test]
 async fn creating_domain_rejects_client_supplied_connector_key_fields() {
     let TestApp { app, repository } = test_app().await;
 
@@ -862,55 +923,15 @@ async fn updating_missing_domain_returns_not_found() {
 }
 
 #[tokio::test]
-async fn web_static_routes_do_not_capture_unknown_api_paths() {
-    let repository = Repository::connect("sqlite::memory:").await.unwrap();
-    repository.initialize_schema().await.unwrap();
-    repository.seed_domain(domain(true)).await.unwrap();
-    let web_root = test_web_root();
-    std::fs::create_dir_all(web_root.join("_nuxt")).unwrap();
-    std::fs::write(
-        web_root.join("index.html"),
-        "<main>Adscope Web Shell</main>",
-    )
-    .unwrap();
-    std::fs::write(
-        web_root.join("_nuxt").join("app.js"),
-        "console.log('adscope')",
-    )
-    .unwrap();
-    let app = build_router_with_web_root(
-        AppState::new_for_tests(
-            repository,
-            TEST_ENCRYPTION_KEY,
-            TEST_OIDC_ISSUER,
-            TEST_OIDC_PRIVATE_KEY,
-        ),
-        web_root.clone(),
-    );
+async fn center_does_not_serve_frontend_or_capture_unknown_api_paths() {
+    let TestApp { app, .. } = test_app().await;
 
-    let index = app
+    let root = app
         .clone()
         .oneshot(empty_request(Method::GET, "/"))
         .await
-        .expect("index response");
-    assert_eq!(index.status(), StatusCode::OK);
-    assert_body_contains(index, "Adscope Web Shell").await;
-
-    let frontend_route = app
-        .clone()
-        .oneshot(empty_request(Method::GET, "/admin/domains"))
-        .await
-        .expect("frontend route response");
-    assert_eq!(frontend_route.status(), StatusCode::OK);
-    assert_body_contains(frontend_route, "Adscope Web Shell").await;
-
-    let asset = app
-        .clone()
-        .oneshot(empty_request(Method::GET, "/_nuxt/app.js"))
-        .await
-        .expect("asset response");
-    assert_eq!(asset.status(), StatusCode::OK);
-    assert_body_contains(asset, "console.log('adscope')").await;
+        .expect("root response");
+    assert_eq!(root.status(), StatusCode::NOT_FOUND);
 
     let api_get = app
         .clone()
@@ -918,16 +939,246 @@ async fn web_static_routes_do_not_capture_unknown_api_paths() {
         .await
         .expect("api response");
     assert_eq!(api_get.status(), StatusCode::NOT_FOUND);
-    assert_body_not_contains(api_get, "Adscope Web Shell").await;
+    assert_body_not_contains(api_get, "<html").await;
 
     let api_post = app
         .oneshot(empty_request(Method::POST, "/api/not-found"))
         .await
         .expect("api response");
     assert_eq!(api_post.status(), StatusCode::NOT_FOUND);
-    assert_body_not_contains(api_post, "Adscope Web Shell").await;
+    assert_body_not_contains(api_post, "<html").await;
+}
 
-    std::fs::remove_dir_all(web_root).unwrap();
+#[tokio::test]
+async fn creating_user_composes_display_name_from_surname_and_given_name() {
+    let TestApp { app, .. } = test_app().await;
+
+    let created = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "username": "yangxinran",
+            "surname": "杨",
+            "given_name": "新冉",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(created["user"]["display_name"], "杨新冉");
+    assert_eq!(created["user"]["surname"], "杨");
+    assert_eq!(created["user"]["given_name"], "新冉");
+    assert_eq!(created["user"]["employee_id"], "100001");
+
+    // 显式填写的显示名优先于自动拼接
+    let explicit = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "username": "lisi",
+            "surname": "李",
+            "given_name": "四",
+            "display_name": "李四（测试）",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(explicit["user"]["display_name"], "李四（测试）");
+    assert_eq!(explicit["user"]["employee_id"], "100002");
+
+    let fetched = admin_empty(&app, Method::GET, "/api/admin/users/100001").await;
+    assert_eq!(fetched["surname"], "杨");
+    assert_eq!(fetched["given_name"], "新冉");
+}
+
+#[tokio::test]
+async fn creating_user_without_employee_id_assigns_sequential_numbers() {
+    let TestApp { app, .. } = test_app().await;
+
+    let created = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "username": "wangwu",
+            "display_name": "王五",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(created["user"]["employee_id"], "100001");
+    assert_eq!(created["user"]["username"], "wangwu");
+
+    // 空的工号按未填写处理，继续分配下一个编号
+    let blank_employee_id = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "employee_id": "   ",
+            "username": "zhaoliu",
+            "display_name": "赵六",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(blank_employee_id["user"]["employee_id"], "100002");
+
+    // 显式填写的工号保持不变
+    let explicit_employee_id = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "employee_id": "1002",
+            "username": "sunqi",
+            "display_name": "孙七",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(explicit_employee_id["user"]["employee_id"], "1002");
+
+    let fetched = admin_empty(&app, Method::GET, "/api/admin/users/100001").await;
+    assert_eq!(fetched["employee_id"], "100001");
+}
+
+#[tokio::test]
+async fn next_employee_id_is_previewed_without_consuming_the_sequence() {
+    let TestApp { app, .. } = test_app().await;
+
+    let first = admin_empty(&app, Method::GET, "/api/admin/users/next-employee-id").await;
+    assert_eq!(first["employee_id"], "100001");
+
+    let repeated = admin_empty(&app, Method::GET, "/api/admin/users/next-employee-id").await;
+    assert_eq!(repeated["employee_id"], "100001");
+
+    let created = admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "username": "wangwu",
+            "display_name": "王五",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+    assert_eq!(created["user"]["employee_id"], "100001");
+
+    let next = admin_empty(&app, Method::GET, "/api/admin/users/next-employee-id").await;
+    assert_eq!(next["employee_id"], "100002");
+}
+
+#[tokio::test]
+async fn deleting_user_removes_center_records_and_emits_retirement_fact() {
+    let TestApp { app, repository } = test_app().await;
+
+    admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/users",
+        &json!({
+            "employee_id": "1001",
+            "username": "zhangsan",
+            "display_name": "张三",
+            "email": null,
+            "mobile": null,
+            "telephone": null,
+            "organizational_unit_id": "ou-root",
+            "status": "active",
+            "initial_password": "InitialPass123!"
+        }),
+    )
+    .await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/users/1001")
+                .header("cookie", management_session_cookie())
+                .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("delete response");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let get_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/users/1001")
+                .header("cookie", management_session_cookie())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("get deleted user response");
+    assert_eq!(get_response.status(), StatusCode::NOT_FOUND);
+
+    assert!(
+        repository
+            .get_credential_record("1001")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let batch = repository
+        .list_directory_changed_after("domain-a", 0, false, 100)
+        .await
+        .unwrap();
+    assert_eq!(batch.deleted_users.len(), 1);
+    assert_eq!(batch.deleted_users[0].employee_id, "1001");
+
+    let delete_again = app
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/users/1001")
+                .header("cookie", management_session_cookie())
+                .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("second delete response");
+    assert_eq!(delete_again.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -986,6 +1237,90 @@ async fn admin_create_user_returns_conflict_for_duplicate_employee_id_or_usernam
         .await
         .expect("duplicate username response");
     assert_eq!(duplicate_username.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn deleting_ou_requires_empty_subtree() {
+    let TestApp { app, .. } = test_app().await;
+
+    admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/ous",
+        &json!({
+            "id": "ou-empty",
+            "name": "Empty",
+            "parent_id": null
+        }),
+    )
+    .await;
+
+    let delete_empty = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/ous/ou-empty")
+                .header("cookie", management_session_cookie())
+                .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("delete empty OU response");
+    assert_eq!(delete_empty.status(), StatusCode::NO_CONTENT);
+
+    admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/ous",
+        &json!({
+            "id": "ou-parent",
+            "name": "Parent",
+            "parent_id": null
+        }),
+    )
+    .await;
+    admin_json(
+        &app,
+        Method::POST,
+        "/api/admin/ous",
+        &json!({
+            "id": "ou-child",
+            "name": "Child",
+            "parent_id": "ou-parent"
+        }),
+    )
+    .await;
+
+    let delete_parent = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/ous/ou-parent")
+                .header("cookie", management_session_cookie())
+                .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("delete non-empty OU response");
+    assert_eq!(delete_parent.status(), StatusCode::CONFLICT);
+
+    let delete_missing = app
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/ous/missing")
+                .header("cookie", management_session_cookie())
+                .header("x-adscope-csrf-token", MANAGEMENT_CSRF_TOKEN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("delete missing OU response");
+    assert_eq!(delete_missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -2285,15 +2620,6 @@ fn method_json_request<T: serde::Serialize>(method: Method, uri: &str, value: &T
         .unwrap()
 }
 
-async fn assert_body_contains(response: Response<Body>, expected: &str) {
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body = String::from_utf8(body.to_vec()).unwrap();
-    assert!(
-        body.contains(expected),
-        "body did not contain {expected}: {body}"
-    );
-}
-
 async fn assert_body_not_contains(response: Response<Body>, unexpected: &str) {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body = String::from_utf8(body.to_vec()).unwrap();
@@ -2301,14 +2627,6 @@ async fn assert_body_not_contains(response: Response<Body>, unexpected: &str) {
         !body.contains(unexpected),
         "body contained {unexpected}: {body}"
     );
-}
-
-fn test_web_root() -> std::path::PathBuf {
-    let suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("adscope-web-test-{suffix}"))
 }
 
 async fn seed_user(repository: &Repository, employee_id: &str, email: &str) -> anyhow::Result<u64> {
@@ -2333,6 +2651,8 @@ async fn seed_user_with_username(
                 employee_id: employee_id.to_string(),
                 username: username.to_string(),
                 display_name: format!("User {employee_id}"),
+                surname: format!("User {employee_id}"),
+                given_name: String::new(),
                 email: Some(email.to_string()),
                 mobile: Some("13800000000".to_string()),
                 telephone: Some("021-10000000".to_string()),
@@ -2383,7 +2703,6 @@ fn clear_server_env() {
     unsafe {
         std::env::remove_var("ADSS_BIND_ADDR");
         std::env::remove_var("ADSS_DATABASE_URL");
-        std::env::remove_var("ADSS_WEB_ROOT");
         std::env::remove_var("ADSS_PASSWORD_ENCRYPTION_KEY");
         std::env::remove_var("ADSS_PASSWORD_HASH_PROVIDER");
         std::env::remove_var("ADSS_USER_SESSION_KEY");
@@ -2394,7 +2713,6 @@ fn clear_server_env() {
         std::env::remove_var("ADSS_OIDC_ALLOW_INSECURE_WEB_LOOPBACK_REDIRECTS");
         std::env::remove_var("ADSCOPE_BIND_ADDR");
         std::env::remove_var("ADSCOPE_DATABASE_URL");
-        std::env::remove_var("ADSCOPE_WEB_ROOT");
         std::env::remove_var("ADSCOPE_OIDC_PRIVATE_KEY_FILE");
         std::env::remove_var("PASSWORD_ENCRYPTION_KEY");
         std::env::remove_var("PASSWORD_HASH_PROVIDER");
@@ -2440,6 +2758,8 @@ fn user_patch(employee_id: &str, email: &str) -> UserDirectoryPatch {
         employee_id: employee_id.to_string(),
         username: employee_id.to_string(),
         display_name: employee_id.to_string(),
+        surname: employee_id.to_string(),
+        given_name: String::new(),
         email: Some(email.to_string()),
         mobile: None,
         telephone: None,
