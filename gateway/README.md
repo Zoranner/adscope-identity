@@ -28,6 +28,8 @@ docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .
 
 镜像内包含 `center/web` 的静态构建产物和网关二进制。Center 镜像不再包含前端。
 
+`gateway/web` 是仓库内的发布输入。修改 `center/web` 后必须重新生成并提交；发布流水线不会安装前端依赖或在 CI 中构建前端。
+
 ## 环境变量
 
 | 变量 | 必填 | 说明 |

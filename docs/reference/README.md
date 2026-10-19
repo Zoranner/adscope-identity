@@ -49,7 +49,7 @@ bun install --frozen-lockfile
 bun run build
 ```
 
-网关镜像会构建并托管 `center/web`。本地联调时把 `WEB_ROOT` 指向 `center/web/.output/public`，配置 `CENTER_URL`、TLS 证书和私钥后运行 `cargo run -p adscope-gateway`；完整变量见 [网关说明](../../gateway/README.md)。普通用户入口为 `/login`，管理入口为 `/admin`，都由网关提供。
+网关镜像托管 `center/web` 的静态构建产物；修改前端后需要重新构建并提交 `gateway/web`，发布流水线不现场构建前端。本地联调时把 `WEB_ROOT` 指向 `center/web/.output/public`，配置 `CENTER_URL`、TLS 证书和私钥后运行 `cargo run -p adscope-gateway`；完整变量见 [网关说明](../../gateway/README.md)。普通用户入口为 `/login`，管理入口为 `/admin`，都由网关提供。
 
 Connector 通过 MSI 安装并注册 Windows 服务。安装示例：
 
