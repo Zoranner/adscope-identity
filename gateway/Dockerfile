@@ -1,10 +1,3 @@
-FROM oven/bun:1.3.14-debian AS web-build
-WORKDIR /src/center/web
-COPY center/web/package.json center/web/bun.lock ./
-RUN bun install --frozen-lockfile
-COPY center/web/ ./
-RUN bun run build
-
 FROM rust:1.93.1-bookworm AS rust-build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
@@ -24,7 +17,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /app adscope
 COPY --from=rust-build /src/target/release/adscope-gateway /app/adscope-gateway
-COPY --from=web-build /src/center/web/.output/public/ /app/web/
+COPY gateway/web/ /app/web/
 ENV LISTEN_ADDR=0.0.0.0:8443 \
     WEB_ROOT=/app/web
 WORKDIR /app

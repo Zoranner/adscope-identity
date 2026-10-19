@@ -9,7 +9,18 @@
 
 ## 构建
 
-在仓库根目录执行：
+先在 `center/web` 构建静态前端，再把产物放进 `gateway/web`：
+
+```text
+cd center/web
+bun install --frozen-lockfile
+bun run build
+mkdir -p ../../gateway/web
+cp -R .output/public/. ../../gateway/web/
+cd ../..
+```
+
+然后在仓库根目录执行：
 
 ```text
 docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .

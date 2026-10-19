@@ -129,10 +129,16 @@ Center 只发布一个活动公钥，不提供新旧密钥并行验证窗口。�
 `adscope-gateway` 是自研 Rust 服务，镜像内同时包含网关二进制和 Nuxt 静态前端。构建：
 
 ```text
+cd center/web
+bun install --frozen-lockfile
+bun run build
+mkdir -p ../../gateway/web
+cp -R .output/public/. ../../gateway/web/
+cd ../..
 docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .
 ```
 
-镜像构建时会执行 `center/web` 的 `bun install --frozen-lockfile` 和 `bun run build`，产物复制到 `/app/web`。
+静态前端产物先复制到 `gateway/web`，镜像构建时直接复制到 `/app/web`。
 
 网关变量：
 

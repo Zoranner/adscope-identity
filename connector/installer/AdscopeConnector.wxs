@@ -71,8 +71,8 @@
       HideTarget="yes" />
 
     <InstallExecuteSequence>
-      <Custom Action="SetConnectorConfigCommand" Before="WriteConnectorConfig">NOT Installed</Custom>
-      <Custom Action="WriteConnectorConfig" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="SetConnectorConfigCommand" Before="WriteConnectorConfig" Condition="NOT Installed" />
+      <Custom Action="WriteConnectorConfig" After="InstallFiles" Condition="NOT Installed" />
     </InstallExecuteSequence>
   </Package>
 </Wix>
