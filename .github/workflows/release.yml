@@ -114,22 +114,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Build static frontend
-        working-directory: center/web
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm bun.lock
-          bun install
-          bun run build
-          mkdir -p ../../gateway/web
-          cp -R .output/public/. ../../gateway/web/
-
       - name: Build and export Gateway image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
