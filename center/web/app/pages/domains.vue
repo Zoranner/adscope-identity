@@ -5,9 +5,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="credential-screen">
-    <section class="credential-card">
-      <h1>正在进入域管理</h1>
-    </section>
-  </main>
+  <div role="status" class="sr-only">正在进入域管理</div>
 </template>
