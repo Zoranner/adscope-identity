@@ -15,7 +15,7 @@ docker network create adscope
 ```
 
 Center 和 Gateway 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/zoranner/adscope-center:0.2.1` 和 `ghcr.io/zoranner/adscope-gateway:0.2.1`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/zoranner/adscope-center:0.2.0` 和 `ghcr.io/zoranner/adscope-gateway:0.2.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -135,7 +135,7 @@ bun run build
 mkdir -p ../../gateway/web
 cp -R .output/public/. ../../gateway/web/
 cd ../..
-docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.1 .
+docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .
 ```
 
 静态前端产物先复制到 `gateway/web`，镜像构建时直接复制到 `/app/web`。

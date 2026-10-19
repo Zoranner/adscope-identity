@@ -7,7 +7,7 @@ Connector 主机必须加入目标 AD 域。配置 `DOMAIN_CONTROLLER_LDAP_URL=l
 安装时需提供 Center 地址、域标识、Connector key 和域控制器 LDAP 地址。MSI 将配置写入 `%ProgramData%\Adscope Connector\.env`，程序安装在 `%ProgramFiles%\Adscope Connector`，服务会直接启动：
 
 ```powershell
-msiexec /i .\adscope-connector-v0.2.1-windows-x64.msi `
+msiexec /i .\adscope-connector-v0.2.0-windows-x64.msi `
   CENTER_URL=https://center.example.com `
   DIRECTORY_DOMAIN_ID=domain-a `
   CONNECTOR_ACCESS_KEY=<connector-key> `

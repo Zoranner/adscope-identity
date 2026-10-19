@@ -8,7 +8,7 @@ COPY gateway/ gateway/
 RUN cargo build --release --locked -p adscope-gateway
 
 FROM debian:bookworm-slim
-ARG VERSION=0.2.1
+ARG VERSION=0.2.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
