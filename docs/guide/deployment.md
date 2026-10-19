@@ -15,7 +15,7 @@ docker network create adscope
 ```
 
 Center 和 Gateway 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/zoranner/adscope-center:0.1.0` 和 `ghcr.io/zoranner/adscope-gateway:0.1.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/zoranner/adscope-center:0.2.0` 和 `ghcr.io/zoranner/adscope-gateway:0.2.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -129,7 +129,7 @@ Center 只发布一个活动公钥，不提供新旧密钥并行验证窗口。�
 `adscope-gateway` 是自研 Rust 服务，镜像内同时包含网关二进制和 Nuxt 静态前端。构建：
 
 ```text
-docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.1.0 .
+docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .
 ```
 
 镜像构建时会执行 `center/web` 的 `bun install --frozen-lockfile` 和 `bun run build`，产物复制到 `/app/web`。
