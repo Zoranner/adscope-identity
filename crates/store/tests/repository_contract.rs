@@ -1,7 +1,7 @@
 use adscope_protocol::{Group, OrganizationalUnit, UserStatus};
 use adscope_store::{
-    DomainPatch, DomainRecord, Repository, UserContactPatch, UserCreateInput, UserCredentialInput,
-    UserDirectoryPatch, UserListFilter,
+    DeleteOuOutcome, DomainPatch, DomainRecord, Repository, UserContactPatch, UserCreateInput,
+    UserCredentialInput, UserDirectoryPatch, UserListFilter,
 };
 use sea_orm::{ConnectionTrait, Database};
 use std::{
@@ -26,6 +26,8 @@ async fn repository_updates_directory_objects_in_one_revision() {
                 employee_id: "1001".to_string(),
                 username: "zhangsan".to_string(),
                 display_name: "张三".to_string(),
+                surname: "张三".to_string(),
+                given_name: String::new(),
                 email: Some("zhangsan@example.com".to_string()),
                 mobile: None,
                 telephone: None,
@@ -181,6 +183,159 @@ async fn create_user_with_initial_credential_returns_user_and_both_revisions() {
             .unwrap()
             .changed_revision,
         1
+    );
+}
+
+#[tokio::test]
+async fn creating_users_without_employee_id_assigns_sequential_numbers() {
+    let repository = sqlite_repository().await;
+
+    let (first, _, _) = repository
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: user_patch_with_username("", "first", "first@example.com"),
+            credential: UserCredentialInput {
+                employee_id: String::new(),
+                password_ciphertext: "ciphertext".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    let (second, _, _) = repository
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: user_patch_with_username("", "second", "second@example.com"),
+            credential: UserCredentialInput {
+                employee_id: String::new(),
+                password_ciphertext: "ciphertext".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(first.employee_id, "100001");
+    assert_eq!(second.employee_id, "100002");
+}
+
+#[tokio::test]
+async fn deleting_user_removes_credential_group_membership_and_emits_tombstone() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: user_patch("1001", "zhangsan@example.com"),
+            credential: UserCredentialInput {
+                employee_id: "1001".to_string(),
+                password_ciphertext: "ciphertext".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    repository
+        .upsert_directory(
+            vec![OrganizationalUnit {
+                id: "ou-rd".to_string(),
+                name: "研发部".to_string(),
+                parent_id: None,
+                changed_revision: 0,
+            }],
+            Vec::new(),
+            vec![Group {
+                id: "dev".to_string(),
+                name: "Developers".to_string(),
+                organizational_unit_id: "ou-rd".to_string(),
+                member_employee_ids: vec!["1001".to_string()],
+                changed_revision: 0,
+            }],
+        )
+        .await
+        .unwrap();
+
+    let revision = repository.delete_user("1001").await.unwrap().unwrap();
+
+    assert!(repository.get_user("1001").await.unwrap().is_none());
+    assert!(
+        repository
+            .get_credential_record("1001")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let groups = repository.list_groups().await.unwrap();
+    assert!(groups[0].member_employee_ids.is_empty());
+    assert_eq!(groups[0].changed_revision, revision);
+
+    let batch = repository
+        .list_directory_changed_after("domain-a", 0, false, 100)
+        .await
+        .unwrap();
+    assert_eq!(batch.deleted_users.len(), 1);
+    assert_eq!(batch.deleted_users[0].employee_id, "1001");
+    assert_eq!(batch.deleted_users[0].changed_revision, revision);
+    assert!(repository.delete_user("1001").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn deleting_ou_rejects_non_empty_and_deletes_empty() {
+    let repository = sqlite_repository().await;
+
+    repository
+        .upsert_directory(
+            vec![
+                OrganizationalUnit {
+                    id: "ou-root".to_string(),
+                    name: "Root".to_string(),
+                    parent_id: None,
+                    changed_revision: 0,
+                },
+                OrganizationalUnit {
+                    id: "ou-child".to_string(),
+                    name: "Child".to_string(),
+                    parent_id: Some("ou-root".to_string()),
+                    changed_revision: 0,
+                },
+            ],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        repository.delete_ou("ou-root").await.unwrap(),
+        DeleteOuOutcome::NotEmpty
+    );
+    assert_eq!(
+        repository.delete_ou("missing").await.unwrap(),
+        DeleteOuOutcome::NotFound
+    );
+    assert_eq!(
+        repository.delete_ou("ou-child").await.unwrap(),
+        DeleteOuOutcome::Deleted
+    );
+
+    let mut patch = user_patch("1001", "zhangsan@example.com");
+    patch.organizational_unit_id = "ou-root".to_string();
+    repository
+        .create_user_with_initial_credential(UserCreateInput {
+            directory: patch,
+            credential: UserCredentialInput {
+                employee_id: "1001".to_string(),
+                password_ciphertext: "ciphertext".to_string(),
+                password_verifier: "verifier".to_string(),
+            },
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        repository.delete_ou("ou-root").await.unwrap(),
+        DeleteOuOutcome::NotEmpty
     );
 }
 
@@ -1017,6 +1172,8 @@ fn user_patch_with_username(employee_id: &str, username: &str, email: &str) -> U
         employee_id: employee_id.to_string(),
         username: username.to_string(),
         display_name: employee_id.to_string(),
+        surname: employee_id.to_string(),
+        given_name: String::new(),
         email: Some(email.to_string()),
         mobile: None,
         telephone: None,

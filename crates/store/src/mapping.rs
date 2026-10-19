@@ -81,6 +81,8 @@ impl TryFrom<entities::user::Model> for User {
             employee_id: model.employee_id,
             username: model.username,
             display_name: model.display_name,
+            surname: model.surname,
+            given_name: model.given_name,
             email: model.email,
             mobile: model.mobile,
             telephone: model.telephone,

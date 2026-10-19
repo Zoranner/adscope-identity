@@ -2569,6 +2569,8 @@ async fn seed_user_profile(
                 employee_id: "1001".to_string(),
                 username: "test-user".to_string(),
                 display_name: "Test User".to_string(),
+                surname: "Test".to_string(),
+                given_name: "User".to_string(),
                 email: email.map(str::to_string),
                 mobile: mobile.map(str::to_string),
                 telephone: telephone.map(str::to_string),

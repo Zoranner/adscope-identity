@@ -23,11 +23,19 @@ pub struct User {
     pub employee_id: String,
     pub username: String,
     pub display_name: String,
+    pub surname: String,
+    pub given_name: String,
     pub email: Option<String>,
     pub mobile: Option<String>,
     pub telephone: Option<String>,
     pub organizational_unit_id: String,
     pub status: UserStatus,
+    pub changed_revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeletedUser {
+    pub employee_id: String,
     pub changed_revision: u64,
 }
 
@@ -71,6 +79,8 @@ pub struct DirectoryBatch {
     pub organizational_unit_dns: BTreeMap<String, String>,
     pub users: Vec<User>,
     pub groups: Vec<Group>,
+    #[serde(default)]
+    pub deleted_users: Vec<DeletedUser>,
     pub has_more: bool,
 }
 
@@ -193,6 +203,7 @@ pub enum DirectoryOperationKind {
     EnsureGroupMembers,
     DisableUser,
     MoveUserToQuarantine,
+    RetireUser,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -318,6 +329,27 @@ impl DirectoryPlan {
                 DirectoryOperation::new(
                     DirectoryOperationKind::MoveUserToQuarantine,
                     user.employee_id.clone(),
+                )
+                .with_target(DirectoryOperationTarget::QuarantineDn(
+                    domain.quarantine_ou_dn.clone(),
+                )),
+            );
+        }
+
+        let current_user_ids: std::collections::BTreeSet<&str> = batch
+            .users
+            .iter()
+            .map(|user| user.employee_id.as_str())
+            .collect();
+        for deleted_user in batch
+            .deleted_users
+            .iter()
+            .filter(|user| !current_user_ids.contains(user.employee_id.as_str()))
+        {
+            operations.push(
+                DirectoryOperation::new(
+                    DirectoryOperationKind::RetireUser,
+                    deleted_user.employee_id.clone(),
                 )
                 .with_target(DirectoryOperationTarget::QuarantineDn(
                     domain.quarantine_ou_dn.clone(),

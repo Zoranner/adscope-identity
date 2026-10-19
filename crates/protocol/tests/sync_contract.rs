@@ -1,5 +1,5 @@
 use adscope_protocol::{
-    ConnectorConfirmRequest, CredentialBatch, CredentialEntry, DirectoryBatch,
+    ConnectorConfirmRequest, CredentialBatch, CredentialEntry, DeletedUser, DirectoryBatch,
     DirectoryOperationKind, DirectoryOperationTarget, DirectoryPlan, DirectoryPlanError,
     DomainDirectoryConfig, Group, OrganizationalUnit, SyncChannel, User, UserStatus,
 };
@@ -25,6 +25,8 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),
             display_name: "张三".to_string(),
+            surname: "张".to_string(),
+            given_name: "三".to_string(),
             email: Some("zhangsan@example.com".to_string()),
             mobile: Some("13800000000".to_string()),
             telephone: None,
@@ -39,6 +41,7 @@ fn directory_plan_orders_current_objects_by_ad_dependencies() {
             member_employee_ids: vec!["1001".to_string()],
             changed_revision: 7,
         }],
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -115,6 +118,7 @@ fn directory_plan_orders_parent_ou_before_child_ou() {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -156,6 +160,7 @@ fn directory_plan_rejects_duplicate_ou_ids() {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -190,6 +195,7 @@ fn directory_plan_rejects_cyclic_ou_hierarchy() {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -213,6 +219,8 @@ fn disabled_users_are_ensured_then_disabled_and_moved_to_quarantine() {
             employee_id: "1002".to_string(),
             username: "lisi".to_string(),
             display_name: "李四".to_string(),
+            surname: "李".to_string(),
+            given_name: "四".to_string(),
             email: None,
             mobile: None,
             telephone: None,
@@ -221,6 +229,7 @@ fn disabled_users_are_ensured_then_disabled_and_moved_to_quarantine() {
             changed_revision: 9,
         }],
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -246,6 +255,36 @@ fn disabled_users_are_ensured_then_disabled_and_moved_to_quarantine() {
     );
     assert_eq!(
         plan.operations[2].target,
+        Some(DirectoryOperationTarget::QuarantineDn(
+            config.quarantine_ou_dn
+        ))
+    );
+}
+
+#[test]
+fn deleted_users_are_retired_to_quarantine() {
+    let batch = DirectoryBatch {
+        server_revision: 10,
+        batch_revision: 10,
+        organizational_units: Vec::new(),
+        organizational_unit_dns: std::collections::BTreeMap::new(),
+        users: Vec::new(),
+        groups: Vec::new(),
+        deleted_users: vec![DeletedUser {
+            employee_id: "1003".to_string(),
+            changed_revision: 10,
+        }],
+        has_more: false,
+    };
+
+    let config = DomainDirectoryConfig::example();
+    let plan = DirectoryPlan::try_from_batch(&batch, &config).unwrap();
+
+    assert_eq!(plan.operations.len(), 1);
+    assert_eq!(plan.operations[0].kind, DirectoryOperationKind::RetireUser);
+    assert_eq!(plan.operations[0].subject, "1003");
+    assert_eq!(
+        plan.operations[0].target,
         Some(DirectoryOperationTarget::QuarantineDn(
             config.quarantine_ou_dn
         ))
@@ -300,6 +339,7 @@ fn paged_batches_are_confirmed_at_batch_revision_not_server_revision() {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: true,
     };
 

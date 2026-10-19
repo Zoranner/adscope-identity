@@ -1,7 +1,8 @@
-use adscope_protocol::{DirectoryBatch, Group, OrganizationalUnit, User, UserStatus};
+use adscope_protocol::{DeletedUser, DirectoryBatch, Group, OrganizationalUnit, User, UserStatus};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbErr,
-    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlErr, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, DbErr,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlErr, Statement,
+    TransactionTrait,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -10,8 +11,9 @@ use crate::{
     mapping::{domain_active_model, user_status_from_storage, user_status_to_storage},
     models::{
         AuthorizationCodeExchange, AuthorizationCodeRecord, CredentialCiphertextBatch,
-        CredentialCiphertextEntry, CredentialRecord, DomainPatch, DomainRecord, OAuthClientRecord,
-        UserContactPatch, UserCreateInput, UserCredentialInput, UserDirectoryPatch, UserListFilter,
+        CredentialCiphertextEntry, CredentialRecord, DeleteOuOutcome, DomainPatch, DomainRecord,
+        OAuthClientRecord, UserContactPatch, UserCreateInput, UserCredentialInput,
+        UserDirectoryPatch, UserListFilter,
     },
     oauth::{authorization_code_active_model, oauth_client_active_model},
     revision::{
@@ -20,6 +22,9 @@ use crate::{
         try_allocate_credential_revision, try_allocate_directory_revision, u64_to_i64_revision,
     },
 };
+
+const EMPLOYEE_ID_WIDTH: usize = 6;
+const EMPLOYEE_ID_FIRST: i64 = 100_001;
 
 #[derive(Clone)]
 pub struct Repository {
@@ -39,6 +44,39 @@ impl Repository {
 
     pub async fn ping(&self) -> anyhow::Result<()> {
         self.db.execute_unprepared("SELECT 1").await?;
+        Ok(())
+    }
+
+    /// 旧库补上姓名拆分列：姓写 AD 的 sn，名写 givenName。
+    async fn ensure_user_name_columns(&self) -> anyhow::Result<()> {
+        let columns = self
+            .db
+            .query_all_raw(Statement::from_string(
+                self.db.get_database_backend(),
+                "PRAGMA table_info(users)",
+            ))
+            .await?
+            .into_iter()
+            .map(|row| row.try_get::<String>("", "name"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_column = |name: &str| columns.iter().any(|column| column == name);
+
+        if !has_column("surname") {
+            self.db
+                .execute_unprepared("ALTER TABLE users ADD COLUMN surname TEXT NOT NULL DEFAULT ''")
+                .await?;
+            // 历史数据只有一个显示名，先按「姓 = 显示名」回填，避免 AD 写入空 sn。
+            self.db
+                .execute_unprepared("UPDATE users SET surname = display_name")
+                .await?;
+        }
+        if !has_column("given_name") {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE users ADD COLUMN given_name TEXT NOT NULL DEFAULT ''",
+                )
+                .await?;
+        }
         Ok(())
     }
 
@@ -73,6 +111,8 @@ CREATE TABLE IF NOT EXISTS users (
     employee_id TEXT PRIMARY KEY NOT NULL,
     username TEXT NOT NULL,
     display_name TEXT NOT NULL,
+    surname TEXT NOT NULL DEFAULT '',
+    given_name TEXT NOT NULL DEFAULT '',
     email TEXT NULL,
     mobile TEXT NULL,
     telephone TEXT NULL,
@@ -90,6 +130,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users(username)
 "#,
             )
             .await?;
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS deleted_users (
+    employee_id TEXT PRIMARY KEY NOT NULL,
+    changed_revision BIGINT NOT NULL CHECK (changed_revision >= 0)
+)
+"#,
+            )
+            .await?;
+        self.ensure_user_name_columns().await?;
+        self.ensure_employee_id_sequence().await?;
         self.db
             .execute_unprepared(
                 r#"
@@ -460,6 +512,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             }
 
             for user in &users {
+                clear_deleted_user(&transaction, &user.employee_id).await?;
                 user::Entity::delete_by_id(user.employee_id.as_str())
                     .exec(&transaction)
                     .await?;
@@ -467,6 +520,8 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
                     employee_id: Set(user.employee_id.clone()),
                     username: Set(user.username.clone()),
                     display_name: Set(user.display_name.clone()),
+                    surname: Set(user.surname.clone()),
+                    given_name: Set(user.given_name.clone()),
                     email: Set(user.email.clone()),
                     mobile: Set(user.mobile.clone()),
                     telephone: Set(user.telephone.clone()),
@@ -572,6 +627,36 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             .transpose()
     }
 
+    /// 预览下一个可用工号；只读，不消耗序列。
+    pub async fn preview_next_employee_id(&self) -> anyhow::Result<String> {
+        use entities::user;
+
+        let row = self
+            .db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT next_value FROM employee_id_sequence WHERE singleton = 1".to_string(),
+            ))
+            .await?;
+        let Some(row) = row else {
+            anyhow::bail!("employee ID sequence is not initialized");
+        };
+        let mut next_value: i64 = row.try_get("", "next_value")?;
+        loop {
+            let candidate = format!("{:0width$}", next_value, width = EMPLOYEE_ID_WIDTH);
+            if user::Entity::find_by_id(candidate.as_str())
+                .one(&self.db)
+                .await?
+                .is_none()
+            {
+                return Ok(candidate);
+            }
+            next_value = next_value
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("employee ID sequence is exhausted"))?;
+        }
+    }
+
     pub async fn create_user_with_initial_credential(
         &self,
         input: UserCreateInput,
@@ -582,12 +667,33 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             directory,
             credential,
         } = input;
-        if directory.employee_id != credential.employee_id {
+        let has_explicit_employee_id = !directory.employee_id.trim().is_empty();
+        if has_explicit_employee_id && directory.employee_id != credential.employee_id {
             anyhow::bail!("user directory and credential employee IDs must match");
+        }
+        if !has_explicit_employee_id && !credential.employee_id.trim().is_empty() {
+            anyhow::bail!(
+                "credential employee ID must be empty when the directory does not specify one"
+            );
         }
 
         for _ in 0..MAX_REVISION_ALLOCATION_ATTEMPTS {
             let transaction = self.db.begin().await?;
+            let employee_id = if has_explicit_employee_id {
+                directory.employee_id.clone()
+            } else {
+                match allocate_employee_id(&transaction).await {
+                    Ok(employee_id) => employee_id,
+                    Err(error) => {
+                        transaction.rollback().await?;
+                        return Err(error);
+                    }
+                }
+            };
+            if let Err(error) = clear_deleted_user(&transaction, &employee_id).await {
+                transaction.rollback().await?;
+                return Err(error);
+            }
             let directory_revision = match try_allocate_directory_revision(&transaction).await {
                 Ok(Some(revision)) => revision,
                 Ok(None) => {
@@ -601,9 +707,11 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             };
 
             let created = match (user::ActiveModel {
-                employee_id: Set(directory.employee_id.clone()),
+                employee_id: Set(employee_id.clone()),
                 username: Set(directory.username.clone()),
                 display_name: Set(directory.display_name.clone()),
+                surname: Set(directory.surname.clone()),
+                given_name: Set(directory.given_name.clone()),
                 email: Set(directory.email.clone()),
                 mobile: Set(directory.mobile.clone()),
                 telephone: Set(directory.telephone.clone()),
@@ -640,7 +748,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             };
 
             if let Err(error) = (user_credential::ActiveModel {
-                employee_id: Set(credential.employee_id.clone()),
+                employee_id: Set(employee_id),
                 password_ciphertext: Set(credential.password_ciphertext.clone()),
                 password_verifier: Set(credential.password_verifier.clone()),
                 changed_revision: Set(credential_revision),
@@ -709,6 +817,8 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
                 employee_id: Set(existing.employee_id),
                 username: Set(existing.username),
                 display_name: Set(existing.display_name),
+                surname: Set(existing.surname),
+                given_name: Set(existing.given_name),
                 email: Set(contact.email),
                 mobile: Set(contact.mobile),
                 telephone: Set(contact.telephone),
@@ -721,6 +831,123 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
 
             transaction.commit().await?;
             return Ok((User::try_from(updated)?, i64_to_u64_revision(revision)?));
+        }
+
+        anyhow::bail!("failed to allocate directory revision after retries")
+    }
+
+    pub async fn delete_ou(&self, ou_id: &str) -> anyhow::Result<DeleteOuOutcome> {
+        use entities::{group, organizational_unit, user};
+
+        for _ in 0..MAX_REVISION_ALLOCATION_ATTEMPTS {
+            let transaction = self.db.begin().await?;
+            let Some(_revision) = try_allocate_directory_revision(&transaction).await? else {
+                transaction.rollback().await?;
+                continue;
+            };
+            if organizational_unit::Entity::find_by_id(ou_id)
+                .one(&transaction)
+                .await?
+                .is_none()
+            {
+                transaction.rollback().await?;
+                return Ok(DeleteOuOutcome::NotFound);
+            }
+
+            let has_children = organizational_unit::Entity::find()
+                .filter(organizational_unit::Column::ParentId.eq(ou_id))
+                .count(&transaction)
+                .await?
+                > 0;
+            let has_users = user::Entity::find()
+                .filter(user::Column::OrganizationalUnitId.eq(ou_id))
+                .count(&transaction)
+                .await?
+                > 0;
+            let has_groups = group::Entity::find()
+                .filter(group::Column::OrganizationalUnitId.eq(ou_id))
+                .count(&transaction)
+                .await?
+                > 0;
+            if has_children || has_users || has_groups {
+                transaction.rollback().await?;
+                return Ok(DeleteOuOutcome::NotEmpty);
+            }
+
+            organizational_unit::Entity::delete_by_id(ou_id)
+                .exec(&transaction)
+                .await?;
+            transaction.commit().await?;
+            return Ok(DeleteOuOutcome::Deleted);
+        }
+
+        anyhow::bail!("failed to allocate directory revision after retries")
+    }
+
+    pub async fn delete_user(&self, employee_id: &str) -> anyhow::Result<Option<u64>> {
+        use entities::{group, user, user_credential};
+
+        for _ in 0..MAX_REVISION_ALLOCATION_ATTEMPTS {
+            let transaction = self.db.begin().await?;
+            let Some(revision) = try_allocate_directory_revision(&transaction).await? else {
+                transaction.rollback().await?;
+                continue;
+            };
+            if user::Entity::find_by_id(employee_id)
+                .one(&transaction)
+                .await?
+                .is_none()
+            {
+                transaction.rollback().await?;
+                return Ok(None);
+            }
+
+            user_credential::Entity::delete_by_id(employee_id)
+                .exec(&transaction)
+                .await?;
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "DELETE FROM oauth_authorization_codes WHERE employee_id = ?",
+                    [employee_id.into()],
+                ))
+                .await?;
+            user::Entity::delete_by_id(employee_id)
+                .exec(&transaction)
+                .await?;
+
+            let groups = group::Entity::find().all(&transaction).await?;
+            for record in groups {
+                let mut members: Vec<String> = serde_json::from_str(&record.member_employee_ids)?;
+                if !members.iter().any(|member| member == employee_id) {
+                    continue;
+                }
+                members.retain(|member| member != employee_id);
+                group::Entity::delete_by_id(record.id.as_str())
+                    .exec(&transaction)
+                    .await?;
+                group::ActiveModel {
+                    id: Set(record.id),
+                    name: Set(record.name),
+                    organizational_unit_id: Set(record.organizational_unit_id),
+                    member_employee_ids: Set(serde_json::to_string(&members)?),
+                    changed_revision: Set(revision),
+                }
+                .insert(&transaction)
+                .await?;
+            }
+
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO deleted_users (employee_id, changed_revision) VALUES (?, ?) \
+                     ON CONFLICT(employee_id) DO UPDATE SET changed_revision = excluded.changed_revision",
+                    [employee_id.into(), revision.into()],
+                ))
+                .await?;
+
+            transaction.commit().await?;
+            return Ok(Some(i64_to_u64_revision(revision)?));
         }
 
         anyhow::bail!("failed to allocate directory revision after retries")
@@ -771,6 +998,18 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
                 .all(&self.db)
                 .await?,
         );
+        revisions.extend(
+            self.db
+                .query_all_raw(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "SELECT changed_revision FROM deleted_users WHERE changed_revision > ?",
+                    [threshold.into()],
+                ))
+                .await?
+                .into_iter()
+                .map(|row| row.try_get::<i64>("", "changed_revision"))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
         revisions.sort_unstable();
         revisions.dedup();
 
@@ -815,6 +1054,24 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             .into_iter()
             .map(OrganizationalUnit::try_from)
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let deleted_users = self
+            .db
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "SELECT employee_id, changed_revision FROM deleted_users \
+                 WHERE changed_revision > ? AND changed_revision <= ? \
+                 ORDER BY changed_revision, employee_id",
+                [threshold.into(), batch_revision.into()],
+            ))
+            .await?
+            .into_iter()
+            .map(|row| {
+                Ok(DeletedUser {
+                    employee_id: row.try_get("", "employee_id")?,
+                    changed_revision: i64_to_u64_revision(row.try_get("", "changed_revision")?)?,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         let organizational_unit_dns = self
             .organizational_unit_dns_for_batch(
@@ -832,6 +1089,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             organizational_unit_dns,
             users,
             groups,
+            deleted_users,
             has_more,
         })
     }
@@ -1111,6 +1369,56 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         Ok(())
     }
 
+    /// 工号序列首次初始化时排在现有纯数字工号之后；没有数字工号则从 100001 开始。
+    async fn ensure_employee_id_sequence(&self) -> anyhow::Result<()> {
+        self.db
+            .execute_unprepared(
+                r#"
+CREATE TABLE IF NOT EXISTS employee_id_sequence (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+    next_value BIGINT NOT NULL CHECK (next_value > 0)
+)
+"#,
+            )
+            .await?;
+        let existing = self
+            .db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT next_value FROM employee_id_sequence WHERE singleton = 1".to_string(),
+            ))
+            .await?;
+        if existing.is_some() {
+            return Ok(());
+        }
+
+        let max_row = self
+            .db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                r#"
+SELECT COALESCE(MAX(CAST(employee_id AS INTEGER)), 0) AS max_employee_id
+FROM users
+WHERE employee_id <> '' AND employee_id NOT GLOB '*[^0-9]*'
+"#
+                .to_string(),
+            ))
+            .await?;
+        let max_employee_id: i64 = match max_row {
+            Some(row) => row.try_get("", "max_employee_id")?,
+            None => 0,
+        };
+        let next_value = max_employee_id.saturating_add(1).max(EMPLOYEE_ID_FIRST);
+        self.db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT OR IGNORE INTO employee_id_sequence (singleton, next_value) VALUES (1, ?)",
+                [next_value.into()],
+            ))
+            .await?;
+        Ok(())
+    }
+
     pub async fn current_directory_revision(&self) -> anyhow::Result<u64> {
         i64_to_u64_revision(load_metadata(&self.db).await?.directory_revision)
     }
@@ -1152,6 +1460,48 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         }
         Ok(())
     }
+}
+
+async fn allocate_employee_id(
+    transaction: &sea_orm::DatabaseTransaction,
+) -> anyhow::Result<String> {
+    use entities::user;
+
+    loop {
+        let row = transaction
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "UPDATE employee_id_sequence SET next_value = next_value + 1 WHERE singleton = 1 RETURNING next_value"
+                    .to_string(),
+            ))
+            .await?;
+        let Some(row) = row else {
+            anyhow::bail!("employee ID sequence is not initialized");
+        };
+        let next_value: i64 = row.try_get("", "next_value")?;
+        let candidate = format!("{:0width$}", next_value - 1, width = EMPLOYEE_ID_WIDTH);
+        if user::Entity::find_by_id(candidate.as_str())
+            .one(transaction)
+            .await?
+            .is_none()
+        {
+            return Ok(candidate);
+        }
+    }
+}
+
+async fn clear_deleted_user(
+    transaction: &sea_orm::DatabaseTransaction,
+    employee_id: &str,
+) -> anyhow::Result<()> {
+    transaction
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM deleted_users WHERE employee_id = ?",
+            [employee_id.into()],
+        ))
+        .await?;
+    Ok(())
 }
 
 fn escape_ldap_dn_value(value: &str) -> String {

@@ -491,6 +491,8 @@ async fn seed_user(repository: &Repository, employee_id: &str) {
                 employee_id: employee_id.to_string(),
                 username: format!("user-{employee_id}"),
                 display_name: format!("User {employee_id}"),
+                surname: format!("User {employee_id}"),
+                given_name: String::new(),
                 email: Some(format!("user-{employee_id}@example.com")),
                 mobile: None,
                 telephone: None,

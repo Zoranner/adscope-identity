@@ -73,6 +73,27 @@ pub struct DomainRecord {
     pub applied_credential_revision: u64,
 }
 
+/// 域的工号属性默认值：未指定时使用，默认值只在这里定义。
+pub const DEFAULT_EMPLOYEE_ID_ATTRIBUTE: &str = "employeeID";
+
+/// 域的受管组标识属性默认值：未指定时使用，默认值只在这里定义。
+pub const DEFAULT_MANAGED_GROUP_ID_ATTRIBUTE: &str = "adminDescription";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOuOutcome {
+    Deleted,
+    NotFound,
+    NotEmpty,
+}
+
+/// 未填写的域属性回落到默认值；空白字符串同样按未填写处理。
+pub fn attribute_or_default(value: Option<String>, default: &str) -> String {
+    match value.map(|value| value.trim().to_string()) {
+        Some(value) if !value.is_empty() => value,
+        _ => default.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DomainPatch {
     pub name: Option<String>,
@@ -90,6 +111,8 @@ pub struct UserDirectoryPatch {
     pub employee_id: String,
     pub username: String,
     pub display_name: String,
+    pub surname: String,
+    pub given_name: String,
     pub email: Option<String>,
     pub mobile: Option<String>,
     pub telephone: Option<String>,

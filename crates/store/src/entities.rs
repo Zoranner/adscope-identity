@@ -45,6 +45,8 @@ pub(crate) mod user {
         pub employee_id: String,
         pub username: String,
         pub display_name: String,
+        pub surname: String,
+        pub given_name: String,
         pub email: Option<String>,
         pub mobile: Option<String>,
         pub telephone: Option<String>,
