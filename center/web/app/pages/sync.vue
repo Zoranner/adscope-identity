@@ -1,13 +1,9 @@
 <script setup lang="ts">
 onMounted(() => {
-  void navigateTo('/admin/sync', { replace: true })
+  void navigateTo('/admin/directory', { replace: true })
 })
 </script>
 
 <template>
-  <main class="credential-screen">
-    <section class="credential-card">
-      <h1>正在进入同步状态</h1>
-    </section>
-  </main>
+  <div role="status" class="sr-only">正在进入目录</div>
 </template>

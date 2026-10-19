@@ -1,4 +1,4 @@
-import type { GroupRecord, OrganizationalUnit, OuTreeItem, UserRecord } from '~/types/admin'
+import type { OrganizationalUnit, OuTreeItem } from '~/types/admin'
 
 export function sortOus(ous: OrganizationalUnit[]): OrganizationalUnit[] {
   return [...ous].sort((left, right) => {
@@ -7,11 +7,7 @@ export function sortOus(ous: OrganizationalUnit[]): OrganizationalUnit[] {
   })
 }
 
-export function flattenOus(
-  ous: OrganizationalUnit[],
-  users: UserRecord[],
-  groups: GroupRecord[],
-): OuTreeItem[] {
+export function flattenOus(ous: OrganizationalUnit[]): OuTreeItem[] {
   const byParent = new Map<string | null, OrganizationalUnit[]>()
   for (const ou of ous) {
     const siblings = byParent.get(ou.parent_id) ?? []
@@ -34,8 +30,6 @@ export function flattenOus(
       items.push({
         ou,
         depth,
-        userCount: users.filter((user) => user.organizational_unit_id === ou.id).length,
-        groupCount: groups.filter((group) => group.organizational_unit_id === ou.id).length,
       })
       pushChildren(ou.id, depth + 1)
     }
@@ -48,8 +42,6 @@ export function flattenOus(
       items.push({
         ou,
         depth: 0,
-        userCount: users.filter((user) => user.organizational_unit_id === ou.id).length,
-        groupCount: groups.filter((group) => group.organizational_unit_id === ou.id).length,
       })
       pushChildren(ou.id, 1)
     }
@@ -66,4 +58,51 @@ export function ouName(
     return '-'
   }
   return ous.find((ou) => ou.id === ouId)?.name ?? ouId
+}
+
+export type OuTreeNode = {
+  key: string
+  title: string
+  children?: OuTreeNode[]
+}
+
+export function buildOuTree(ous: OrganizationalUnit[]): OuTreeNode[] {
+  const byParent = new Map<string | null, OrganizationalUnit[]>()
+  for (const ou of ous) {
+    const siblings = byParent.get(ou.parent_id) ?? []
+    siblings.push(ou)
+    byParent.set(ou.parent_id, siblings)
+  }
+  for (const [parentId, siblings] of byParent.entries()) {
+    byParent.set(parentId, sortOus(siblings))
+  }
+
+  const visited = new Set<string>()
+  const toNode = (ou: OrganizationalUnit): OuTreeNode => ({
+    key: ou.id,
+    title: ou.name,
+  })
+  const build = (parentId: string | null): OuTreeNode[] => {
+    const nodes: OuTreeNode[] = []
+    for (const ou of byParent.get(parentId) ?? []) {
+      if (visited.has(ou.id)) {
+        continue
+      }
+      visited.add(ou.id)
+      const children = build(ou.id)
+      const node = toNode(ou)
+      if (children.length > 0) {
+        node.children = children
+      }
+      nodes.push(node)
+    }
+    return nodes
+  }
+
+  const roots = build(null)
+  const orphans = sortOus(ous).filter((ou) => !visited.has(ou.id))
+  for (const ou of orphans) {
+    visited.add(ou.id)
+  }
+  return [...roots, ...orphans.map(toNode)]
 }
