@@ -1,14 +1,13 @@
+pub const DEFAULT_DATABASE_URL: &str = "sqlite://./data/adscope.db?mode=rwc";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CenterConfig {
     pub bind_addr: String,
-    pub database_url: Option<String>,
 }
 
 impl CenterConfig {
     pub fn from_bind_addr(bind_addr: Option<String>) -> Self {
         Self {
             bind_addr: bind_addr.unwrap_or_else(|| "127.0.0.1:8080".to_string()),
-            database_url: None,
         }
     }
 
@@ -16,7 +15,6 @@ impl CenterConfig {
         reject_retired_environment_variables()?;
         Ok(Self {
             bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string()),
-            database_url: std::env::var("DATABASE_URL").ok(),
         })
     }
 }
@@ -25,10 +23,6 @@ pub(crate) fn reject_retired_environment_variables() -> anyhow::Result<()> {
     for (retired, replacement) in [
         ("ADSS_BIND_ADDR", "BIND_ADDR"),
         ("ADSCOPE_BIND_ADDR", "BIND_ADDR"),
-        ("ADSS_DATABASE_URL", "DATABASE_URL"),
-        ("ADSCOPE_DATABASE_URL", "DATABASE_URL"),
-        ("ADSS_WEB_ROOT", "WEB_ROOT"),
-        ("ADSCOPE_WEB_ROOT", "WEB_ROOT"),
         ("ADSS_PASSWORD_ENCRYPTION_KEY", "PASSWORD_ENCRYPTION_KEY"),
         ("ADSCOPE_PASSWORD_ENCRYPTION_KEY", "PASSWORD_ENCRYPTION_KEY"),
         ("ADSS_PASSWORD_HASH_PROVIDER", "PASSWORD_HASH_PROVIDER"),
@@ -67,4 +61,13 @@ pub(crate) fn reject_retired_environment_variables() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::DEFAULT_DATABASE_URL;
+
+    #[test]
+    fn default_database_is_kept_in_the_runtime_data_directory() {
+        assert_eq!(DEFAULT_DATABASE_URL, "sqlite://./data/adscope.db?mode=rwc");
+    }
 }
