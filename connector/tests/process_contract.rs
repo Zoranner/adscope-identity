@@ -119,6 +119,7 @@ fn empty_directory_batch() -> DirectoryBatch {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     }
 }

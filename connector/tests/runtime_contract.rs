@@ -507,6 +507,8 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),
             display_name: "Zhang San".to_string(),
+            surname: "Zhang".to_string(),
+            given_name: "San".to_string(),
             email: Some("zhangsan@example.com".to_string()),
             mobile: None,
             telephone: None,
@@ -521,6 +523,7 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             member_employee_ids: vec!["1001".to_string()],
             changed_revision: batch_revision,
         }],
+        deleted_users: Vec::new(),
         has_more: false,
     }
 }
@@ -546,6 +549,7 @@ fn invalid_directory_batch(batch_revision: u64) -> DirectoryBatch {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     }
 }
@@ -572,6 +576,7 @@ fn empty_directory_batch() -> DirectoryBatch {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     }
 }
@@ -594,6 +599,7 @@ fn directory_kind_name(kind: adscope_protocol::DirectoryOperationKind) -> &'stat
         adscope_protocol::DirectoryOperationKind::EnsureGroupMembers => "ensure_group_members",
         adscope_protocol::DirectoryOperationKind::DisableUser => "disable_user",
         adscope_protocol::DirectoryOperationKind::MoveUserToQuarantine => "move_user_to_quarantine",
+        adscope_protocol::DirectoryOperationKind::RetireUser => "retire_user",
     }
 }
 

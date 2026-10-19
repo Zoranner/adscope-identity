@@ -261,6 +261,30 @@ impl LdapDirectoryClient {
             .success()?;
         Ok(())
     }
+
+    async fn retire_user(
+        &self,
+        ldap: &mut Ldap,
+        employee_id: &str,
+        quarantine_dn: &str,
+        context: &DirectoryExecutionContext,
+    ) -> anyhow::Result<()> {
+        let Some(dn) = find_user_dn(ldap, context, employee_id).await? else {
+            // The user may have been deleted before its first synchronization.
+            return Ok(());
+        };
+        ldap.modify(&dn, vec![replace_string("userAccountControl", "514")])
+            .await?
+            .success()?;
+        if dn_is_under_parent(&dn, quarantine_dn) {
+            return Ok(());
+        }
+        let rdn = dn_rdn(&dn)?;
+        ldap.modifydn(&dn, rdn, true, Some(quarantine_dn))
+            .await?
+            .success()?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -341,6 +365,14 @@ impl DirectoryBatchSession for LdapDirectoryBatch {
                         quarantine_dn,
                         context,
                     )
+                    .await
+            }
+            (
+                DirectoryOperationKind::RetireUser,
+                Some(DirectoryOperationTarget::QuarantineDn(quarantine_dn)),
+            ) => {
+                self.client
+                    .retire_user(&mut self.ldap, &operation.subject, quarantine_dn, context)
                     .await
             }
             _ => anyhow::bail!("directory operation target does not match operation kind"),
@@ -543,7 +575,7 @@ fn user_attrs(
             &["top", "person", "organizationalPerson", "user"],
         ),
         ldap_attr("cn", &[&user.username]),
-        ldap_attr("sn", &[&user.display_name]),
+        ldap_attr("sn", &[&user.surname]),
         ldap_attr("displayName", &[&user.display_name]),
         ldap_attr("sAMAccountName", &[&user.username]),
         ldap_attr(
@@ -554,6 +586,11 @@ fn user_attrs(
         ldap_attr("userAccountControl", &[user_account_control]),
     ];
     push_optional_attr(&mut attrs, "mail", user.email.as_deref());
+    push_optional_attr(
+        &mut attrs,
+        "givenName",
+        (!user.given_name.is_empty()).then_some(user.given_name.as_str()),
+    );
     push_optional_attr(&mut attrs, "mobile", user.mobile.as_deref());
     push_optional_attr(&mut attrs, "telephoneNumber", user.telephone.as_deref());
     attrs
@@ -566,7 +603,11 @@ fn user_mods(
     user_account_control: &str,
 ) -> Vec<Mod<Vec<u8>>> {
     vec![
-        replace_string("sn", &user.display_name),
+        replace_string("sn", &user.surname),
+        replace_optional(
+            "givenName",
+            (!user.given_name.is_empty()).then_some(user.given_name.as_str()),
+        ),
         replace_string("displayName", &user.display_name),
         replace_string("sAMAccountName", &user.username),
         replace_string(

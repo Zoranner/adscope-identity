@@ -4,8 +4,9 @@ use adscope_connector::{
     execute_credential_batch, execute_directory_plan,
 };
 use adscope_protocol::{
-    CredentialBatch, CredentialEntry, DirectoryBatch, DirectoryOperation, DirectoryOperationKind,
-    DirectoryPlan, DomainDirectoryConfig, Group, OrganizationalUnit, User, UserStatus,
+    CredentialBatch, CredentialEntry, DeletedUser, DirectoryBatch, DirectoryOperation,
+    DirectoryOperationKind, DirectoryPlan, DomainDirectoryConfig, Group, OrganizationalUnit, User,
+    UserStatus,
 };
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
@@ -45,6 +46,44 @@ async fn executor_runs_directory_plan_in_contract_order() {
             "EnsureGroup".to_string(),
             "EnsureGroupMembers".to_string(),
         ]
+    );
+}
+
+#[tokio::test]
+async fn executor_retires_deleted_users() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let opened_batches = Arc::new(Mutex::new(0));
+    let client = RecordingDirectoryClient {
+        calls: Arc::clone(&calls),
+        opened_batches: Arc::clone(&opened_batches),
+        fail_kind: None,
+        fail_password_employee_id: None,
+    };
+    let executor = DirectoryExecutor::new(client);
+    let batch = DirectoryBatch {
+        server_revision: 1,
+        batch_revision: 1,
+        organizational_units: Vec::new(),
+        organizational_unit_dns: std::collections::BTreeMap::new(),
+        users: Vec::new(),
+        groups: Vec::new(),
+        deleted_users: vec![DeletedUser {
+            employee_id: "1001".to_string(),
+            changed_revision: 1,
+        }],
+        has_more: false,
+    };
+    let domain = DomainDirectoryConfig::example();
+    let plan = DirectoryPlan::try_from_batch(&batch, &domain).unwrap();
+    let context = DirectoryExecutionContext::try_from_batch(&batch, &domain).unwrap();
+
+    let result = executor.execute(&plan, &context).await.unwrap();
+
+    assert_eq!(result.summary.succeeded, 1);
+    assert!(result.failure.is_none());
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &["RetireUser".to_string()]
     );
 }
 
@@ -209,6 +248,7 @@ fn directory_execution_context_uses_precomputed_ou_dns() {
         ]),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -244,6 +284,7 @@ fn directory_execution_context_does_not_require_parent_ou_in_the_batch() {
         ]),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -269,6 +310,7 @@ fn directory_execution_context_rejects_missing_precomputed_ou_dn() {
         organizational_unit_dns: std::collections::BTreeMap::new(),
         users: Vec::new(),
         groups: Vec::new(),
+        deleted_users: Vec::new(),
         has_more: false,
     };
 
@@ -385,6 +427,8 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             employee_id: "1001".to_string(),
             username: "zhangsan".to_string(),
             display_name: "Zhang San".to_string(),
+            surname: "Zhang".to_string(),
+            given_name: "San".to_string(),
             email: Some("zhangsan@example.com".to_string()),
             mobile: None,
             telephone: None,
@@ -399,6 +443,7 @@ fn directory_batch(batch_revision: u64) -> DirectoryBatch {
             member_employee_ids: vec!["1001".to_string()],
             changed_revision: batch_revision,
         }],
+        deleted_users: Vec::new(),
         has_more: false,
     }
 }

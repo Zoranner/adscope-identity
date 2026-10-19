@@ -364,5 +364,6 @@ fn operation_name(kind: adscope_protocol::DirectoryOperationKind) -> &'static st
         DirectoryOperationKind::EnsureGroupMembers => "ensure_group_members",
         DirectoryOperationKind::DisableUser => "disable_user",
         DirectoryOperationKind::MoveUserToQuarantine => "move_user_to_quarantine",
+        DirectoryOperationKind::RetireUser => "retire_user",
     }
 }
