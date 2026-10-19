@@ -124,7 +124,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bun install --frozen-lockfile
+          rm bun.lock
+          bun install
           bun run build
           mkdir -p ../../gateway/web
           cp -R .output/public/. ../../gateway/web/
