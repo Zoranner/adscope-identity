@@ -1,5 +1,7 @@
 # AD 多域组织结构同步工程评审报告
 
+> 历史记录：本文基于 2026-08-07 的工作树，`ADSS` 名称和部分接口已被后续实现取代。保留用于追溯，不作为当前设计或当前验收结论。
+
 评审日期：2026-08-07
 
 本报告记录本轮实施前的工程基线，以下问题用于驱动随后的改造，并非发布候选的现状清单。随本次发布候选已处理管理密钥的浏览器持久化、LDAP Simple Authentication、Connector `.env` 继承 ACL、用户与初始凭据的跨事务创建、目录批量分页和产品概览的 OIDC 范围漂移；对应回归由 Rust、PowerShell 和 Nuxt 静态构建重新执行。弱密钥启动校验、前端独立 lint/test 入口、Nuxt/Nitro 构建警告以及真实域环境验收仍未在本轮解决。
@@ -36,7 +38,7 @@ Center 允许任意非空 `ADSS_MANAGEMENT_TOKEN`、`ADSS_USER_SESSION_KEY` 和�
 
 ### Connector 安装未收紧 .env 的继承 ACL
 
-安装脚本只向 `LocalService` 追加 `.env` 的读取权限，没有禁用继承或移除既有主体。[install-service.ps1](../../deploy/connector/install-service.ps1#L42) 在现有运行目录中直接使用 `.env`，[install-service.ps1](../../deploy/connector/install-service.ps1#L66) 仅执行 `/grant`。该文件包含 Connector key 和 LDAP bind password，而部署文档建议将运行目录放在 `Program Files` 下。[README.md](../../deploy/connector/README.md#L1)
+安装脚本只向 `LocalService` 追加 `.env` 的读取权限，没有禁用继承或移除既有主体。旧安装脚本在现有运行目录中直接使用 `.env`，仅执行 `/grant`。该文件包含 Connector key 和 LDAP bind password，而部署文档建议将运行目录放在 `Program Files` 下。[README.md](../../deploy/connector/README.md#L1)
 
 继承到的 `Users` 或其他本地账户读取权限不会因追加 `LocalService` 权限而消失，导致域绑定密钥和 LDAP 服务账号可能被非服务身份读取。安装程序应对 `.env` 显式禁用继承，只保留 `SYSTEM`、`Administrators` 与 `LocalService` 的必要权限，并用脚本契约测试覆盖最终 ACL。
 

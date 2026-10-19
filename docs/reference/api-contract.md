@@ -91,6 +91,8 @@ Authorization: Bearer <access_token>
   "employee_id": "1001",
   "username": "zhangsan",
   "display_name": "张三",
+  "surname": "张",
+  "given_name": "三",
   "email": "zhangsan@example.com",
   "mobile": "13800000000",
   "telephone": "021-10000000",
@@ -169,6 +171,8 @@ Authorization: Bearer <access_token>
 
 Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `sub` 直接使用用户 `employee_id`，OIDC access token 只用于 UserInfo，不能用于 `/api/me/*`。
 
+当前只支持 Authorization Code + PKCE S256，不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或多个 issuer。Discovery 和所有端点都从配置的 canonical `OIDC_ISSUER` 生成，依赖方必须使用 canonical issuer 获取 Discovery；三个网关入口域名可以不同，但 issuer 不随入口域名变化。多网络网关只负责 TLS、转发和入口开关，不签发自己的 Token。
+
 ### Discovery
 
 `GET /.well-known/openid-configuration`
@@ -238,7 +242,7 @@ Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `
 
 参数缺失、重复、未定义、编码非法或总查询长度超过 16 KiB 时，服务端拒绝请求。
 
-服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adscope_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 Center 的 `/authorize` 确认页。`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
+服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adscope_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 `/authorize` 确认页。`/login` 和 `/authorize` 页面由网关托管，`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
 
 ### 授权确认上下文
 
@@ -372,6 +376,18 @@ Authorization: Bearer <access_token>
 - `phone` 优先使用非空 `mobile`，否则使用非空 `telephone`；两者都为空时省略 `phone_number`。
 
 成功和错误响应均包含 `Cache-Control: no-store`。
+
+### 依赖方校验
+
+依赖方应使用 canonical issuer 的 Discovery 和 JWKS，并至少校验：
+
+- RS256 签名、`kid`、`iss`、`aud`、`exp` 和 `iat`。
+- 授权请求生成的 `nonce` 与 ID Token 中的值一致。
+- 允许最多 30 秒时钟偏差；遇到未知 `kid` 时刷新 JWKS，刷新失败则拒绝 Token。
+
+当前 ID Token 不包含 `nbf`、`azp`、`groups`、`roles` 或 `email_verified`，依赖方不要强制要求这些字段。`sub` 是 `employee_id`，应作为人员主键；邮箱、显示名和工号字符串不能替代 `sub` 作为授权依据。
+
+ID Token 用于登录时确认人员，Center access token 只用于 `/oauth2/userinfo`，不能作为依赖方业务 API 的 Bearer token。Center 不签发 refresh token，也不能撤销已签发的 ID Token；依赖方需要长期会话或设备凭据时，应自行维护有效期、重新验证和撤销策略。
 
 ### OIDC 错误
 
@@ -575,7 +591,9 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
 }
 ```
 
-`PATCH /api/admin/ous/{ou_id}` 更新 OU 名称或父级。物理删除 OU 需要先定义用户、子 OU 和组引用处理规则。
+`PATCH /api/admin/ous/{ou_id}` 更新 OU 名称或父级。
+
+`DELETE /api/admin/ous/{ou_id}` 删除空 OU：存在子 OU、用户或安全组时返回 `409 Conflict`，不存在时返回 `404 Not Found`，成功返回 `204 No Content`。AD 中的 OU 对象不物理删除。
 
 ### 用户管理
 
@@ -597,9 +615,23 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
 }
 ```
 
+`GET /api/admin/users/next-employee-id` 返回下一个可用工号，只做预览，不消耗编号：
+
+```json
+{
+  "employee_id": "100001"
+}
+```
+
+`employee_id` 可以省略或留空。此时 Center 在创建事务内分配 6 位数字工号，从 `100001` 起按顺序递增；显式填写的工号保持不变。管理界面打开新建表单时先取预览编号，把工号字段设为只读；保存时仍由 Center 分配，预览不消耗序列。
+
+`surname` 和 `given_name` 可以省略。`display_name` 为空时，Center 使用 `surname + given_name` 组合；`surname` 为空时回落到显示名。`surname` 写入 AD 的 `sn`，`given_name` 写入 `givenName`。
+
 `GET /api/admin/users/{employee_id}` 查询用户详情。
 
 `PATCH /api/admin/users/{employee_id}` 更新用户目录字段。
+
+`DELETE /api/admin/users/{employee_id}` 删除中心用户记录、凭据和组成员引用，成功返回 `204 No Content`；同时写入删除事实，Connector 会在所属域禁用该账号并移到隔离 OU。用户不存在时返回 `404 Not Found`。
 
 `POST /api/admin/users/{employee_id}/disable` 禁用用户。
 

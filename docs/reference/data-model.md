@@ -16,6 +16,8 @@
 
 数据库 schema 由主服务初始化逻辑创建基础表。
 
+当前生产入口固定使用进程工作目录下的 `data/adscope.db`。schema 初始化以幂等建表和补列为主，不是完整迁移框架；升级前应停止写入并备份数据库。SQLite 文件不支持多个 Center 副本并发写，当前部署模型是单实例。
+
 ## 表结构
 
 ### `sync_metadata`
@@ -27,6 +29,24 @@
 | `key` | 元数据主键，默认行用于主链 revision。 |
 | `directory_revision` | 目录通道全局 revision。 |
 | `credential_revision` | 凭据通道全局 revision。 |
+
+### `employee_id_sequence`
+
+保存自动工号的下一个数值，只有一行。
+
+| 字段 | 含义 |
+| --- | --- |
+| `singleton` | 固定为 1。 |
+| `next_value` | 下一个可用数字工号。 |
+
+### `deleted_users`
+
+保存已删除用户的同步事实，供 Connector 在所属域执行禁用和隔离。
+
+| 字段 | 含义 |
+| --- | --- |
+| `employee_id` | 已删除用户的工号。 |
+| `changed_revision` | 删除事实所在的目录 revision。 |
 
 ### `organizational_units`
 
@@ -48,6 +68,8 @@
 | `employee_id` | 跨域唯一用户标识。 |
 | `username` | AD 账号名，也作为 UPN 本地部分来源。该字段唯一，并作为普通用户登录名。 |
 | `display_name` | 显示名。 |
+| `surname` | 姓，写入 AD 的 `sn`；缺失时回落到显示名。 |
+| `given_name` | 名，写入 AD 的 `givenName`。 |
 | `email` | 邮箱，允许普通用户自助修改。 |
 | `mobile` | 手机号，允许普通用户自助修改。 |
 | `telephone` | 办公电话，允许普通用户自助修改。 |

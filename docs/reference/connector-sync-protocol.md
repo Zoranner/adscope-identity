@@ -43,6 +43,7 @@ Connector 请求使用 `x-adscope-connector-key` 认证，只能访问请求 `do
     "organizational_units": [],
     "users": [],
     "groups": [],
+    "deleted_users": [],
     "has_more": false
   },
   "credentials": {
@@ -78,6 +79,7 @@ Connector 将目录批次转为固定执行顺序：
 - 确保组存在并位于目标 OU。
 - 同步组成员集合。
 - disabled 用户禁用并移动到隔离 OU。
+- 已删除用户按 `deleted_users` 中的工号禁用并移动到隔离 OU；AD 中不存在该用户时视为已完成。
 
 目录批次必须整体执行成功后才能确认。OU 环、重复 OU ID、缺失父 OU、用户或组目标 OU 不存在等非法批次应失败确认，不推进本地 revision。
 
@@ -87,7 +89,7 @@ Connector 按中心下发的域配置写入 AD，不在本地 `.env` 配置字�
 
 用户工号写入 `employee_id_attribute` 指定的属性，默认 `employeeID`。受管安全组写入 `managed_group_id_attribute` 指定的属性，默认 `adminDescription`，属性值格式为 `adscope:group:{group.id}`。Connector 通过该属性在受管范围内查找已有组对象。
 
-标准 AD 字段保持固定映射：用户账号名写入 `sAMAccountName` 和 UPN 本地部分，显示名写入 `displayName`，邮箱写入 `mail`，手机号写入 `mobile`，办公电话写入 `telephoneNumber`，密码写入 `unicodePwd`。组名写入 `cn` 和 `sAMAccountName`，组成员写入 `member`。
+标准 AD 字段保持固定映射：用户账号名写入 `sAMAccountName` 和 UPN 本地部分，显示名写入 `displayName`，姓写入 `sn`，名写入 `givenName`，邮箱写入 `mail`，手机号写入 `mobile`，办公电话写入 `telephoneNumber`，密码写入 `unicodePwd`。组名写入 `cn` 和 `sAMAccountName`，组成员写入 `member`。
 
 ## 凭据执行
 
