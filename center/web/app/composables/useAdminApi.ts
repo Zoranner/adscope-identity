@@ -1,6 +1,8 @@
+import { useNotification } from '@stellar/ui'
 import type {
   CreateOAuthClientRequest,
   Domain,
+  DomainAttributeDefaults,
   GroupRecord,
   OAuthClient,
   OAuthClientCreateResponse,
@@ -16,18 +18,35 @@ interface AdminRequestOptions extends RequestInit {
   successMessage?: string
 }
 
+function requestErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
 export function useAdminApi() {
+  const notifications = useNotification()
   const csrfToken = useState('admin-csrf-token', () => '')
   const authenticated = useState('admin-authenticated', () => false)
-  const loading = useState('admin-loading', () => false)
+  const pending = useState('admin-pending', () => 0)
   const domains = useState<Domain[]>('admin-domains', () => [])
+  const domainAttributeDefaults = useState<DomainAttributeDefaults>(
+    'admin-domain-attribute-defaults',
+    () => ({ employee_id_attribute: '', managed_group_id_attribute: '' }),
+  )
   const organizationalUnits = useState<OrganizationalUnit[]>('admin-ous', () => [])
   const users = useState<UserRecord[]>('admin-users', () => [])
   const groups = useState<GroupRecord[]>('admin-groups', () => [])
   const syncDomains = useState<SyncDomain[]>('admin-sync-domains', () => [])
   const oauthClients = useState<OAuthClient[]>('admin-oauth-clients', () => [])
+  const ousLoading = useState('admin-ous-loading', () => false)
+  const usersLoading = useState('admin-users-loading', () => false)
+  const groupsLoading = useState('admin-groups-loading', () => false)
+  const domainsLoading = useState('admin-domains-loading', () => false)
+  const syncLoading = useState('admin-sync-loading', () => false)
+  const clientsLoading = useState('admin-clients-loading', () => false)
   const tokenReady = computed(() => authenticated.value && csrfToken.value.length > 0)
-  const { setStatus } = useAdminStatus()
+  const directoryLoading = computed(
+    () => ousLoading.value || usersLoading.value || groupsLoading.value,
+  )
 
   function resetData() {
     domains.value = []
@@ -44,12 +63,66 @@ export function useAdminApi() {
     resetData()
   }
 
-  async function restoreSession() {
-    loading.value = true
+  async function trackRequest<T>(request: () => Promise<T>): Promise<T> {
+    pending.value += 1
     try {
-      const response = await fetch('/api/admin/session', {
+      return await request()
+    } finally {
+      pending.value -= 1
+    }
+  }
+
+  async function adminFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!tokenReady.value) {
+      throw new Error('请先输入管理凭证')
+    }
+
+    const method = (init.method ?? 'GET').toUpperCase()
+    return await trackRequest(async () => {
+      const response = await fetch(path, {
+        ...init,
         credentials: 'same-origin',
+        headers: {
+          ...(init.body ? { 'content-type': 'application/json' } : {}),
+          ...(method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+            ? {}
+            : { 'x-adscope-csrf-token': csrfToken.value }),
+          ...init.headers,
+        },
       })
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          clearSession()
+          throw new Error('管理会话已失效，请重新输入管理凭证')
+        }
+        throw new Error(`${response.status} ${response.statusText}`)
+      }
+
+      if (response.status === 204) {
+        return undefined as T
+      }
+
+      return (await response.json()) as T
+    })
+  }
+
+  async function runAction(action: () => Promise<void>, options: AdminRequestOptions = {}) {
+    try {
+      await action()
+      if (options.successMessage) {
+        notifications.success(options.successMessage)
+      }
+    } catch (error) {
+      notifications.error(requestErrorMessage(error, '请求失败'))
+    }
+  }
+
+  async function restoreSession() {
+    try {
+      const response = await trackRequest(() =>
+        fetch('/api/admin/session', { credentials: 'same-origin' }),
+      )
       if (!response.ok) {
         clearSession()
         return false
@@ -62,28 +135,27 @@ export function useAdminApi() {
     } catch {
       clearSession()
       return false
-    } finally {
-      loading.value = false
     }
   }
 
   async function authenticateToken(token: string, showSuccess = true) {
     const trimmedToken = token.trim()
     if (!trimmedToken) {
-      setStatus('请输入管理凭证', true)
+      notifications.error('请输入管理凭证')
       return false
     }
 
-    loading.value = true
     try {
-      const response = await fetch('/api/admin/session', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({ token: trimmedToken }),
-      })
+      const response = await trackRequest(() =>
+        fetch('/api/admin/session', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify({ token: trimmedToken }),
+        }),
+      )
 
       if (!response.ok) {
         throw new Error(
@@ -98,95 +170,103 @@ export function useAdminApi() {
       authenticated.value = true
       await loadAll()
       if (showSuccess) {
-        setStatus('已进入管理台')
+        notifications.success('已进入管理控制台')
       }
       return true
     } catch (error) {
       clearSession()
-      setStatus(error instanceof Error ? error.message : '管理凭证无效', true)
+      notifications.error(requestErrorMessage(error, '管理凭证无效'))
       return false
-    } finally {
-      loading.value = false
-    }
-  }
-
-  async function adminFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!tokenReady.value) {
-      throw new Error('请先输入管理凭证')
-    }
-
-    const method = (init.method ?? 'GET').toUpperCase()
-    const response = await fetch(path, {
-      ...init,
-      credentials: 'same-origin',
-      headers: {
-        ...(init.body ? { 'content-type': 'application/json' } : {}),
-        ...(method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
-          ? {}
-          : { 'x-adscope-csrf-token': csrfToken.value }),
-        ...init.headers,
-      },
-    })
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        clearSession()
-        throw new Error('管理会话已失效，请重新登录')
-      }
-      throw new Error(`${response.status} ${response.statusText}`)
-    }
-
-    if (response.status === 204) {
-      return undefined as T
-    }
-
-    return (await response.json()) as T
-  }
-
-  async function runAction(action: () => Promise<void>, options: AdminRequestOptions = {}) {
-    loading.value = true
-    try {
-      await action()
-      if (options.successMessage) {
-        setStatus(options.successMessage)
-      }
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : '请求失败', true)
-    } finally {
-      loading.value = false
     }
   }
 
   async function loadDomains() {
-    const response = await adminFetch<{ domains: Domain[] }>('/api/admin/domains')
-    domains.value = response.domains
+    domainsLoading.value = true
+    try {
+      const response = await adminFetch<{
+        domains: Domain[]
+        attribute_defaults: DomainAttributeDefaults
+      }>('/api/admin/domains')
+      domains.value = response.domains
+      domainAttributeDefaults.value = response.attribute_defaults
+    } finally {
+      domainsLoading.value = false
+    }
   }
 
   async function loadOus() {
-    const response = await adminFetch<{ organizational_units: OrganizationalUnit[] }>(
-      '/api/admin/ous/tree',
-    )
-    organizationalUnits.value = response.organizational_units
+    ousLoading.value = true
+    try {
+      const response = await adminFetch<{ organizational_units: OrganizationalUnit[] }>(
+        '/api/admin/ous/tree',
+      )
+      organizationalUnits.value = response.organizational_units
+    } finally {
+      ousLoading.value = false
+    }
   }
 
   async function loadUsers() {
-    const response = await adminFetch<{ users: UserRecord[] }>('/api/admin/users')
-    users.value = response.users
+    usersLoading.value = true
+    try {
+      const response = await adminFetch<{ users: UserRecord[] }>('/api/admin/users')
+      users.value = response.users
+    } finally {
+      usersLoading.value = false
+    }
   }
 
   async function loadGroups() {
-    const response = await adminFetch<{ groups: GroupRecord[] }>('/api/admin/groups')
-    groups.value = response.groups
+    groupsLoading.value = true
+    try {
+      const response = await adminFetch<{ groups: GroupRecord[] }>('/api/admin/groups')
+      groups.value = response.groups
+    } finally {
+      groupsLoading.value = false
+    }
   }
 
   async function loadSyncDomains() {
-    const response = await adminFetch<{ domains: SyncDomain[] }>('/api/admin/sync/domains')
-    syncDomains.value = response.domains
+    syncLoading.value = true
+    try {
+      const response = await adminFetch<{ domains: SyncDomain[] }>('/api/admin/sync/domains')
+      syncDomains.value = response.domains
+    } finally {
+      syncLoading.value = false
+    }
   }
 
   async function loadOAuthClients() {
-    const response = await adminFetch<{ clients: OAuthClient[] }>('/api/admin/oauth-clients')
-    oauthClients.value = response.clients
+    clientsLoading.value = true
+    try {
+      const response = await adminFetch<{ clients: OAuthClient[] }>('/api/admin/oauth-clients')
+      oauthClients.value = response.clients
+    } finally {
+      clientsLoading.value = false
+    }
+  }
+
+  async function loadDirectory() {
+    await Promise.all([loadOus(), loadUsers(), loadGroups()])
+  }
+
+  async function loadAll() {
+    await Promise.all([loadDirectory(), loadDomains(), loadSyncDomains(), loadOAuthClients()])
+  }
+
+  async function refreshDirectory() {
+    await runAction(async () => {
+      await Promise.all([loadOus(), loadUsers(), loadGroups(), loadSyncDomains()])
+    }, { successMessage: '目录数据已刷新' })
+  }
+
+  async function refreshAll() {
+    await runAction(
+      async () => {
+        await loadAll()
+      },
+      { successMessage: '数据已刷新' },
+    )
   }
 
   async function createOAuthClient(
@@ -233,82 +313,65 @@ export function useAdminApi() {
     )
   }
 
-  async function refreshDirectory() {
-    await runAction(async () => {
-      await Promise.all([loadOus(), loadUsers(), loadGroups(), loadSyncDomains()])
-    }, { successMessage: '目录数据已刷新' })
-  }
-
-  async function refreshAll() {
-    await runAction(async () => {
-      await loadAll()
-    }, { successMessage: '数据已刷新' })
-  }
-
-  async function loadAll() {
-    await Promise.all([
-      loadDomains(),
-      loadOus(),
-      loadUsers(),
-      loadGroups(),
-      loadSyncDomains(),
-      loadOAuthClients(),
-    ])
-  }
-
   async function logout() {
-    if (!tokenReady.value) {
+    if (!authenticated.value) {
       return true
     }
-
-    loading.value = true
     try {
-      const response = await fetch('/api/admin/session', {
-        method: 'DELETE',
-        credentials: 'same-origin',
-        headers: {
-          'x-adscope-csrf-token': csrfToken.value,
-        },
-      })
-      if (!response.ok) {
-        throw new Error(`${response.status} ${response.statusText}`)
-      }
-      clearSession()
-      setStatus('已退出管理台')
-      return true
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : '退出失败', true)
-      return false
+      await trackRequest(() =>
+        fetch('/api/admin/session', {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { 'x-adscope-csrf-token': csrfToken.value },
+        }),
+      )
+    } catch {
+      // 本地会话必须清理，即使服务端不可达。
     } finally {
-      loading.value = false
+      clearSession()
     }
+    notifications.success('已退出管理控制台')
+    return true
   }
 
   return {
+    csrfToken,
+    authenticated,
     tokenReady,
-    loading,
+    pending,
     domains,
+    domainAttributeDefaults,
     organizationalUnits,
     users,
     groups,
     syncDomains,
     oauthClients,
-    restoreSession,
-    authenticateToken,
-    logout,
+    ousLoading,
+    usersLoading,
+    groupsLoading,
+    domainsLoading,
+    syncLoading,
+    clientsLoading,
+    directoryLoading,
     adminFetch,
     runAction,
+    restoreSession,
+    authenticateToken,
     loadDomains,
     loadOus,
     loadUsers,
     loadGroups,
     loadSyncDomains,
     loadOAuthClients,
+    loadDirectory,
+    loadAll,
+    refreshDirectory,
+    refreshAll,
     createOAuthClient,
     updateOAuthClient,
     deleteOAuthClient,
     regenerateOAuthClientSecret,
-    refreshDirectory,
-    refreshAll,
+    clearSession,
+    logout,
   }
 }

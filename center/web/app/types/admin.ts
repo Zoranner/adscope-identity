@@ -58,6 +58,12 @@ export interface DomainMutationResponse {
   connector_key: string
 }
 
+/** 域属性字段的后端默认值：表单占位使用，留空时后端按此回填。 */
+export interface DomainAttributeDefaults {
+  employee_id_attribute: string
+  managed_group_id_attribute: string
+}
+
 export interface OrganizationalUnit {
   id: string
   name: string
@@ -69,6 +75,8 @@ export interface UserRecord {
   employee_id: string
   username: string
   display_name: string
+  surname: string
+  given_name: string
   email: string | null
   mobile: string | null
   telephone: string | null
@@ -114,12 +122,13 @@ export interface UserForm {
   employee_id: string
   username: string
   display_name: string
+  surname: string
+  given_name: string
   email: string
   mobile: string
   organizational_unit_id: string
   status: UserStatus
   initial_password: string
-  reset_password: string
 }
 
 export interface GroupForm {
@@ -132,6 +141,4 @@ export interface GroupForm {
 export interface OuTreeItem {
   ou: OrganizationalUnit
   depth: number
-  userCount: number
-  groupCount: number
 }

@@ -8,8 +8,8 @@ export function blankDomainForm(): DomainForm {
     mirror_root_dn: '',
     quarantine_ou_dn: '',
     upn_suffix: '',
-    employee_id_attribute: 'employeeID',
-    managed_group_id_attribute: 'adminDescription',
+    employee_id_attribute: '',
+    managed_group_id_attribute: '',
   }
 }
 
@@ -26,12 +26,13 @@ export function blankUserForm(): UserForm {
     employee_id: '',
     username: '',
     display_name: '',
+    surname: '',
+    given_name: '',
     email: '',
     mobile: '',
     organizational_unit_id: '',
     status: 'active',
     initial_password: '',
-    reset_password: '',
   }
 }
 
