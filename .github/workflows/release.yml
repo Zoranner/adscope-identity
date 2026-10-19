@@ -1,4 +1,4 @@
-name: 发布
+name: Release
 
 on:
   push:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   validate:
-    name: 校验发布标签
+    name: Validate release tag
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
@@ -45,17 +45,17 @@ jobs:
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
   connector:
-    name: 构建 Windows Connector
+    name: Build Windows Connector
     needs: validate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: 安装 Rust 工具链
+      - name: Install Rust toolchain
         shell: pwsh
         run: rustup toolchain install 1.93.1 --profile minimal
 
-      - name: 编译并组装 Connector
+      - name: Build and package Connector
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         shell: pwsh
@@ -77,13 +77,13 @@ jobs:
           if-no-files-found: error
 
   center:
-    name: 构建 Linux Center
+    name: Build Linux Center
     needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: 构建并导出 Center 镜像
+      - name: Build and export Center image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           IMAGE: ghcr.io/zoranner/adscope-center
@@ -108,18 +108,18 @@ jobs:
           if-no-files-found: error
 
   gateway:
-    name: 构建 Linux Gateway
+    name: Build Linux Gateway
     needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: 安装 Bun
+      - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
 
-      - name: 构建静态前端
+      - name: Build static frontend
         working-directory: center/web
         shell: bash
         run: |
@@ -130,7 +130,7 @@ jobs:
           mkdir -p ../../gateway/web
           cp -R .output/public/. ../../gateway/web/
 
-      - name: 构建并导出 Gateway 镜像
+      - name: Build and export Gateway image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           IMAGE: ghcr.io/zoranner/adscope-gateway
@@ -156,7 +156,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: 创建 GitHub Release
+    name: Create GitHub Release
     needs:
       - validate
       - connector
@@ -179,7 +179,7 @@ jobs:
           name: gateway-release
           path: release
 
-      - name: 生成发布清单与校验和
+      - name: Generate release manifest and checksums
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           REVISION: ${{ github.sha }}
@@ -220,7 +220,7 @@ jobs:
             "$gateway_checksum" "$(basename "$gateway_archive")" \
             "$connector_checksum" "$(basename "$connector_installer")" > release/SHA256SUMS
 
-      - name: 创建或更新 GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
