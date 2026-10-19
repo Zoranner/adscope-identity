@@ -23,7 +23,7 @@ cd ../..
 然后在仓库根目录执行：
 
 ```text
-docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .
+docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.1 .
 ```
 
 镜像内包含 `center/web` 的静态构建产物和网关二进制。Center 镜像不再包含前端。
@@ -56,7 +56,7 @@ docker run -d --name adscope-gateway-sh \
   -e TLS_CERT_FILE=/run/tls/tls.crt \
   -e TLS_KEY_FILE=/run/tls/tls.key \
   -v /srv/adscope/certs/sh-internal:/run/tls:ro \
-  ghcr.io/zoranner/adscope-gateway:0.2.0
+  ghcr.io/zoranner/adscope-gateway:0.2.1
 ```
 
 三个网关使用同一个镜像，只改环境变量和证书：
