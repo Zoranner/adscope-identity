@@ -1,3 +1,4 @@
+import { useNotification } from '@stellar/ui'
 import type {
   PasswordChangeResponse,
   UserContactUpdateResponse,
@@ -5,12 +6,17 @@ import type {
   UserProfile,
 } from '~/types/user'
 
+function requestErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
 export function useUserApi() {
+  const notifications = useNotification()
   const accessToken = useState('user-access-token', () => '')
   const profile = useState<UserProfile | null>('user-profile', () => null)
-  const loading = useState('user-loading', () => false)
+  const pending = useState('user-pending', () => 0)
   const tokenReady = computed(() => accessToken.value.trim().length > 0)
-  const { setStatus } = useUserStatus()
+  const loading = computed(() => pending.value > 0)
 
   function loadToken(): string {
     if (!import.meta.client) {
@@ -29,15 +35,24 @@ export function useUserApi() {
     }
   }
 
+  async function trackRequest<T>(request: () => Promise<T>): Promise<T> {
+    pending.value += 1
+    try {
+      return await request()
+    } finally {
+      pending.value -= 1
+    }
+  }
+
   async function logout(showMessage = true) {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      await trackRequest(() => fetch('/api/auth/logout', { method: 'POST' }))
     } catch {
-      // Local credentials must still be cleared when the server cannot be reached.
+      // 服务端不可达时仍需清理本地登录状态。
     } finally {
       clearToken()
       if (showMessage) {
-        setStatus('已退出登录')
+        notifications.success('已退出登录')
       }
     }
   }
@@ -47,56 +62,60 @@ export function useUserApi() {
       throw new Error('请先登录')
     }
 
-    const response = await fetch(path, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${accessToken.value.trim()}`,
-        ...(init.body ? { 'content-type': 'application/json' } : {}),
-        ...init.headers,
-      },
-    })
+    return await trackRequest(async () => {
+      const response = await fetch(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${accessToken.value.trim()}`,
+          ...(init.body ? { 'content-type': 'application/json' } : {}),
+          ...init.headers,
+        },
+      })
 
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        clearToken()
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearToken()
+        }
+        throw new Error(
+          response.status === 401 || response.status === 403
+            ? '登录已失效，请重新登录'
+            : `${response.status} ${response.statusText}`,
+        )
       }
-      throw new Error(
-        response.status === 401 || response.status === 403
-          ? '登录已失效，请重新登录'
-          : `${response.status} ${response.statusText}`,
-      )
-    }
 
-    return (await response.json()) as T
+      return (await response.json()) as T
+    })
   }
 
   async function login(username: string, password: string): Promise<boolean> {
     const trimmedUsername = username.trim()
     if (!trimmedUsername || !password) {
-      setStatus('请输入用户名和密码', true)
+      notifications.error('请输入用户名和密码')
       return false
     }
 
-    loading.value = true
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          username: trimmedUsername,
-          password,
-        }),
+      const payload = await trackRequest(async () => {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            username: trimmedUsername,
+            password,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error(
+            response.status === 401 || response.status === 403
+              ? '用户名或密码错误'
+              : `${response.status} ${response.statusText}`,
+          )
+        }
+
+        return (await response.json()) as UserLoginResponse
       })
 
-      if (!response.ok) {
-        throw new Error(
-          response.status === 401 || response.status === 403
-            ? '用户名或密码错误'
-            : `${response.status} ${response.statusText}`,
-        )
-      }
-
-      const payload = (await response.json()) as UserLoginResponse
       accessToken.value = payload.access_token
       if (import.meta.client) {
         window.localStorage.setItem('adscope.userAccessToken', payload.access_token)
@@ -105,35 +124,29 @@ export function useUserApi() {
       if (!profileLoaded) {
         throw new Error('登录成功，但无法读取用户资料')
       }
-      setStatus('已登录')
+      notifications.success('已登录')
       return true
     } catch (error) {
       clearToken()
-      setStatus(error instanceof Error ? error.message : '登录失败', true)
+      notifications.error(requestErrorMessage(error, '登录失败'))
       return false
-    } finally {
-      loading.value = false
     }
   }
 
   async function loadMe(showError = true): Promise<boolean> {
-    loading.value = true
     try {
       profile.value = await userFetch<UserProfile>('/api/me')
       return true
     } catch (error) {
       clearToken()
       if (showError) {
-        setStatus(error instanceof Error ? error.message : '无法读取用户资料', true)
+        notifications.error(requestErrorMessage(error, '无法读取用户资料'))
       }
       return false
-    } finally {
-      loading.value = false
     }
   }
 
   async function updateContact(email: string | null, mobile: string | null): Promise<boolean> {
-    loading.value = true
     try {
       const response = await userFetch<UserContactUpdateResponse>('/api/me/contact', {
         method: 'PATCH',
@@ -144,23 +157,20 @@ export function useUserApi() {
         }),
       })
       profile.value = response.profile
-      setStatus('联系方式已保存')
+      notifications.success('联系方式已保存')
       return true
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '联系方式保存失败', true)
+      notifications.error(requestErrorMessage(error, '联系方式保存失败'))
       return false
-    } finally {
-      loading.value = false
     }
   }
 
   async function changePassword(currentPassword: string, newPassword: string): Promise<boolean> {
     if (!currentPassword || !newPassword) {
-      setStatus('请输入当前密码和新密码', true)
+      notifications.error('请输入当前密码和新密码')
       return false
     }
 
-    loading.value = true
     try {
       await userFetch<PasswordChangeResponse>('/api/me/password', {
         method: 'POST',
@@ -169,13 +179,11 @@ export function useUserApi() {
           new_password: newPassword,
         }),
       })
-      setStatus('密码已修改')
+      notifications.success('密码已修改')
       return true
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : '密码修改失败', true)
+      notifications.error(requestErrorMessage(error, '密码修改失败'))
       return false
-    } finally {
-      loading.value = false
     }
   }
 

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { Database, LogIn, ShieldCheck, UserRound, X } from 'lucide-vue-next'
-import { Button, Spinner } from '@stellar/ui'
+import { Button, Card, Spinner } from '@stellar/ui'
 import type { OidcAuthorizationContext } from '~/types/oidc'
 import { authorizationFormFields } from '~/utils/oidc'
 
@@ -110,125 +109,119 @@ watch(
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="topbar">
-      <NuxtLink class="brand" to="/login">
-        <span class="brand-mark">
-          <Database :size="22" />
-        </span>
-        <span class="brand-copy">
-          <span class="brand-title">Adscope Center</span>
-          <span class="brand-subtitle">身份授权</span>
-        </span>
-      </NuxtLink>
-    </header>
-
-    <main class="credential-screen">
-      <section v-if="loading" class="credential-card" aria-live="polite">
+  <UserShell title="Adscope Center">
+    <main class="grid items-start justify-items-center p-[var(--spacing-xl)]">
+      <Card
+        v-if="loading"
+        class="w-full max-w-[44rem]"
+        title="正在读取授权请求"
+        :hoverable="false"
+        aria-live="polite"
+      >
         <Spinner />
-        <div>
-          <h1>正在读取授权请求</h1>
-          <p>请稍候。</p>
-        </div>
-      </section>
+        <p class="m-0 text-[var(--text-sm)] text-[var(--st-text-muted)]">请稍候。</p>
+      </Card>
 
-      <section v-else-if="errorMessage" class="credential-card" role="alert">
-        <div>
-          <h1>无法继续授权</h1>
-          <p class="form-error">{{ errorMessage }}</p>
-        </div>
-        <Button variant="outline" type="button" @click="loadAuthorizationContext">
-          <template #icon><LogIn :size="16" /></template>
+      <Card
+        v-else-if="errorMessage"
+        class="w-full max-w-[44rem]"
+        title="无法继续授权"
+        :hoverable="false"
+        role="alert"
+      >
+        <p class="m-0 text-[var(--text-sm)] text-[var(--st-text-muted)]">{{ errorMessage }}</p>
+        <Button icon="ph:arrows-clockwise" type="button" @click="loadAuthorizationContext">
           重新读取
         </Button>
-      </section>
+      </Card>
 
       <form
         v-else-if="context"
-        class="credential-card authorization-card"
+        class="w-full max-w-[44rem]"
         method="post"
         action="/oauth2/authorize"
       >
-        <div>
-          <h1>{{ context.client_name }} 请求访问</h1>
-          <p>确认后，该应用将获得下列账号信息。</p>
-        </div>
+        <Card :title="`${context.client_name} 请求访问`" :hoverable="false">
+          <div class="grid gap-[var(--spacing-lg)]">
+            <p class="m-0 text-[var(--text-sm)] text-[var(--st-text-muted)]">
+              确认后，该应用将获得下列账号信息。
+            </p>
 
-        <section class="authorization-section authorization-account">
-          <div class="panel-title">
-            <UserRound :size="18" />
-            <h2>当前账号</h2>
+            <section class="grid gap-[var(--spacing-md)]">
+              <h2 class="m-0 text-[15px] font-semibold">当前账号</h2>
+              <dl class="m-0 grid gap-[var(--spacing-md)]">
+                <div class="grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)] gap-[var(--spacing-md)]">
+                  <dt class="text-[var(--st-text-muted)]">显示名</dt>
+                  <dd class="m-0 [overflow-wrap:anywhere]">{{ context.user.display_name }}</dd>
+                </div>
+                <div class="grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)] gap-[var(--spacing-md)]">
+                  <dt class="text-[var(--st-text-muted)]">用户名</dt>
+                  <dd class="m-0 [overflow-wrap:anywhere]">{{ context.user.username }}</dd>
+                </div>
+                <div class="grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)] gap-[var(--spacing-md)]">
+                  <dt class="text-[var(--st-text-muted)]">工号</dt>
+                  <dd class="m-0 [overflow-wrap:anywhere]">{{ context.user.employee_id }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="grid gap-[var(--spacing-md)]">
+              <h2 class="m-0 text-[15px] font-semibold">提供的信息</h2>
+              <dl class="m-0 grid gap-[var(--spacing-md)]">
+                <div
+                  v-for="[name, value] in claimEntries"
+                  :key="name"
+                  class="grid grid-cols-[minmax(6rem,9rem)_minmax(0,1fr)] gap-[var(--spacing-md)]"
+                >
+                  <dt class="text-[var(--st-text-muted)]">{{ name }}</dt>
+                  <dd class="m-0 [overflow-wrap:anywhere]">{{ claimValue(value) }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <input
+              v-for="field in formFields"
+              :key="field.name"
+              type="hidden"
+              :name="field.name"
+              :value="field.value"
+            />
+            <input type="hidden" name="csrf_token" :value="context.csrf_token" />
+
+            <div class="flex flex-wrap items-center gap-[var(--spacing-md)]">
+              <Button
+                variant="solid"
+                semantic="primary"
+                type="submit"
+                name="decision"
+                value="approve"
+                icon="ph:shield-check"
+                :disabled="switchingAccount"
+              >
+                确认授权
+              </Button>
+              <Button
+                type="submit"
+                name="decision"
+                value="cancel"
+                icon="ph:x"
+                :disabled="switchingAccount"
+              >
+                取消
+              </Button>
+              <Button
+                variant="text"
+                type="button"
+                icon="ph:sign-in"
+                :disabled="switchingAccount"
+                @click="switchAccount"
+              >
+                切换账号
+              </Button>
+            </div>
           </div>
-          <dl class="profile-list">
-            <div>
-              <dt>显示名</dt>
-              <dd>{{ context.user.display_name }}</dd>
-            </div>
-            <div>
-              <dt>用户名</dt>
-              <dd>{{ context.user.username }}</dd>
-            </div>
-            <div>
-              <dt>工号</dt>
-              <dd>{{ context.user.employee_id }}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section class="authorization-section authorization-claims">
-          <div class="panel-title">
-            <ShieldCheck :size="18" />
-            <h2>提供的信息</h2>
-          </div>
-          <dl class="profile-list authorization-claims-list">
-            <div v-for="[name, value] in claimEntries" :key="name">
-              <dt>{{ name }}</dt>
-              <dd>{{ claimValue(value) }}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <input
-          v-for="field in formFields"
-          :key="field.name"
-          type="hidden"
-          :name="field.name"
-          :value="field.value"
-        />
-        <input type="hidden" name="csrf_token" :value="context.csrf_token" />
-
-        <div class="form-actions">
-          <Button
-            variant="solid"
-            type="submit"
-            name="decision"
-            value="approve"
-            :disabled="switchingAccount"
-          >
-            <template #icon><ShieldCheck :size="16" /></template>
-            确认授权
-          </Button>
-          <Button
-            variant="outline"
-            type="submit"
-            name="decision"
-            value="cancel"
-            :disabled="switchingAccount"
-          >
-            <template #icon><X :size="16" /></template>
-            取消
-          </Button>
-          <Button
-            variant="text"
-            type="button"
-            :disabled="switchingAccount"
-            @click="switchAccount"
-          >
-            <template #icon><LogIn :size="16" /></template>
-            切换账号
-          </Button>
-        </div>
+        </Card>
       </form>
     </main>
-  </div>
+  </UserShell>
 </template>

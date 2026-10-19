@@ -4,6 +4,8 @@ export interface UserProfile {
   employee_id: string
   username: string
   display_name: string
+  surname: string
+  given_name: string
   email: string | null
   mobile: string | null
   telephone: string | null
