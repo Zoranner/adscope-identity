@@ -1,4 +1,7 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, ensure};
 use url::Url;
@@ -7,7 +10,8 @@ const ISSUER_ENV: &str = "OIDC_ISSUER";
 const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "OIDC_LOOPBACK_HTTP";
 const AUTHORIZATION_CODE_TTL_SECONDS: u64 = 120;
 const TOKEN_TTL_SECONDS: u64 = 300;
-const PRIVATE_KEY_PATH: &str = "/run/secrets/oidc-private-key.pem";
+const CONTAINER_PRIVATE_KEY_PATH: &str = "/run/secrets/oidc-private-key.pem";
+const LOCAL_PRIVATE_KEY_PATH: &str = "secrets/oidc-private-key.pem";
 
 #[derive(Clone)]
 pub struct OidcConfig {
@@ -54,7 +58,9 @@ impl OidcConfig {
     }
 
     pub fn from_env() -> anyhow::Result<Self> {
-        Self::from_env_with_private_key_path(Path::new(Self::private_key_path()))
+        let working_directory =
+            std::env::current_dir().context("failed to determine working directory")?;
+        Self::from_env_with_private_key_path(&Self::private_key_path_from(&working_directory))
     }
 
     pub(crate) fn from_env_with_private_key_path(private_key_path: &Path) -> anyhow::Result<Self> {
@@ -82,8 +88,13 @@ impl OidcConfig {
         )
     }
 
-    pub(crate) fn private_key_path() -> &'static str {
-        PRIVATE_KEY_PATH
+    pub(crate) fn private_key_path_from(working_directory: &Path) -> PathBuf {
+        let local_private_key_path = working_directory.join(LOCAL_PRIVATE_KEY_PATH);
+        if local_private_key_path.is_file() {
+            local_private_key_path
+        } else {
+            PathBuf::from(CONTAINER_PRIVATE_KEY_PATH)
+        }
     }
 
     pub fn issuer(&self) -> &str {
@@ -141,10 +152,32 @@ mod tests {
     }
 
     #[test]
-    fn private_key_path_is_fixed_inside_the_container() {
+    fn local_private_key_path_is_preferred_from_working_directory() {
+        let temporary_directory = std::env::temp_dir().join(format!(
+            "adscope-oidc-config-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let local_private_key = temporary_directory.join("secrets/oidc-private-key.pem");
+        std::fs::create_dir_all(local_private_key.parent().unwrap()).unwrap();
+        std::fs::write(&local_private_key, PRIVATE_KEY).unwrap();
+
         assert_eq!(
-            OidcConfig::private_key_path(),
-            "/run/secrets/oidc-private-key.pem"
+            OidcConfig::private_key_path_from(&temporary_directory),
+            local_private_key
+        );
+
+        std::fs::remove_dir_all(temporary_directory).unwrap();
+    }
+
+    #[test]
+    fn container_private_key_path_is_used_without_local_key() {
+        assert_eq!(
+            OidcConfig::private_key_path_from(Path::new("missing-working-directory")),
+            Path::new("/run/secrets/oidc-private-key.pem")
         );
     }
 }

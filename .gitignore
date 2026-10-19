@@ -9,3 +9,8 @@ dist/
 /.vscode/
 *.log
 .env
+/secrets/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
