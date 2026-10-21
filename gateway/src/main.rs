@@ -1,4 +1,4 @@
-use adscope_gateway::{AppState, Config, router};
+use adscope_gateway::{AppState, Config, ListenerTls, router};
 use anyhow::Context;
 use axum_server::tls_rustls::RustlsConfig;
 
@@ -13,22 +13,36 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("failed to install rustls crypto provider"))?;
 
     let config = Config::from_env()?;
-    let tls = RustlsConfig::from_pem_file(&config.tls_cert_file, &config.tls_key_file)
-        .await
-        .context("failed to load TLS certificate or key")?;
     let state = AppState::new(&config)?;
     let listen_addr = config.listen_addr;
+    let tls = config.tls.clone();
 
     tracing::info!(
         %listen_addr,
         center_url = %config.center_url,
+        public_issuer = config.public_issuer.origin(),
         login_enabled = config.login_enabled,
         admin_enabled = config.admin_enabled,
         "starting Adscope gateway"
     );
 
-    axum_server::bind_rustls(listen_addr, tls)
-        .serve(router(state).into_make_service())
-        .await?;
+    match tls {
+        ListenerTls::Https {
+            cert_file,
+            key_file,
+        } => {
+            let tls = RustlsConfig::from_pem_file(&cert_file, &key_file)
+                .await
+                .context("failed to load TLS certificate or key")?;
+            axum_server::bind_rustls(listen_addr, tls)
+                .serve(router(state).into_make_service())
+                .await?;
+        }
+        ListenerTls::Http => {
+            axum_server::bind(listen_addr)
+                .serve(router(state).into_make_service())
+                .await?;
+        }
+    }
     Ok(())
 }

@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::State,
-    http::{HeaderName, Request, StatusCode, header::CACHE_CONTROL},
+    http::{HeaderName, Request, StatusCode, header, header::CACHE_CONTROL},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
@@ -15,6 +15,85 @@ use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
 const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8443";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicIssuer {
+    origin: String,
+    host: String,
+}
+
+impl PublicIssuer {
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        let value = value.trim();
+        let url = Url::parse(value).context("PUBLIC_ISSUER must be an absolute URL")?;
+        if url.scheme() != "https" {
+            bail!("PUBLIC_ISSUER must use HTTPS");
+        }
+        if url.host().is_none() {
+            bail!("PUBLIC_ISSUER must include a host");
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            bail!("PUBLIC_ISSUER must not include userinfo");
+        }
+        if url.query().is_some() {
+            bail!("PUBLIC_ISSUER must not include a query");
+        }
+        if url.fragment().is_some() {
+            bail!("PUBLIC_ISSUER must not include a fragment");
+        }
+        if url.path() != "/" {
+            bail!("PUBLIC_ISSUER path must be '/' or empty");
+        }
+
+        let host = url
+            .host_str()
+            .expect("validated PUBLIC_ISSUER has a host")
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if host.is_empty() {
+            bail!("PUBLIC_ISSUER host must not be empty");
+        }
+        let mut normalized = url;
+        normalized
+            .set_host(Some(&host))
+            .expect("validated PUBLIC_ISSUER host must remain valid");
+        normalized.set_path("");
+        let origin = normalized.as_str().trim_end_matches('/').to_string();
+        let host = origin
+            .strip_prefix("https://")
+            .expect("validated PUBLIC_ISSUER uses HTTPS")
+            .to_string();
+        Ok(Self { origin, host })
+    }
+
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenerTls {
+    Http,
+    Https { cert_file: String, key_file: String },
+}
+
+fn listener_tls(
+    cert_file: Option<String>,
+    key_file: Option<String>,
+) -> anyhow::Result<ListenerTls> {
+    match (cert_file, key_file) {
+        (None, None) => Ok(ListenerTls::Http),
+        (Some(cert_file), Some(key_file)) => Ok(ListenerTls::Https {
+            cert_file,
+            key_file,
+        }),
+        _ => bail!("TLS_CERT_FILE and TLS_KEY_FILE must be set together"),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
@@ -26,6 +105,7 @@ pub enum Gate {
 pub struct AppState {
     client: Client,
     center_url: Url,
+    public_issuer_host: String,
     login_enabled: bool,
     admin_enabled: bool,
     web_root: PathBuf,
@@ -35,10 +115,10 @@ pub struct AppState {
 pub struct Config {
     pub listen_addr: SocketAddr,
     pub center_url: Url,
+    pub public_issuer: PublicIssuer,
     pub login_enabled: bool,
     pub admin_enabled: bool,
-    pub tls_cert_file: String,
-    pub tls_key_file: String,
+    pub tls: ListenerTls,
     pub web_root: PathBuf,
 }
 
@@ -59,6 +139,13 @@ impl Config {
         if center_url.query().is_some() || center_url.fragment().is_some() {
             bail!("CENTER_URL must not include query or fragment");
         }
+        let public_issuer = std::env::var("PUBLIC_ISSUER")
+            .context("PUBLIC_ISSUER is required")
+            .and_then(|value| PublicIssuer::parse(&value))?;
+        let tls = listener_tls(
+            optional_env("TLS_CERT_FILE")?,
+            optional_env("TLS_KEY_FILE")?,
+        )?;
 
         let web_root = default_web_root();
         if !web_root.join("index.html").is_file() {
@@ -68,10 +155,10 @@ impl Config {
         Ok(Self {
             listen_addr,
             center_url,
+            public_issuer,
             login_enabled: parse_bool_env("LOGIN_ENABLED", true)?,
             admin_enabled: parse_bool_env("ADMIN_ENABLED", true)?,
-            tls_cert_file: std::env::var("TLS_CERT_FILE").context("TLS_CERT_FILE is required")?,
-            tls_key_file: std::env::var("TLS_KEY_FILE").context("TLS_KEY_FILE is required")?,
+            tls,
             web_root,
         })
     }
@@ -89,6 +176,7 @@ impl AppState {
         Ok(Self {
             client,
             center_url: config.center_url.clone(),
+            public_issuer_host: config.public_issuer.host().to_string(),
             login_enabled: config.login_enabled,
             admin_enabled: config.admin_enabled,
             web_root: config.web_root.clone(),
@@ -103,6 +191,7 @@ impl AppState {
                 .build()
                 .expect("test HTTP client must build"),
             center_url: Url::parse("http://127.0.0.1:1").expect("test URL must parse"),
+            public_issuer_host: "auth.example.test".to_string(),
             login_enabled,
             admin_enabled,
             web_root,
@@ -211,6 +300,7 @@ async fn forward(state: AppState, request: Request<Body>) -> anyhow::Result<Resp
         }
         upstream = upstream.header(name, value);
     }
+    upstream = upstream.header(header::HOST, &state.public_issuer_host);
 
     let body = request.into_body();
     let response = upstream
@@ -327,6 +417,14 @@ fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
     }
 }
 
+fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn parse_bool_value(value: &str) -> Option<bool> {
     match value {
         "true" => Some(true),
@@ -355,9 +453,122 @@ fn default_web_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::header::CONTENT_TYPE;
+    use axum::http::{HeaderMap, header::CONTENT_TYPE};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn public_issuer_is_normalized_and_rejects_invalid_origins() {
+        assert_eq!(
+            PublicIssuer::parse("https://auth-a.example.com.:443")
+                .unwrap()
+                .origin(),
+            "https://auth-a.example.com"
+        );
+        assert_eq!(
+            PublicIssuer::parse("https://auth-a.example.com.:443")
+                .unwrap()
+                .host(),
+            "auth-a.example.com"
+        );
+
+        for value in [
+            "http://auth-a.example.com",
+            "https://auth-a.example.com/path",
+            "https://auth-a.example.com?query=value",
+            "https://auth-a.example.com#fragment",
+            "https://user@auth-a.example.com",
+        ] {
+            assert!(PublicIssuer::parse(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn tls_files_must_be_configured_together() {
+        assert_eq!(listener_tls(None, None).unwrap(), ListenerTls::Http);
+        assert_eq!(
+            listener_tls(Some("cert.pem".into()), Some("key.pem".into())).unwrap(),
+            ListenerTls::Https {
+                cert_file: "cert.pem".into(),
+                key_file: "key.pem".into(),
+            }
+        );
+        assert!(listener_tls(Some("cert.pem".into()), None).is_err());
+        assert!(listener_tls(None, Some("key.pem".into())).is_err());
+    }
+
+    fn clear_gateway_env() {
+        unsafe {
+            for name in [
+                "CENTER_URL",
+                "WEB_ROOT",
+                "PUBLIC_ISSUER",
+                "TLS_CERT_FILE",
+                "TLS_KEY_FILE",
+                "LOGIN_ENABLED",
+                "ADMIN_ENABLED",
+            ] {
+                std::env::remove_var(name);
+            }
+        }
+    }
+
+    fn set_gateway_env(web_root: &std::path::Path, public_issuer: Option<&str>) {
+        unsafe {
+            std::env::set_var("CENTER_URL", "https://core.example.com");
+            std::env::set_var("WEB_ROOT", web_root);
+            match public_issuer {
+                Some(value) => std::env::set_var("PUBLIC_ISSUER", value),
+                None => std::env::remove_var("PUBLIC_ISSUER"),
+            }
+        }
+    }
+
+    #[test]
+    fn config_requires_public_issuer() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_gateway_env();
+        let web_root = test_web_root();
+        set_gateway_env(&web_root, None);
+
+        let error = Config::from_env().unwrap_err();
+        assert!(error.to_string().contains("PUBLIC_ISSUER is required"));
+
+        clear_gateway_env();
+        std::fs::remove_dir_all(web_root).ok();
+    }
+
+    #[test]
+    fn config_reads_public_issuer_and_listener_mode() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_gateway_env();
+        let web_root = test_web_root();
+        set_gateway_env(&web_root, Some("https://auth-a.example.com.:443"));
+
+        let config = Config::from_env().unwrap();
+        assert_eq!(config.public_issuer.origin(), "https://auth-a.example.com");
+        assert_eq!(config.public_issuer.host(), "auth-a.example.com");
+        assert_eq!(config.tls, ListenerTls::Http);
+
+        unsafe {
+            std::env::set_var("TLS_CERT_FILE", "cert.pem");
+            std::env::set_var("TLS_KEY_FILE", "key.pem");
+        }
+        assert!(matches!(
+            Config::from_env().unwrap().tls,
+            ListenerTls::Https { .. }
+        ));
+
+        unsafe {
+            std::env::remove_var("TLS_KEY_FILE");
+        }
+        assert!(Config::from_env().is_err());
+
+        clear_gateway_env();
+        std::fs::remove_dir_all(web_root).ok();
+    }
 
     #[test]
     fn classifies_login_paths() {
@@ -496,6 +707,57 @@ mod tests {
         assert!(String::from_utf8_lossy(&body).contains("console.log('adscope')"));
 
         std::fs::remove_dir_all(web_root).unwrap();
+    }
+
+    async fn mock_center() -> (Url, tokio::task::JoinHandle<()>) {
+        let app = Router::new().fallback(|headers: HeaderMap| async move {
+            Json(json!({
+                "host": headers
+                    .get(header::HOST)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+            }))
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (Url::parse(&format!("http://{address}")).unwrap(), handle)
+    }
+
+    #[tokio::test]
+    async fn forwarded_requests_override_client_host_with_public_issuer() {
+        let (center_url, handle) = mock_center().await;
+        let web_root = test_web_root();
+        let config = Config {
+            listen_addr: "127.0.0.1:0".parse().unwrap(),
+            center_url,
+            public_issuer: PublicIssuer::parse("https://auth-a.example.com").unwrap(),
+            login_enabled: true,
+            admin_enabled: true,
+            tls: ListenerTls::Http,
+            web_root: web_root.clone(),
+        };
+        let response = router(AppState::new(&config).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/me")
+                    .header(header::HOST, "attacker.example.test")
+                    .header("x-forwarded-host", "attacker.example.test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["host"], "auth-a.example.com");
+
+        handle.abort();
+        std::fs::remove_dir_all(web_root).ok();
     }
 
     fn test_web_root() -> PathBuf {
