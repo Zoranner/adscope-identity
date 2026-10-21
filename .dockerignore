@@ -7,7 +7,7 @@ node_modules/
 .nuxt/
 .output/
 dist/
-gateway/web/dist/
+portal/web/dist/
 *.log
 .idea/
 .vscode/

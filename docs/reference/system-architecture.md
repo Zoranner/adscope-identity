@@ -4,7 +4,7 @@
 
 Adscope 管理多个独立 Windows Server AD 域中的组织结构、用户、组和密码，并为预登记应用提供受限的 OIDC 统一登录。
 
-系统只有一个 Core（当前代码名 Center）、三个 Portal（内网入口 A、内网入口 B、外网）和四个 Syncer（四个局域网、四个 AD 域，当前代码名 Connector）：
+系统只有一个 Core、三个 Portal（内网入口 A、内网入口 B、外网）和四个 Syncer（四个局域网、四个 AD 域）：
 
 - Core 是账号、目录、凭据、OIDC 客户端和一次性授权码的唯一事实源，保存唯一 RSA 签名私钥，但不是 OIDC issuer。
 - Portal 是每个网络的认证入口和 OIDC issuer，负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不持有签名私钥。
@@ -12,7 +12,7 @@ Adscope 管理多个独立 Windows Server AD 域中的组织结构、用户、�
 
 Web 是构建进 Portal 镜像的 Nuxt 静态应用，不单独保存业务状态。Core 只提供 API、OIDC 和数据面，不托管前端。
 
-同步方向固定为 Center 到各 AD 域。域内人工修改不回写 Center，也不传播到其他域。没有统一事实源时，不允许让多个域或站点各自写本地主库后再自动合并。
+同步方向固定为 Core 到各 AD 域。域内人工修改不回写 Core，也不传播到其他域。没有统一事实源时，不允许让多个域或站点各自写本地主库后再自动合并。
 
 ## 网络架构
 
@@ -67,11 +67,11 @@ Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HT
 - 内网入口 A、内网入口 B Portal 设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
 - 外网 Portal 设置 `ADMIN_ENABLED=false`。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
-- `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Connector 同步。
+- `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Syncer 同步。
 - Core 不参与开关判断。
 - Portal 在返回前端或转发 API 前判断这两组路径；只能整站开关的实现无法独立控制登录和管理。
 
-`adscope-gateway` 是仓库内的 Rust crate，用 axum/axum-server 处理 HTTP/TLS，用 reqwest 流式转发，不依赖 nginx/Caddy。
+`adscope-portal` 是仓库内的 Rust crate，用 axum/axum-server 处理 HTTP/TLS，用 reqwest 流式转发，不依赖 nginx/Caddy。
 
 ### Portal 安全边界
 
@@ -84,10 +84,10 @@ Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HT
 
 | 单元 | 主要职责 | 明确不承担 |
 | --- | --- | --- |
-| Core（`adscope-center`） | HTTP API、用户登录、管理会话、OIDC Provider、密码保护、同步控制面、SQLite | 域控写入、TLS 证书管理、前端托管、多主复制 |
-| Syncer（`adscope-connector`，Windows 服务） | 配置、本地 state、HTTP 拉取、LDAP 执行、运行日志 | 业务事实源、用户目录、OIDC 签发 |
+| Core（`adscope-core`） | HTTP API、用户登录、管理会话、OIDC Provider、密码保护、同步控制面、SQLite | 域控写入、TLS 证书管理、前端托管、多主复制 |
+| Syncer（`adscope-syncer`，Windows 服务） | 配置、本地 state、HTTP 拉取、LDAP 执行、运行日志 | 业务事实源、用户目录、OIDC 签发 |
 | Web | Nuxt 静态前端，构建进 Portal 镜像 | 独立业务状态、独立 API |
-| Portal（`adscope-gateway`） | TLS 终止或 HTTP 监听、静态前端、API/OIDC 转发、Host 覆盖、入口开关 | OIDC 签名、身份目录、Token 存储 |
+| Portal（`adscope-portal`） | TLS 终止或 HTTP 监听、静态前端、API/OIDC 转发、Host 覆盖、入口开关 | OIDC 签名、身份目录、Token 存储 |
 
 Core 当前按单实例部署。SQLite 文件位于进程工作目录的 `data/adscope.db`，不支持多个 Core 副本共享同一文件并发写入。
 
@@ -97,17 +97,17 @@ Core 当前按单实例部署。SQLite 文件位于进程工作目录的 `data/a
 | --- | --- |
 | `adscope-protocol` | 同步对象、请求响应、目录执行计划和共享数据结构 |
 | `adscope-store` | 数据库模型、Repository、revision、OAuth 客户端和授权码持久化 |
-| `adscope-center` | Center API、认证、OIDC、管理面、密码处理和同步控制面 |
-| `adscope-connector` | Windows 服务、配置、本地 state、HTTP 客户端和域控执行 |
-| `adscope-gateway` | Portal 的 TLS/HTTP 监听、静态前端托管、API/OIDC 转发、Host 覆盖和入口开关 |
-| `gateway/web` | Nuxt 页面源码 |
-| `gateway/static` | Portal 镜像内置的静态构建产物 |
+| `adscope-core` | Core API、认证、OIDC、管理面、密码处理和同步控制面 |
+| `adscope-syncer` | Windows 服务、配置、本地 state、HTTP 客户端和域控执行 |
+| `adscope-portal` | Portal 的 TLS/HTTP 监听、静态前端托管、API/OIDC 转发、Host 覆盖和入口开关 |
+| `portal/web` | Nuxt 页面源码 |
+| `portal/static` | Portal 镜像内置的静态构建产物 |
 
-`adscope-gateway` 用 axum/axum-server 处理 HTTP 或 TLS，用 reqwest 流式转发 `/api/*`、`/oauth2/*`、`/.well-known/*`，其余路径返回 `gateway/static` 的静态构建产物。它不实现 OIDC 签名、不保存用户/Token/私钥；Core 不托管前端。
+`adscope-portal` 用 axum/axum-server 处理 HTTP 或 TLS，用 reqwest 流式转发 `/api/*`、`/oauth2/*`、`/.well-known/*`，其余路径返回 `portal/static` 的静态构建产物。它不实现 OIDC 签名、不保存用户/Token/私钥；Core 不托管前端。
 
-中心服务内部按职责分为：
+Core 内部按职责分为：
 
-- `routes.rs`：普通用户登录、自助接口、Connector 同步和 API 总路由。
+- `routes.rs`：普通用户登录、自助接口、Syncer 同步和 API 总路由。
 - `routes/admin.rs`：域、OU、用户、组、密码重置和同步状态。
 - `routes/management_session.rs`：部署级管理凭证到浏览器会话的转换。
 - `routes/oauth_clients.rs`：OIDC 客户端管理。
@@ -118,14 +118,14 @@ Core 当前按单实例部署。SQLite 文件位于进程工作目录的 `data/a
 
 ## 身份与信任边界
 
-`employee_id` 是跨域人员主键，由 Center 分配并保持稳定。OIDC 的 `sub` 直接使用 `employee_id`，不做 pairwise。`username`、邮箱、显示名和工号属性都不是跨域人员主键。
+`employee_id` 是跨域人员主键，由 Core 分配并保持稳定。OIDC 的 `sub` 直接使用 `employee_id`，不做 pairwise。`username`、邮箱、显示名和工号属性都不是跨域人员主键。
 
 系统使用五类互不替代的凭据：
 
 - 普通用户 Bearer token：只用于 `/api/me/*`。
 - `adscope_sso` Cookie：只用于浏览器 OIDC 授权流程。
 - `adscope_management` Cookie：只用于管理面，写操作还需要 CSRF 请求头。
-- Connector key：按域绑定，只用于 `/api/connector/*`。
+- Syncer key：按域绑定，只用于 `/api/syncer/*`。
 - OIDC ID Token 和 access token：ID Token 用于依赖方确认人员，access token 只用于 `/oauth2/userinfo`。
 
 管理面没有管理员账号、角色或审批流。部署级 `MANAGEMENT_TOKEN` 只用于建立 8 小时管理会话，浏览器不持久化该 token。
@@ -136,15 +136,15 @@ OIDC 客户端由管理员预先登记，不接受动态注册。Web 客户端�
 
 ### 目录与凭据同步
 
-Center 在同一个事务中分配 revision，并把 OU、用户、组、组成员或凭据写入当前事实表。Connector 每轮执行：
+Core 在同一个事务中分配 revision，并把 OU、用户、组、组成员或凭据写入当前事实表。Syncer 每轮执行：
 
 ```text
 读取本地 applied revisions
-→ POST /api/connector/sync
+→ POST /api/syncer/sync
 → 执行目录批次
-→ 目录成功后 POST /api/connector/confirm
+→ 目录成功后 POST /api/syncer/confirm
 → 执行凭据批次
-→ 凭据成功后 POST /api/connector/confirm
+→ 凭据成功后 POST /api/syncer/confirm
 → confirm accepted 后写本地 state
 → 等待下一轮
 ```
@@ -153,11 +153,11 @@ Center 在同一个事务中分配 revision，并把 OU、用户、组、组成�
 
 ### 用户自助
 
-用户使用 Center 用户名和密码登录，成功后得到短期 HMAC Bearer token，同时设置 `adscope_sso` Cookie。自助接口只允许查看本人资料、修改 `email`、`mobile`、`telephone` 和修改本人密码。
+用户使用 Core 用户名和密码登录，成功后得到短期 HMAC Bearer token，同时设置 `adscope_sso` Cookie。自助接口只允许查看本人资料、修改 `email`、`mobile`、`telephone` 和修改本人密码。
 
 ### 管理会话
 
-管理员提交部署级管理凭证后，Center 签发独立的管理 Cookie 和随机 CSRF nonce。页面刷新通过会话查询恢复状态；所有写操作同时校验 Cookie 和 CSRF 请求头。Center 不保存管理会话记录。
+管理员提交部署级管理凭证后，Core 签发独立的管理 Cookie 和随机 CSRF nonce。页面刷新通过会话查询恢复状态；所有写操作同时校验 Cookie 和 CSRF 请求头。Core 不保存管理会话记录。
 
 ### OIDC 统一登录
 
@@ -186,13 +186,13 @@ SQLite schema 由 Core 启动时的幂等建表和补列逻辑维护，不是完
 
 ## 发布与运行
 
-Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定版本标签和 `./data:/app/data` 持久化 SQLite。Portal 以独立 Docker 镜像发布，包含 `adscope-gateway` 和 Nuxt 前端；每个 Portal 容器可以挂载自己的 TLS 证书，也可以由前置代理终止 TLS。Syncer 以 Windows MSI 发布，使用 `NetworkService` 运行，通过 `ldap://<FQDN>:389` 和 Kerberos GSS-API 写入 AD。
+Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定版本标签和 `./data:/app/data` 持久化 SQLite。Portal 以独立 Docker 镜像发布，包含 `adscope-portal` 和 Nuxt 前端；每个 Portal 容器可以挂载自己的 TLS 证书，也可以由前置代理终止 TLS。Syncer 以 Windows MSI 发布，使用 `NetworkService` 运行，通过 `ldap://<FQDN>:389` 和 Kerberos GSS-API 写入 AD。
 
-推送 `v*` 标签时，发布工作流校验 Center、Gateway 和 Connector 版本，构建 Windows MSI、Linux Center 镜像和 Gateway 镜像，推送 GHCR 镜像，并在 GitHub Release 上传 Center/Gateway 镜像归档、Connector MSI、`manifest.json` 和 `SHA256SUMS`。
+推送 `v*` 标签时，发布工作流校验 Core、Portal 和 Syncer 版本，构建 Windows MSI、Linux Core 镜像和 Portal 镜像，推送 GHCR 镜像，并在 GitHub Release 上传 Core/Portal 镜像归档、Syncer MSI、`manifest.json` 和 `SHA256SUMS`。
 
 ## 设计取舍
 
-- Center 是唯一事实源，不做多主写入。这样同步和人员身份只有一个判断位置。
+- Core 是唯一事实源，不做多主写入。这样同步和人员身份只有一个判断位置。
 - Syncer 主动拉取，Core 不访问域内网络。这样网络边界清晰，Syncer 可独立部署和重试。
 - 目录和凭据分通道，使用 revision 最终一致。这样密码同步失败不会回退目录进度。
 - 前端由 Portal 托管，Core 只做 API/OIDC/数据面。这样每个网络入口独立，Core 镜像更小；代价是三个 Portal 镜像都包含同一份静态前端。
@@ -222,17 +222,17 @@ Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定
 
 Device grant、MFA、登录限流、审计、密钥轮换和 HA 都是独立的架构项目，不应塞进 Portal 或业务应用。
 
-- 认证协议扩展进入 `center/src/oidc` 和 OAuth 持久化模型。
-- 前端和入口开关进入 `gateway/`，不要塞回 Core 或 Syncer。
+- 认证协议扩展进入 `core/src/oidc` 和 OAuth 持久化模型。
+- 前端和入口开关进入 `portal/`，不要塞回 Core 或 Syncer。
 - 会话和撤销能力进入 Core 会话模型，不能由 Portal 模拟。
 - 高可用需要先确定数据库和签名密钥的共享方式，不能直接给 SQLite 加副本。
 - 新增网络时增加新的 Portal issuer，并同步更新 Core 的 `OIDC_ISSUERS`；不把新域名加入 `core.example.com`。
 
 ## 不在范围
 
-- Connector 自动注册和自动发现。
+- Syncer 自动注册和自动发现。
 - 复杂角色平台、审批流和密码到期提醒。
 - 任务队列、任务领取、历史事件重放和事件溯源。
-- 多 Connector 协调。
+- 多 Syncer 协调。
 - AD 内物理删除 OU、组或用户对象。
 - 域内人工修改反向同步。

@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "center",
-    "connector",
-    "gateway",
+    "core",
+    "syncer",
+    "portal",
 ]
 exclude = [
     "crates/protocol",

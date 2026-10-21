@@ -818,7 +818,7 @@ async fn repository_domain_update_does_not_replace_row_and_preserves_both_confir
                 upn_suffix: Some("updated.example.com".to_string()),
                 employee_id_attribute: Some("employeeNumber".to_string()),
                 managed_group_id_attribute: Some("extensionAttribute10".to_string()),
-                connector_key_hash: Some("hash:new-connector-key".to_string()),
+                syncer_key_hash: Some("hash:new-syncer-key".to_string()),
             },
         )
         .await
@@ -835,7 +835,7 @@ async fn repository_domain_update_does_not_replace_row_and_preserves_both_confir
     assert_eq!(updated.upn_suffix, "updated.example.com");
     assert_eq!(updated.employee_id_attribute, "employeeNumber");
     assert_eq!(updated.managed_group_id_attribute, "extensionAttribute10");
-    assert_eq!(updated.connector_key_hash, "hash:new-connector-key");
+    assert_eq!(updated.syncer_key_hash, "hash:new-syncer-key");
     assert_eq!(updated.applied_directory_revision, 7);
     assert_eq!(updated.applied_credential_revision, 3);
 
@@ -980,7 +980,7 @@ async fn repository_schema_rejects_negative_revisions() {
                 'bad.example.com',
                 'employeeID',
                 'adminDescription',
-                'hash:connector-key',
+                'hash:syncer-key',
                 -1,
                 0
             )"
@@ -1157,7 +1157,7 @@ fn domain() -> DomainRecord {
         upn_suffix: "a.example.com".to_string(),
         employee_id_attribute: "employeeID".to_string(),
         managed_group_id_attribute: "adminDescription".to_string(),
-        connector_key_hash: "hash:connector-key".to_string(),
+        syncer_key_hash: "hash:syncer-key".to_string(),
         applied_directory_revision: 0,
         applied_credential_revision: 0,
     }

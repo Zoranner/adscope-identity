@@ -69,7 +69,7 @@ pub struct DomainRecord {
     pub upn_suffix: String,
     pub employee_id_attribute: String,
     pub managed_group_id_attribute: String,
-    pub connector_key_hash: String,
+    pub syncer_key_hash: String,
     pub applied_directory_revision: u64,
     pub applied_credential_revision: u64,
 }
@@ -104,7 +104,7 @@ pub struct DomainPatch {
     pub upn_suffix: Option<String>,
     pub employee_id_attribute: Option<String>,
     pub managed_group_id_attribute: Option<String>,
-    pub connector_key_hash: Option<String>,
+    pub syncer_key_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

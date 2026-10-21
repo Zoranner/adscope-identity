@@ -32,9 +32,9 @@ Syncer  每个 AD 域一个目录同步器，只和 Core 交互
 
 | 术语 | 当前代码名 | 数量 | 职责 |
 | --- | --- | --- | --- |
-| Core | `adscope-center` | 1 | API、OIDC 后端、SQLite、同步控制面 |
-| Portal | `adscope-gateway` | 3 | TLS 入口、登录/管理页面、OIDC issuer、API/OIDC 转发 |
-| Syncer | `adscope-connector` | 4 | AD 域内服务，拉取期望状态并写入域控 |
+| Core | `adscope-core` | 1 | API、OIDC 后端、SQLite、同步控制面 |
+| Portal | `adscope-portal` | 3 | TLS 入口、登录/管理页面、OIDC issuer、API/OIDC 转发 |
+| Syncer | `adscope-syncer` | 4 | AD 域内服务，拉取期望状态并写入域控 |
 
 代码和镜像的完整重命名不在本次范围，文档先使用 Core、Portal、Syncer 术语。
 
@@ -132,7 +132,7 @@ Host: auth-a.example.com
 
 Portal 不信任客户端传入的 Host，也不读取 `X-Forwarded-Host` 作为 issuer 来源。
 
-Center 未登录时仍然 302 到同源 `/login`。浏览器停留在当前 Portal 域名，由 Portal 返回登录页，因此登录和 Cookie 都在同一个域名下完成。
+Core 未登录时仍然 302 到同源 `/login`。浏览器停留在当前 Portal 域名，由 Portal 返回登录页，因此登录和 Cookie 都在同一个域名下完成。
 
 Portal 可以自己终止 TLS，也可以由前置反向代理终止 TLS。服务本身不要求监听 443：
 
@@ -343,5 +343,5 @@ Portal 测试：
 - 跨 Portal 共享登录态
 - 每个 issuer 独立签名密钥
 - OIDC 客户端与 issuer 的强制绑定
-- 代码、镜像、MSI 服务名从 `center/gateway/connector` 重命名为 `core/portal/syncer`
+- 代码、镜像、MSI 服务名重命名不在多 issuer 改造范围；已作为后续独立变更完成 `center/gateway/connector` 到 `core/portal/syncer` 的重命名
 - MFA、登录限流、Token 撤销和 OIDC 审计

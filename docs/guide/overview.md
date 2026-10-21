@@ -4,55 +4,55 @@
 
 公司在多地使用相互独立的 Windows Server AD 域。新员工入职、组织调整和员工跨地流转时，多个域需要重复维护 OU、用户、组和密码，容易出现账号不一致、密码记混和运维对账困难。
 
-系统需要提供一套中心账号服务，把组织结构、用户资料、组成员关系和密码作为统一事实源，再同步到各个 AD 域。员工仍通过本地域控登录办公电脑，中心服务负责账号生命周期管理、普通用户自助和跨域同步。
+系统需要提供一套 Core 账号服务，把组织结构、用户资料、组成员关系和密码作为统一事实源，再同步到各个 AD 域。员工仍通过本地域控登录办公电脑，Core 负责账号生命周期管理、普通用户自助和跨域同步。
 
 ## 建设目标
 
-- 中心服务保存组织结构、用户、组、域配置和密码材料的权威事实。
-- 各 AD 域作为下游镜像，从中心服务拉取期望状态并落地到本地域控。
-- 普通用户通过中心入口登录，查看自己的资料，修改联系方式和密码。
+- Core 保存组织结构、用户、组、域配置和密码材料的权威事实。
+- 各 AD 域作为下游镜像，从 Core 拉取期望状态并落地到本地域控。
+- 普通用户通过 Portal 登录，查看自己的资料，修改联系方式和密码。
 - 管理员通过管理入口维护域、OU、用户、组、密码重置和同步状态。
-- 预登记应用通过 Center 内置的 OIDC Provider 完成 Authorization Code + PKCE 统一登录。
+- 预登记应用通过 Portal 提供的 OIDC Provider 完成 Authorization Code + PKCE 统一登录。
 - 同步链路按最终一致设计，失败时保留明确错误、重试和人工处理路径。
 
 ## 系统边界
 
-中心服务不把某一个 AD 域设为主域，也不依赖 AD 跨林复制完成组织结构同步。中心数据库是运行时事实源，各域 AD 是下游执行目标。
+Core 不把某一个 AD 域设为主域，也不依赖 AD 跨林复制完成组织结构同步。Core 数据库是运行时事实源，各域 AD 是下游执行目标。
 
-系统默认只做“中心服务到各 AD 域”的单向同步。域内人工修改不会自动回写中心，也不会传播到其他域。若需要受控回写，必须单独定义来源、冲突处理和责任记录规则。
+系统默认只做“Core 到各 AD 域”的单向同步。域内人工修改不会自动回写 Core，也不会传播到其他域。若需要受控回写，必须单独定义来源、冲突处理和责任记录规则。
 
 多地域部署可以有多个接入入口，但写操作必须进入同一个逻辑事实源。没有统一事实源时，不允许让多个城市各自写本地主库后再尝试自动合并。
 
 ## 用户标识
 
-跨域识别用户的唯一主键是工号。中心服务以 `employee_id` 表示工号，并对工号做唯一约束。
+跨域识别用户的唯一主键是工号。Core 以 `employee_id` 表示工号，并对工号做唯一约束。
 
-管理员创建用户时由中心服务分配固定位数的数字工号，管理界面只展示、不可修改；工号一旦分配，就作为跨域主键保持不变。
+管理员创建用户时由 Core 分配固定位数的数字工号，管理界面只展示、不可修改；工号一旦分配，就作为跨域主键保持不变。
 
 AD 侧必须写入对应工号属性。默认属性为 `employeeID`；如果组织已占用该属性，应统一指定一个替代属性，例如某个 `extensionAttribute`。所有接入域必须使用同一规则。
 
 `sAMAccountName` 和 UPN 应在各域保持一致，便于用户使用和运维对账。`objectGUID`、`objectSid` 等域内生成属性不得作为跨域主键。
 
-安全组使用中心组标识作为稳定身份。Connector 默认将该标识写入 AD 组对象的 `adminDescription`；如果该属性在组织内已有用途，应在中心域配置中统一指定替代属性。AD DN 只表示域内当前位置，不作为中心组标识。
+安全组使用 Core 组标识作为稳定身份。Syncer 默认将该标识写入 AD 组对象的 `adminDescription`；如果该属性在组织内已有用途，应在 Core 域配置中统一指定替代属性。AD DN 只表示域内当前位置，不作为 Core 组标识。
 
 工号变更、离职后复用工号、外包或临时人员无工号等流程，需要在组织账号规范中单独定义。同步服务只在已确认的唯一工号模型内工作。
 
 ## 目录同步范围
 
-系统同步中心模型内的 OU、用户、组和组成员关系：
+系统同步 Core 模型内的 OU、用户、组和组成员关系：
 
 - OU 在每个域配置的镜像根下保持相同相对层级。
-- 用户按中心记录放置到目标 OU。
+- 用户按 Core 记录放置到目标 OU。
 - 用户资料同步白名单属性，包括用户名、显示名、姓、名、邮箱、手机、办公电话和工号属性。
-- 组按中心组名映射到 AD 组，成员集合以中心记录为准。
-- 禁用用户仍属于受管对象，Connector 应确保对象存在后禁用并移动到隔离 OU。
-- 删除中心用户记录后，Connector 在所属域禁用该账号并移动到隔离 OU；AD 对象本身保留。
+- 组按 Core 组名映射到 AD 组，成员集合以 Core 记录为准。
+- 禁用用户仍属于受管对象，Syncer 应确保对象存在后禁用并移动到隔离 OU。
+- 删除 Core 用户记录后，Syncer 在所属域禁用该账号并移动到隔离 OU；AD 对象本身保留。
 
-各域特有属性和系统属性由 AD 自行维护，不由中心服务复制。计算机账号、GPO、证书、DNS、文件共享权限等对象不包含在账号同步主链内。
+各域特有属性和系统属性由 AD 自行维护，不由 Core 复制。计算机账号、GPO、证书、DNS、文件共享权限等对象不包含在账号同步主链内。
 
 ## 普通用户自助
 
-普通用户登录中心服务后，只能查看和维护自己的账号信息：
+普通用户登录 Portal 后，只能查看和维护自己的账号信息：
 
 - 查看本人目录资料。
 - 修改本人 `email`、`mobile`、`telephone`。
@@ -62,19 +62,19 @@ AD 侧必须写入对应工号属性。默认属性为 `employeeID`；如果组�
 
 ## 统一登录
 
-Center 为预登记 Web 和桌面应用提供受限的 OIDC Provider。当前只支持 Authorization Code Flow 和 PKCE S256，ID Token 与 access token 使用 RS256，有效期为 5 分钟。
+Core 为预登记 Web 和桌面应用提供受限的 OIDC Provider。当前只支持 Authorization Code Flow 和 PKCE S256，ID Token 与 access token 使用 RS256，有效期为 5 分钟。
 
 OIDC `sub` 直接使用用户 `employee_id`，同一用户通过不同网络或不同客户端登录时得到相同的人员标识。依赖方通过所属 Portal 的 issuer 获取 Discovery 和 JWKS，校验 `iss`、`aud`、`nonce`、有效期和签名；access token 只用于 UserInfo，不能代替业务 API 的 Bearer token。
 
 系统只有一个 Core；内网入口 A、内网入口 B各有一个 Portal，外网一个 Portal 由外网 A和外网 B共用；四个局域网、四个 AD 域各部署一个 Syncer。三个 Portal 分别以 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com` 作为 issuer，域名和证书可以不同。Portal 负责 TLS 或 HTTP 监听、静态前端、API/OIDC 转发和两组路径开关，不保存用户、Token 或签名私钥，也不签发自己的 OIDC Token。每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理，禁用时直接返回错误页；关闭登录不撤销已签发 Token。入口和依赖方的详细契约见 [OIDC 统一登录接入](../reference/oidc-integration.md)。
 
-Center 当前不支持 device authorization、refresh token、token 撤销、动态客户端注册、静默登录、MFA 和多 issuer。依赖方的本地会话、设备凭据和撤销由依赖方自行维护。
+Core 当前支持多个 Portal issuer，但按请求 Host 选择当前 issuer，不提供跨 issuer 的联合登录。当前不支持 device authorization、refresh token、token 撤销、动态客户端注册、静默登录和 MFA。依赖方的本地会话、设备凭据和撤销由依赖方自行维护。
 
 ## 管理员操作
 
-管理员入口维护中心事实源：
+管理员入口维护 Core 事实源：
 
-- 维护域配置、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和 Connector key。
+- 维护域配置、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和 Syncer key。
 - 维护 OU 树、用户目录资料、用户状态、组和组成员。
 - 为用户重置或代设密码。
 - 查看各域同步进度和需要人工处理的问题。
@@ -83,18 +83,18 @@ Center 当前不支持 device authorization、refresh token、token 撤销、动
 
 ## 密码模型
 
-用户密码的权威事实保存在中心服务。中心服务保存两个材料：
+用户密码的权威事实保存在 Core。Core 保存两个材料：
 
-- `password_verifier`：用于中心登录和改密校验，不能还原明文。
-- `password_ciphertext`：用于向 Connector 下发当前应设置的密码，由密码加密方式保护。
+- `password_verifier`：用于 Core 登录和改密校验，不能还原明文。
+- `password_ciphertext`：用于向 Syncer 下发当前应设置的密码，由密码加密方式保护。
 
-Connector 从中心服务获取密码材料后，通过 `ldap://<FQDN>:389` 的 Kerberos GSS-API 会话执行 Reset Password。Connector 不把明文密码写入本地 state、日志或配置；真实模式不接受 IP、LDAP over TLS、StartTLS、Simple Authentication 或 NTLM。
+Syncer 从 Core 获取密码材料后，通过 `ldap://<FQDN>:389` 的 Kerberos GSS-API 会话执行 Reset Password。Syncer 不把明文密码写入本地 state、日志或配置；真实模式不接受 IP、LDAP over TLS、StartTLS、Simple Authentication 或 NTLM。
 
-域内普通 Change Password 不作为事实源。受管账号应禁止用户直接在 AD 中改密，并通过 GPO 隐藏 `Ctrl+Alt+Del` 的“更改密码”入口，避免 AD 侧密码与中心事实源冲突。
+域内普通 Change Password 不作为事实源。受管账号应禁止用户直接在 AD 中改密，并通过 GPO 隐藏 `Ctrl+Alt+Del` 的“更改密码”入口，避免 AD 侧密码与 Core 事实源冲突。
 
 ## 同步一致性
 
-同步按最终一致处理。中心写入目录或凭据后，各域 Connector 主动拉取变更，整批执行成功后向中心确认 revision。
+同步按最终一致处理。Core 写入目录或凭据后，各域 Syncer 主动拉取变更，整批执行成功后向 Core 确认 revision。
 
 失败域不得静默跳过。系统应保留失败摘要、重试路径和人工处理入口。各域密码策略不同导致写入失败时，应通过运维流程对齐策略，或接受该域延迟一致并持续告警。
 
@@ -105,6 +105,6 @@ Connector 从中心服务获取密码材料后，通过 `ldap://<FQDN>:389` 的 
 - 复杂审批流和多级角色平台。
 - SAML、AD FS、OIDC 联邦、OIDC Broker 和跨 issuer 联合登录。
 - Device Authorization Grant、refresh token、token 撤销、MFA 等尚未实现的 OIDC 扩展。
-- 域内人工修改回写中心。
-- 多中心主库自动合并。
+- 域内人工修改回写 Core。
+- 多个 Core 主库自动合并。
 - 计算机账号、GPO、证书和终端策略同步。

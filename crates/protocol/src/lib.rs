@@ -139,7 +139,7 @@ pub struct SyncSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConnectorSyncRequest {
+pub struct SyncerSyncRequest {
     pub domain_id: String,
     pub applied_directory_revision: u64,
     pub applied_credential_revision: u64,
@@ -148,14 +148,14 @@ pub struct ConnectorSyncRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConnectorSyncResponse {
+pub struct SyncerSyncResponse {
     pub directory: DirectoryBatch,
     pub credentials: CredentialBatch,
     pub directory_config: DomainDirectoryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConnectorConfirmRequest {
+pub struct SyncerConfirmRequest {
     pub domain_id: String,
     pub channel: SyncChannel,
     /// Maximum revision fully applied for this batch, not the server's latest revision.
@@ -165,7 +165,7 @@ pub struct ConnectorConfirmRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConnectorConfirmResponse {
+pub struct SyncerConfirmResponse {
     pub accepted: bool,
 }
 

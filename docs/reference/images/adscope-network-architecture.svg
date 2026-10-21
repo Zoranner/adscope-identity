@@ -43,7 +43,7 @@
   <text x="1500" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">外网用户 / OIDC 客户端</text>
   <text x="1500" y="170" text-anchor="middle" class="box-sub" fill="#475569">外网 A + 外网 B共用</text>
 
-  <!-- Gateways -->
+  <!-- Portals -->
   <rect x="120" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
   <text x="300" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 A Portal</text>
   <text x="300" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">issuer：https://auth-a.example.com</text>
@@ -62,10 +62,10 @@
   <text x="1500" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 公网 CA/前置代理</text>
   <text x="1500" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 不管理</text>
 
-  <!-- Center -->
+  <!-- Core -->
   <rect x="650" y="470" width="500" height="180" rx="16" fill="#1d4ed8" filter="url(#shadow)"/>
   <text x="900" y="514" text-anchor="middle" class="box-title" fill="#ffffff">Core（唯一实例）</text>
-  <text x="900" y="552" text-anchor="middle" class="box-sub" fill="#dbeafe">当前代码名 Center · Axum API / SQLite</text>
+  <text x="900" y="552" text-anchor="middle" class="box-sub" fill="#dbeafe">adscope-core · Axum API / SQLite</text>
   <text x="900" y="580" text-anchor="middle" class="box-sub" fill="#dbeafe">OIDC 签名后端 / 管理面 / 同步控制面</text>
   <rect x="700" y="600" width="400" height="30" rx="15" fill="#1e40af"/>
   <text x="900" y="621" text-anchor="middle" class="box-sub" fill="#dbeafe">issuer 白名单 + 共用 RSA 密钥 / JWKS</text>
@@ -78,7 +78,7 @@
   <text x="900" y="224" text-anchor="middle" class="link">HTTPS</text>
   <text x="1500" y="224" text-anchor="middle" class="link">HTTPS</text>
 
-  <!-- Gateway to Center -->
+  <!-- Portal to Core -->
   <path d="M300 360 V415 H750 V470" class="line" marker-end="url(#arrow)"/>
   <path d="M900 360 V470" class="line" marker-end="url(#arrow)"/>
   <path d="M1500 360 V415 H1050 V470" class="line" marker-end="url(#arrow)"/>
@@ -92,7 +92,7 @@
   <text x="60" y="566" class="box-sub" fill="#475569">LOGIN_ENABLED / ADMIN_ENABLED</text>
   <text x="60" y="592" class="box-sub" fill="#475569">禁用时返回错误页</text>
 
-  <!-- Connectors: four LANs / four AD domains -->
+  <!-- Syncers: four LANs / four AD domains -->
   <rect x="70" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
   <text x="230" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 A Syncer</text>
   <text x="230" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
@@ -113,15 +113,15 @@
   <text x="1550" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="1550" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
-  <!-- Connector to Center -->
+  <!-- Syncer to Core -->
   <path d="M230 850 V780 H750 V650" class="line" marker-end="url(#arrow)"/>
   <path d="M670 850 V780 H850 V650" class="line" marker-end="url(#arrow)"/>
   <path d="M1110 850 V780 H950 V650" class="line" marker-end="url(#arrow)"/>
   <path d="M1550 850 V780 H1050 V650" class="line" marker-end="url(#arrow)"/>
-  <text x="440" y="770" text-anchor="middle" class="link">HTTPS /api/connector</text>
-  <text x="735" y="770" text-anchor="middle" class="link">HTTPS /api/connector</text>
-  <text x="1055" y="770" text-anchor="middle" class="link">HTTPS /api/connector</text>
-  <text x="1350" y="770" text-anchor="middle" class="link">HTTPS /api/connector</text>
+  <text x="440" y="770" text-anchor="middle" class="link">HTTPS /api/syncer</text>
+  <text x="735" y="770" text-anchor="middle" class="link">HTTPS /api/syncer</text>
+  <text x="1055" y="770" text-anchor="middle" class="link">HTTPS /api/syncer</text>
+  <text x="1350" y="770" text-anchor="middle" class="link">HTTPS /api/syncer</text>
 
   <!-- AD domain controllers -->
   <rect x="110" y="1030" width="240" height="100" rx="14" fill="#334155" filter="url(#shadow)"/>
@@ -140,7 +140,7 @@
   <text x="1550" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 D 域控</text>
   <text x="1550" y="1098" text-anchor="middle" class="box-sub" fill="#cbd5e1">LDAP 389 + Kerberos</text>
 
-  <!-- Connector to AD -->
+  <!-- Syncer to AD -->
   <path d="M230 960 V1030" class="line" marker-end="url(#arrow)"/>
   <path d="M670 960 V1030" class="line" marker-end="url(#arrow)"/>
   <path d="M1110 960 V1030" class="line" marker-end="url(#arrow)"/>

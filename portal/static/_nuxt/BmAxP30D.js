@@ -1,0 +1,1 @@
+import{I as e,b as t,p as n,z as r}from"./CrZJg7HR.js";import{u as i}from"./DOA43DCn.js";var a={role:`status`,class:`sr-only`},o=t({__name:`domains`,setup(t){return e(()=>{i(`/admin/domains`,{replace:!0})}),(e,t)=>(r(),n(`div`,a,`正在进入域管理`))}});export{o as default};

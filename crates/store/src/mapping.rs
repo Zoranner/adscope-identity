@@ -34,7 +34,7 @@ pub(crate) fn domain_active_model(
         upn_suffix: Set(record.upn_suffix),
         employee_id_attribute: Set(record.employee_id_attribute),
         managed_group_id_attribute: Set(record.managed_group_id_attribute),
-        connector_key_hash: Set(record.connector_key_hash),
+        syncer_key_hash: Set(record.syncer_key_hash),
         applied_directory_revision: Set(u64_to_i64_revision(record.applied_directory_revision)?),
         applied_credential_revision: Set(u64_to_i64_revision(record.applied_credential_revision)?),
     })
@@ -53,7 +53,7 @@ impl TryFrom<entities::domain::Model> for DomainRecord {
             upn_suffix: model.upn_suffix,
             employee_id_attribute: model.employee_id_attribute,
             managed_group_id_attribute: model.managed_group_id_attribute,
-            connector_key_hash: model.connector_key_hash,
+            syncer_key_hash: model.syncer_key_hash,
             applied_directory_revision: i64_to_u64_revision(model.applied_directory_revision)?,
             applied_credential_revision: i64_to_u64_revision(model.applied_credential_revision)?,
         })

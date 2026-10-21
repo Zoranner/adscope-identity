@@ -15,7 +15,7 @@
 - [参考说明](reference/README.md)
 - [数据模型](reference/data-model.md)
 - [API 契约](reference/api-contract.md)
-- [Connector 同步协议](reference/connector-sync-protocol.md)
+- [Syncer 同步协议](reference/syncer-sync-protocol.md)
 - [安全实现边界](reference/security-boundary.md)
 
 ## 历史记录

@@ -8,10 +8,10 @@ API 按调用身份分组：
 - `/api/me/*` 用于普通用户自助，只能操作 token 对应的本人账号。
 - `/.well-known/openid-configuration` 和 `/oauth2/*` 用于预登记客户端发起 OIDC 登录。
 - `/api/oauth2/authorize/context` 只向持有有效 SSO Cookie 的确认页返回本次授权上下文。
-- `/api/admin/*` 用于受保护管理入口，写入中心目录和域配置事实。
-- `/api/connector/*` 用于域内 Connector 同步，必须通过域绑定的 Connector key 鉴权。
+- `/api/admin/*` 用于受保护管理入口，写入 Core 目录和域配置事实。
+- `/api/syncer/*` 用于域内 Syncer 同步，必须通过域绑定的 Syncer key 鉴权。
 
-中心数据库是 API 写入的唯一事实源。普通用户、管理员和 Connector 都不直接写 AD；AD 写入只由域内 Connector 通过同步协议执行。
+Core 数据库是 API 写入的唯一事实源。普通用户、管理员和 Syncer 都不直接写 AD；AD 写入只由域内 Syncer 通过同步协议执行。
 
 管理入口必须和普通用户自助入口区分身份边界。系统使用受保护管理凭证区分管理调用，不引入管理员账号、角色或审批流程。
 
@@ -28,7 +28,7 @@ API 按调用身份分组：
 | `409 Conflict` | 请求与唯一约束、revision 或状态规则冲突。 |
 | `500 Internal Server Error` | 服务端持久化、密码加密或外部依赖错误。 |
 
-密码明文、密码密文和 Connector key 明文不得出现在普通查询响应、错误响应或日志中。
+密码明文、密码密文和 Syncer key 明文不得出现在普通查询响应、错误响应或日志中。
 
 ## 普通用户接口
 
@@ -119,7 +119,7 @@ Authorization: Bearer <access_token>
 
 - 只允许修改 token 对应用户的 `email`、`mobile` 和 `telephone`。
 - 不接受 `employee_id`、`username`、`display_name`、`organizational_unit_id`、`status` 或组成员字段。
-- 成功后推进目录 revision，由 Connector 同步到各域。
+- 成功后推进目录 revision，由 Syncer 同步到各域。
 
 响应：
 
@@ -244,7 +244,7 @@ Core 只接受预登记客户端通过 Portal 使用 Authorization Code Flow 登
 
 参数缺失、重复、未定义、编码非法或总查询长度超过 16 KiB 时，服务端拒绝请求。
 
-服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adscope_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 `/authorize` 确认页。`/login` 和 `/authorize` 页面由网关托管，`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
+服务端先验证客户端和 `redirect_uri`。浏览器没有有效 `adscope_sso` Cookie 时，返回 `303 See Other` 到 `/login?continue=...`；已登录且用户状态为 `active` 时，返回 `303 See Other` 到 `/authorize` 确认页。`/login` 和 `/authorize` 页面由 Portal 托管，`continue` 和确认页地址都由服务端根据已验证参数重建，不接受外部返回地址。所有授权跳转包含 `Cache-Control: no-store`。
 
 ### 授权确认上下文
 
@@ -446,7 +446,7 @@ UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 toke
 X-ADSCOPE-CSRF-Token: <csrf_token>
 ```
 
-缺少或不匹配时返回 `403 Forbidden`。管理写入只维护中心当前事实，不直接访问域控。
+缺少或不匹配时返回 `403 Forbidden`。管理写入只维护 Core 当前事实，不直接访问域控。
 
 ### OAuth 客户端管理
 
@@ -553,11 +553,11 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
 }
 ```
 
-域 ID 已存在时返回 `409 Conflict`，原域配置、Connector key 摘要和 applied revision 保持不变。
+域 ID 已存在时返回 `409 Conflict`，原域配置、Syncer key 摘要和 applied revision 保持不变。
 
 `PATCH /api/admin/domains/{domain_id}` 更新域名称、启用状态、镜像根、隔离 OU、UPN 后缀、工号属性和受管组标识属性，并保留域已有的目录与凭据 applied revision。
 
-创建或修改域成功时，中心从系统安全随机源生成新的 32 字节 Connector key，只持久化其摘要。明文 key 只在本次响应中返回，响应包含 `Cache-Control: no-store`：
+创建或修改域成功时，Core 从系统安全随机源生成新的 32 字节 Syncer key，只持久化其摘要。明文 key 只在本次响应中返回，响应包含 `Cache-Control: no-store`：
 
 ```json
 {
@@ -573,15 +573,15 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
     "applied_directory_revision": 0,
     "applied_credential_revision": 0
   },
-  "connector_key": "64-character-lowercase-hex"
+  "syncer_key": "64-character-lowercase-hex"
 }
 ```
 
-创建和修改请求不得携带 `connector_key` 或 `connector_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Connector key。管理员必须把本次响应中的新 key 配置到对应 Connector 的 `CONNECTOR_ACCESS_KEY`。域列表及其他查询响应不返回 Connector key 或其摘要。
+创建和修改请求不得携带 `syncer_key` 或 `syncer_key_hash`，携带这些未定义字段时返回 `422 Unprocessable Entity`。修改域会立即替换原 Syncer key。管理员必须把本次响应中的新 key 配置到对应 Syncer 的 `SYNCER_ACCESS_KEY`。域列表及其他查询响应不返回 Syncer key 或其摘要。
 
 ### OU 管理
 
-`GET /api/admin/ous/tree` 查询中心 OU 树。
+`GET /api/admin/ous/tree` 查询 Core OU 树。
 
 `POST /api/admin/ous` 创建 OU：
 
@@ -625,15 +625,15 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
 }
 ```
 
-`employee_id` 可以省略或留空。此时 Center 在创建事务内分配 6 位数字工号，从 `100001` 起按顺序递增；显式填写的工号保持不变。管理界面打开新建表单时先取预览编号，把工号字段设为只读；保存时仍由 Center 分配，预览不消耗序列。
+`employee_id` 可以省略或留空。此时 Core 在创建事务内分配 6 位数字工号，从 `100001` 起按顺序递增；显式填写的工号保持不变。管理界面打开新建表单时先取预览编号，把工号字段设为只读；保存时仍由 Core 分配，预览不消耗序列。
 
-`surname` 和 `given_name` 可以省略。`display_name` 为空时，Center 使用 `surname + given_name` 组合；`surname` 为空时回落到显示名。`surname` 写入 AD 的 `sn`，`given_name` 写入 `givenName`。
+`surname` 和 `given_name` 可以省略。`display_name` 为空时，Core 使用 `surname + given_name` 组合；`surname` 为空时回落到显示名。`surname` 写入 AD 的 `sn`，`given_name` 写入 `givenName`。
 
 `GET /api/admin/users/{employee_id}` 查询用户详情。
 
 `PATCH /api/admin/users/{employee_id}` 更新用户目录字段。
 
-`DELETE /api/admin/users/{employee_id}` 删除中心用户记录、凭据和组成员引用，成功返回 `204 No Content`；同时写入删除事实，Connector 会在所属域禁用该账号并移到隔离 OU。用户不存在时返回 `404 Not Found`。
+`DELETE /api/admin/users/{employee_id}` 删除 Core 用户记录、凭据和组成员引用，成功返回 `204 No Content`；同时写入删除事实，Syncer 会在所属域禁用该账号并移到隔离 OU。用户不存在时返回 `404 Not Found`。
 
 `POST /api/admin/users/{employee_id}/disable` 禁用用户。
 
@@ -701,21 +701,21 @@ X-ADSCOPE-CSRF-Token: <csrf_token>
 }
 ```
 
-rebuild 由 Connector 请求中的 `rebuild_directory` 和 `rebuild_credentials` 标志触发。
+rebuild 由 Syncer 请求中的 `rebuild_directory` 和 `rebuild_credentials` 标志触发。
 
-## Connector 接口
+## Syncer 接口
 
-所有 Connector 接口必须携带：
+所有 Syncer 接口必须携带：
 
 ```text
-x-adscope-connector-key: <connector-key>
+x-adscope-syncer-key: <syncer-key>
 ```
 
-服务端按请求 `domain_id` 校验 `domains.connector_key_hash`。未知域、错误 key 或缺少 key 返回 `401 Unauthorized`，域被禁用返回 `403 Forbidden`。
+服务端按请求 `domain_id` 校验 `domains.connector_key_hash`（历史物理列名，保存 Syncer key 摘要）。未知域、错误 key 或缺少 key 返回 `401 Unauthorized`，域被禁用返回 `403 Forbidden`。
 
-### Connector 同步
+### Syncer 同步
 
-`POST /api/connector/sync`
+`POST /api/syncer/sync`
 
 请求：
 
@@ -758,11 +758,11 @@ x-adscope-connector-key: <connector-key>
 }
 ```
 
-凭据响应包含 Connector 可执行的明文密码。Connector 调用主服务 `/api/connector/sync` 时必须走 TLS，并设置 `Cache-Control: no-store`。
+凭据响应包含 Syncer 可执行的明文密码。Syncer 调用 Core 的 `/api/syncer/sync` 时必须走 TLS，并设置 `Cache-Control: no-store`。
 
-### Connector 确认
+### Syncer 确认
 
-`POST /api/connector/confirm`
+`POST /api/syncer/confirm`
 
 请求：
 

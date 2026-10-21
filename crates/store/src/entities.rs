@@ -115,7 +115,8 @@ pub(crate) mod domain {
         pub upn_suffix: String,
         pub employee_id_attribute: String,
         pub managed_group_id_attribute: String,
-        pub connector_key_hash: String,
+        #[sea_orm(column_name = "connector_key_hash")]
+        pub syncer_key_hash: String,
         pub applied_directory_revision: i64,
         pub applied_credential_revision: i64,
     }

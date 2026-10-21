@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "adscope-center"
+name = "adscope-core"
 version = "0.2.0"
 dependencies = [
  "adscope-protocol",
@@ -30,24 +30,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "adscope-connector"
-version = "0.2.0"
-dependencies = [
- "adscope-protocol",
- "anyhow",
- "async-trait",
- "ldap3",
- "reqwest",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "url",
- "windows-service",
-]
-
-[[package]]
-name = "adscope-gateway"
+name = "adscope-portal"
 version = "0.2.0"
 dependencies = [
  "anyhow",
@@ -80,6 +63,23 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "adscope-syncer"
+version = "0.2.0"
+dependencies = [
+ "adscope-protocol",
+ "anyhow",
+ "async-trait",
+ "ldap3",
+ "reqwest",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
+ "windows-service",
 ]
 
 [[package]]

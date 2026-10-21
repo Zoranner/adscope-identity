@@ -2,7 +2,7 @@
 
 ## 设计原则
 
-中心数据库是账号和目录同步的唯一事实源。主服务通过 `Repository` 读写数据库，Connector 只通过 HTTP API 获取期望状态，不直接访问数据库。
+Core 数据库是账号和目录同步的唯一事实源。Core 通过 `Repository` 读写数据库，Syncer 只通过 HTTP API 获取期望状态，不直接访问数据库。
 
 数据库保存当前事实，不保存历史事件流：
 
@@ -10,13 +10,13 @@
 - 凭据事实只保存用户当前 verifier 和 ciphertext。
 - 域记录保存该域已确认的目录和凭据 revision。
 - OAuth 客户端表保存预登记客户端的当前配置；授权码表只保存等待兑换的短期一次性记录。
-- 对象多次变更后，Connector 只拉取最新完整状态。
+- 对象多次变更后，Syncer 只拉取最新完整状态。
 
 浏览器 SSO 登录状态保存在签名 Cookie 中，ID Token 和 access token 是无状态 JWT。数据库不增加浏览器会话、历史同意、授权历史或 token 表。
 
 数据库 schema 由主服务初始化逻辑创建基础表。
 
-当前生产入口固定使用进程工作目录下的 `data/adscope.db`。schema 初始化以幂等建表和补列为主，不是完整迁移框架；升级前应停止写入并备份数据库。SQLite 文件不支持多个 Center 副本并发写，当前部署模型是单实例。
+当前生产入口固定使用进程工作目录下的 `data/adscope.db`。schema 初始化以幂等建表和补列为主，不是完整迁移框架；升级前应停止写入并备份数据库。SQLite 文件不支持多个 Core 副本并发写，当前部署模型是单实例。
 
 ## 表结构
 
@@ -41,7 +41,7 @@
 
 ### `deleted_users`
 
-保存已删除用户的同步事实，供 Connector 在所属域执行禁用和隔离。
+保存已删除用户的同步事实，供 Syncer 在所属域执行禁用和隔离。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -50,11 +50,11 @@
 
 ### `organizational_units`
 
-保存中心 OU 树。
+保存 Core OU 树。
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` | 中心稳定 OU 标识。 |
+| `id` | Core 稳定 OU 标识。 |
 | `name` | OU 名称。 |
 | `parent_id` | 父 OU 标识，根节点为空。 |
 | `changed_revision` | 该 OU 当前状态最后一次变化所在的目录 revision。 |
@@ -83,7 +83,7 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` | 中心稳定组标识。 |
+| `id` | Core 稳定组标识。 |
 | `name` | 组名，映射为 AD 组 CN 和账号名。 |
 | `organizational_unit_id` | 组目标 OU。 |
 | `member_employee_ids` | 成员工号数组 JSON。 |
@@ -98,11 +98,11 @@
 | 字段 | 含义 |
 | --- | --- |
 | `employee_id` | 用户标识。 |
-| `password_ciphertext` | 中心保存的当前密码密文。 |
-| `password_verifier` | 中心登录和改密校验使用的 verifier。 |
+| `password_ciphertext` | Core 保存的当前密码密文。 |
+| `password_verifier` | Core 登录和改密校验使用的 verifier。 |
 | `changed_revision` | 该用户当前凭据最后一次变化所在的凭据 revision。 |
 
-`password_verifier` 不能还原密码。`password_ciphertext` 只能由主服务通过密码加密方式解封，并只在响应 Connector 凭据同步时短暂进入内存。
+`password_verifier` 不能还原密码。`password_ciphertext` 只能由 Core 通过密码加密方式解封，并只在响应 Syncer 凭据同步时短暂进入内存。
 
 ### `oauth_clients`
 
@@ -110,7 +110,7 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `client_id` | Center 生成的客户端主键，创建后不可修改。 |
+| `client_id` | Core 生成的客户端主键，创建后不可修改。 |
 | `name` | 管理端和授权确认页使用的显示名称。 |
 | `client_type` | 客户端类型，存储值为 `web` 或 `desktop`。 |
 | `client_secret_hash` | Web 客户端 secret 的 `sha256:` 摘要；Desktop 客户端为空。 |
@@ -153,15 +153,15 @@ OIDC 客户端记录在全局范围内维护，不绑定 issuer；同一个客�
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` | 域标识，也是 Connector 同步请求中的 `domain_id`。 |
+| `id` | 域标识，也是 Syncer 同步请求中的 `domain_id`。 |
 | `name` | 域显示名。 |
 | `enabled` | 域是否允许同步。 |
 | `mirror_root_dn` | 本系统管理对象所在镜像根 DN。 |
 | `quarantine_ou_dn` | 禁用用户隔离 OU DN。 |
 | `upn_suffix` | 该域 UPN 后缀。 |
 | `employee_id_attribute` | AD 中保存工号的属性名。 |
-| `managed_group_id_attribute` | AD 受管组对象中保存中心组标识的属性名，默认 `adminDescription`。 |
-| `connector_key_hash` | Connector key 摘要，不保存明文 key。 |
+| `managed_group_id_attribute` | AD 受管组对象中保存 Core 组标识的属性名，默认 `adminDescription`。 |
+| `connector_key_hash` | 历史物理列名；保存 Syncer key 摘要，不保存明文 key。 |
 | `applied_directory_revision` | 该域已确认应用的目录 revision。 |
 | `applied_credential_revision` | 该域已确认应用的凭据 revision。 |
 
@@ -185,7 +185,7 @@ OAuth 客户端写入不推进目录或凭据 revision。创建客户端时生�
 
 授权确认只写入一条短期 `oauth_authorization_codes` 记录，并把当前 Portal issuer 写入 `issuer`。授权码兑换在数据库事务内删除目标记录，并在同一事务中读取绑定的客户端和用户；数据库不写入 token、会话或授权历史。
 
-Connector 确认只更新 `domains` 中目标通道的 applied revision。服务端必须拒绝倒退确认，也必须拒绝超过全局 revision 的确认。
+Syncer 确认只更新 `domains` 中目标通道的 applied revision。服务端必须拒绝倒退确认，也必须拒绝超过全局 revision 的确认。
 
 ## 查询规则
 

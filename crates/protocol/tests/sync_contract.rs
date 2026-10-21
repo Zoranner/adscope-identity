@@ -1,7 +1,7 @@
 use adscope_protocol::{
-    ConnectorConfirmRequest, CredentialBatch, CredentialEntry, DeletedUser, DirectoryBatch,
-    DirectoryOperationKind, DirectoryOperationTarget, DirectoryPlan, DirectoryPlanError,
-    DomainDirectoryConfig, Group, OrganizationalUnit, SyncChannel, User, UserStatus,
+    CredentialBatch, CredentialEntry, DeletedUser, DirectoryBatch, DirectoryOperationKind,
+    DirectoryOperationTarget, DirectoryPlan, DirectoryPlanError, DomainDirectoryConfig, Group,
+    OrganizationalUnit, SyncChannel, SyncerConfirmRequest, User, UserStatus,
 };
 use serde::{
     Serialize,
@@ -343,7 +343,7 @@ fn paged_batches_are_confirmed_at_batch_revision_not_server_revision() {
         has_more: true,
     };
 
-    let confirm = ConnectorConfirmRequest {
+    let confirm = SyncerConfirmRequest {
         domain_id: "domain-a".to_string(),
         channel: SyncChannel::Directory,
         target_revision: batch.confirm_revision(),

@@ -2,7 +2,7 @@
 
 ## 能力边界
 
-Center 是受限的 OIDC Provider，不是通用身份平台。当前只支持：
+Core 是受限的 OIDC Provider，不是通用身份平台。当前只支持：
 
 - Authorization Code Flow。
 - PKCE `S256`，所有客户端都必须提供。
@@ -42,14 +42,14 @@ issuer 应使用长期稳定的 DNS 名称。修改 issuer 会改变 Token 的 `
 
 ## 客户端登记
 
-客户端由管理员在 Center 管理端创建，不支持应用自行注册。
+客户端由管理员在 Core 管理端创建，不支持应用自行注册。
 
 | 类型 | 认证 | Redirect URI |
 | --- | --- | --- |
 | Web | `client_secret_basic` | 绝对 HTTPS URI，scheme、host、port、path、query 精确匹配 |
 | Desktop | 无 secret，按 public client 处理 | `http://127.0.0.1:<port>/...` 或 `http://[::1]:<port>/...`，端口可以变化 |
 
-Web client secret 只在创建或重新生成时返回一次，Center 只保存 SHA-256 摘要。重新生成会立即替换旧 secret，不保留并行有效期，轮换需要协调维护窗口。
+Web client secret 只在创建或重新生成时返回一次，Core 只保存 SHA-256 摘要。重新生成会立即替换旧 secret，不保留并行有效期，轮换需要协调维护窗口。
 
 Desktop 不接受 `localhost` 主机名，只接受 loopback IP。一个客户端可以登记最多 10 个 redirect URI；scope 只能从固定四项中选择并必须包含 `openid`。
 
@@ -68,9 +68,9 @@ code_challenge=<43 base64url characters>
 code_challenge_method=S256
 ```
 
-`response_mode` 只能省略或使用 `query`。`prompt` 只能省略或使用 `none`；`prompt=none` 不会跳过确认，而是返回 `interaction_required`。每次授权都需要用户在 Center 确认页确认，Center 不保存历史同意。
+`response_mode` 只能省略或使用 `query`。`prompt` 只能省略或使用 `none`；`prompt=none` 不会跳过确认，而是返回 `interaction_required`。每次授权都需要用户在 Portal 确认页确认，Core 不保存历史同意。
 
-用户确认后，Center 向已验证的 redirect URI 返回一次性授权码和原始 `state`。授权码有效期为 120 秒，只能兑换一次。
+用户确认后，Core 向已验证的 redirect URI 返回一次性授权码和原始 `state`。授权码有效期为 120 秒，只能兑换一次。
 
 Token 请求使用 `application/x-www-form-urlencoded`，只包含：
 
@@ -110,15 +110,15 @@ Token 响应包含 `access_token`、`token_type=Bearer`、`expires_in=300`、`id
 | `email` | 邮箱 | 需要 `email` scope；没有 `email_verified` |
 | `phone_number` | 手机或办公电话 | 需要 `phone` scope |
 
-ID Token 只用于登录时确认人员。Center 的 access token 只用于调用 `/oauth2/userinfo`，不能作为依赖方业务 API 的 Bearer token。依赖方需要长期会话时，应签发自己的会话或设备凭据，并定义有效期、重新验证和撤销策略。
+ID Token 只用于登录时确认人员。Core 的 access token 只用于调用 `/oauth2/userinfo`，不能作为依赖方业务 API 的 Bearer token。依赖方需要长期会话时，应签发自己的会话或设备凭据，并定义有效期、重新验证和撤销策略。
 
 ## 会话与撤销边界
 
-- Center 禁用用户后，新的授权、授权码兑换和 UserInfo 会失败。
-- 已经签发的 ID Token 无法由 Center 主动撤回，最多继续有效 5 分钟。
+- Core 禁用用户后，新的授权、授权码兑换和 UserInfo 会失败。
+- 已经签发的 ID Token 无法由 Core 主动撤回，最多继续有效 5 分钟。
 - 浏览器 SSO Cookie 默认有效 1 小时；退出登录只清除当前浏览器 Cookie。
-- Center 不支持远程撤销单个浏览器会话，也不退出依赖方已经建立的本地会话。
-- Center 禁用用户或修改密码不会撤销依赖方自行签发的设备凭据和 Endpoint Token。
+- Core 不支持远程撤销单个浏览器会话，也不退出依赖方已经建立的本地会话。
+- Core 禁用用户或修改密码不会撤销依赖方自行签发的设备凭据和 Endpoint Token。
 
 依赖方应把 OIDC 登录视为一次人员确认，把自身会话、设备凭据和撤销责任留在依赖方。高风险操作应重新验证或使用更短的本地会话。
 
@@ -128,15 +128,15 @@ ID Token 只用于登录时确认人员。Center 的 access token 只用于调�
 
 OIDC 使用一把 RSA 私钥签名，JWKS 发布对应公钥。当前私钥是挂载文件，不是环境变量；`OIDC_ISSUERS` 是 issuer 白名单，不是签名密钥，三个 issuer 共用这一把私钥。
 
-轮换就是替换 PEM 文件并重建 Center：
+轮换就是替换 PEM 文件并重建 Core：
 
 ```text
-docker compose up -d --force-recreate center
+docker compose up -d --force-recreate core
 ```
 
 不需要修改数据库、`client_id`、client secret 或 Portal issuer 配置。普通 `restart` 可能重新读取原地覆盖的文件；如果文件是原子替换的，使用 `--force-recreate` 更确定。
 
-当前只有一把活动密钥，没有新旧重叠。轮换后新 Token 使用新 `kid`；Center 立即拒绝旧 access token，依赖方刷新 JWKS 后旧 ID Token 也会失效，最长影响约 5 分钟 Token 加 5 分钟 JWKS 缓存。没有合规要求时，一年一次或怀疑泄露时轮换即可；只有要求轮换期间零停机时，才需要双 key/JWKS 重叠。
+当前只有一把活动密钥，没有新旧重叠。轮换后新 Token 使用新 `kid`；Core 立即拒绝旧 access token，依赖方刷新 JWKS 后旧 ID Token 也会失效，最长影响约 5 分钟 Token 加 5 分钟 JWKS 缓存。没有合规要求时，一年一次或怀疑泄露时轮换即可；只有要求轮换期间零停机时，才需要双 key/JWKS 重叠。
 
 ## Portal 接入
 
@@ -161,7 +161,7 @@ docker compose up -d --force-recreate center
   -> https://core.example.com
 ```
 
-`adscope-gateway` 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断。登录/管理开关由各 Portal 自己的环境变量控制，不依赖 Core 区分来源。Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
+`adscope-portal` 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断。登录/管理开关由各 Portal 自己的环境变量控制，不依赖 Core 区分来源。Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
 
 三个 Portal 不是三个 Core，也不各自持有用户目录或签名密钥。它们托管各自的前端，用 `PUBLIC_ISSUER` 覆盖转发 Host，并把 API/OIDC 转发到同一个 Core。
 
@@ -172,14 +172,14 @@ docker compose up -d --force-recreate center
 | 变量 | `false` 时拦截 | `false` 时仍可用 |
 | --- | --- | --- |
 | `LOGIN_ENABLED` | `/login`、`/authorize`、`/oauth2/authorize`、`/api/auth/login`、`/api/oauth2/authorize/context` | Discovery、JWKS、Token、UserInfo、`/api/me/*`、退出登录 |
-| `ADMIN_ENABLED` | `/admin`、`/admin/*`、`/api/admin`、`/api/admin/*` | 用户登录、Token、UserInfo、Connector 同步 |
+| `ADMIN_ENABLED` | `/admin`、`/admin/*`、`/api/admin`、`/api/admin/*` | 用户登录、Token、UserInfo、Syncer 同步 |
 
 - Portal 命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Core。
 - Portal 只对这两组路径做判断，其他路径照常转发给 Core。
 - 内网入口 A、内网入口 B Portal 设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
 - 外网 Portal 设置 `ADMIN_ENABLED=false`。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
-- `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Connector 同步。
+- `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Syncer 同步。
 - Core 不参与开关判断。
 - Portal 必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
 
@@ -202,7 +202,7 @@ Core 不终止 TLS。Portal 自己终止 TLS 时持有自己的 issuer 域名证
 - OIDC 审计事件和按管理员身份的操作审计。
 - Token 撤销、introspection 和 refresh token。
 - 新旧 JWKS 密钥重叠。
-- Center 多副本、数据库主备、PostgreSQL 或共享数据库。
+- Core 多副本、数据库主备、PostgreSQL 或共享数据库。
 - HSM/KMS 签名。
 
 外网入口暴露登录页前，应在外网 Portal 或前置 WAF 增加登录限流，并明确是否接受仅密码认证的风险。Core 当前是单实例 SQLite，不能通过增加副本获得高可用。
@@ -217,5 +217,5 @@ Core 不终止 TLS。Portal 自己终止 TLS 时持有自己的 issuer 域名证
 - 校验 `iss`、`aud`、`exp`、`iat`、`nonce` 和签名，允许 30 秒时钟偏差。
 - 遇到未知 `kid` 时刷新 JWKS，刷新失败则拒绝 Token。
 - 只把 `sub` 作为人员主键，不把邮箱、显示名或工号字符串当作授权依据。
-- 依赖方自己维护会话、设备凭据和撤销；不依赖 Center 撤销已签发 Token。
+- 依赖方自己维护会话、设备凭据和撤销；不依赖 Core 撤销已签发 Token。
 - 日志中不记录授权码、client secret、ID Token、access token、SSO Cookie 或完整授权请求。

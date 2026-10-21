@@ -34,7 +34,7 @@ jobs:
             exit 1
           fi
 
-          for manifest in center/Cargo.toml gateway/Cargo.toml connector/Cargo.toml; do
+          for manifest in core/Cargo.toml portal/Cargo.toml syncer/Cargo.toml; do
             package_version="$(sed -nE 's/^version = "([^"]+)"$/\1/p' "$manifest")"
             if [[ "$package_version" != "$version" ]]; then
               echo "$manifest version $package_version does not match tag $RELEASE_TAG" >&2
@@ -44,8 +44,8 @@ jobs:
 
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
-  connector:
-    name: Build Windows Connector
+  syncer:
+    name: Build Windows Syncer
     needs: validate
     runs-on: windows-latest
     steps:
@@ -55,38 +55,38 @@ jobs:
         shell: pwsh
         run: rustup toolchain install 1.93.1 --profile minimal
 
-      - name: Build and package Connector
+      - name: Build and package Syncer
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         shell: pwsh
         run: |
-          cargo +1.93.1 build --release --locked -p adscope-connector
+          cargo +1.93.1 build --release --locked -p adscope-syncer
 
           dotnet tool install --global wix --version 5.0.2
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
           New-Item -ItemType Directory -Path release -Force | Out-Null
-          wix build connector\installer\AdscopeConnector.wxs -arch x64 `
-            -d "ConnectorBinary=$((Resolve-Path target\release\adscope-connector.exe).Path)" `
+          wix build syncer\installer\AdscopeSyncer.wxs -arch x64 `
+            -d "SyncerBinary=$((Resolve-Path target\release\adscope-syncer.exe).Path)" `
             -d "ProductVersion=$env:VERSION" `
-            -o "release\adscope-connector-v$env:VERSION-windows-x64.msi"
+            -o "release\adscope-syncer-v$env:VERSION-windows-x64.msi"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: connector-release
-          path: release/adscope-connector-v${{ needs.validate.outputs.version }}-windows-x64.msi
+          name: syncer-release
+          path: release/adscope-syncer-v${{ needs.validate.outputs.version }}-windows-x64.msi
           if-no-files-found: error
 
-  center:
-    name: Build Linux Center
+  core:
+    name: Build Linux Core
     needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build and export Center image
+      - name: Build and export Core image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          IMAGE: ghcr.io/example/adscope-center
+          IMAGE: ghcr.io/example/adscope-core
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -96,28 +96,29 @@ jobs:
             --build-arg "VERSION=$VERSION" \
             --build-arg "REVISION=$GITHUB_SHA" \
             --tag "$IMAGE:$VERSION" \
+            -f core/Dockerfile \
             .
           printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$IMAGE:$VERSION"
-          docker save --output "release/adscope-center-v$VERSION-linux-amd64.tar" "$IMAGE:$VERSION"
+          docker save --output "release/adscope-core-v$VERSION-linux-amd64.tar" "$IMAGE:$VERSION"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: center-release
-          path: release/adscope-center-v${{ needs.validate.outputs.version }}-linux-amd64.tar
+          name: core-release
+          path: release/adscope-core-v${{ needs.validate.outputs.version }}-linux-amd64.tar
           if-no-files-found: error
 
-  gateway:
-    name: Build Linux Gateway
+  portal:
+    name: Build Linux Portal
     needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build and export Gateway image
+      - name: Build and export Portal image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          IMAGE: ghcr.io/example/adscope-gateway
+          IMAGE: ghcr.io/example/adscope-portal
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -127,40 +128,40 @@ jobs:
             --build-arg "VERSION=$VERSION" \
             --build-arg "REVISION=$GITHUB_SHA" \
             --tag "$IMAGE:$VERSION" \
-            -f gateway/Dockerfile \
+            -f portal/Dockerfile \
             .
           printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$IMAGE:$VERSION"
-          docker save --output "release/adscope-gateway-v$VERSION-linux-amd64.tar" "$IMAGE:$VERSION"
+          docker save --output "release/adscope-portal-v$VERSION-linux-amd64.tar" "$IMAGE:$VERSION"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: gateway-release
-          path: release/adscope-gateway-v${{ needs.validate.outputs.version }}-linux-amd64.tar
+          name: portal-release
+          path: release/adscope-portal-v${{ needs.validate.outputs.version }}-linux-amd64.tar
           if-no-files-found: error
 
   release:
     name: Create GitHub Release
     needs:
       - validate
-      - connector
-      - center
-      - gateway
+      - syncer
+      - core
+      - portal
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: connector-release
+          name: syncer-release
           path: release
 
       - uses: actions/download-artifact@v8
         with:
-          name: center-release
+          name: core-release
           path: release
 
       - uses: actions/download-artifact@v8
         with:
-          name: gateway-release
+          name: portal-release
           path: release
 
       - name: Generate release manifest and checksums
@@ -170,39 +171,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          center_archive="release/adscope-center-v$VERSION-linux-amd64.tar"
-          gateway_archive="release/adscope-gateway-v$VERSION-linux-amd64.tar"
-          connector_installer="release/adscope-connector-v$VERSION-windows-x64.msi"
-          for artifact in "$center_archive" "$gateway_archive" "$connector_installer"; do
+          core_archive="release/adscope-core-v$VERSION-linux-amd64.tar"
+          portal_archive="release/adscope-portal-v$VERSION-linux-amd64.tar"
+          syncer_installer="release/adscope-syncer-v$VERSION-windows-x64.msi"
+          for artifact in "$core_archive" "$portal_archive" "$syncer_installer"; do
             test -f "$artifact" || { echo "Missing release artifact: $artifact" >&2; exit 1; }
           done
 
-          center_checksum="$(sha256sum "$center_archive" | awk '{print $1}')"
-          gateway_checksum="$(sha256sum "$gateway_archive" | awk '{print $1}')"
-          connector_checksum="$(sha256sum "$connector_installer" | awk '{print $1}')"
+          core_checksum="$(sha256sum "$core_archive" | awk '{print $1}')"
+          portal_checksum="$(sha256sum "$portal_archive" | awk '{print $1}')"
+          syncer_checksum="$(sha256sum "$syncer_installer" | awk '{print $1}')"
           jq -n \
             --arg version "$VERSION" \
             --arg revision "$REVISION" \
-            --arg center_checksum "$center_checksum" \
-            --arg gateway_checksum "$gateway_checksum" \
-            --arg connector_checksum "$connector_checksum" \
-            --arg center_name "$(basename "$center_archive")" \
-            --arg gateway_name "$(basename "$gateway_archive")" \
-            --arg connector_name "$(basename "$connector_installer")" \
+            --arg core_checksum "$core_checksum" \
+            --arg portal_checksum "$portal_checksum" \
+            --arg syncer_checksum "$syncer_checksum" \
+            --arg core_name "$(basename "$core_archive")" \
+            --arg portal_name "$(basename "$portal_archive")" \
+            --arg syncer_name "$(basename "$syncer_installer")" \
             '{
               version: $version,
               revision: $revision,
               target: "windows-x86_64,linux-amd64",
               artifacts: [
-                { name: $center_name, sha256: $center_checksum },
-                { name: $gateway_name, sha256: $gateway_checksum },
-                { name: $connector_name, sha256: $connector_checksum }
+                { name: $core_name, sha256: $core_checksum },
+                { name: $portal_name, sha256: $portal_checksum },
+                { name: $syncer_name, sha256: $syncer_checksum }
               ]
             }' > release/manifest.json
           printf '%s  %s\n%s  %s\n%s  %s\n' \
-            "$center_checksum" "$(basename "$center_archive")" \
-            "$gateway_checksum" "$(basename "$gateway_archive")" \
-            "$connector_checksum" "$(basename "$connector_installer")" > release/SHA256SUMS
+            "$core_checksum" "$(basename "$core_archive")" \
+            "$portal_checksum" "$(basename "$portal_archive")" \
+            "$syncer_checksum" "$(basename "$syncer_installer")" > release/SHA256SUMS
 
       - name: Create or update GitHub Release
         env:

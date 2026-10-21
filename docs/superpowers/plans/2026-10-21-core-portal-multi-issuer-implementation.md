@@ -1,5 +1,7 @@
 # Core、Portal 多 issuer 实现计划
 
+> 2026-10-22 执行提示：服务目录和 crate/二进制已重命名为 `core`、`portal`、`syncer`。下文保留计划编写时的 `center`、`gateway`、`connector` 历史路径，阅读时按同名映射理解，实际命令以当前仓库目录为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让三个 Portal 分别作为 OIDC issuer，由 Core 按请求 Host 统一签发和校验，同时保持客户端记录全局、Syncer 直连 Core。

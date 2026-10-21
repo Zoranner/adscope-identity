@@ -477,8 +477,8 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         if let Some(managed_group_id_attribute) = patch.managed_group_id_attribute {
             domain.managed_group_id_attribute = Set(managed_group_id_attribute);
         }
-        if let Some(connector_key_hash) = patch.connector_key_hash {
-            domain.connector_key_hash = Set(connector_key_hash);
+        if let Some(syncer_key_hash) = patch.syncer_key_hash {
+            domain.syncer_key_hash = Set(syncer_key_hash);
         }
 
         match domain.update(&self.db).await {
