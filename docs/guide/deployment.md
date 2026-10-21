@@ -47,7 +47,7 @@ Center 按单实例部署。不要让多个 Center 副本共享同一个 SQLite 
 
 `PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
-普通用户入口为 `/login`，管理入口为 `/admin`，都由网关提供。Center 只提供 API/OIDC 和同步控制面，不再托管前端；网关镜像包含 `center/web` 的静态构建产物，并把 `/api/*`、`/oauth2/*`、`/.well-known/*` 转发到 Center，其余路径返回前端文件。
+普通用户入口为 `/login`，管理入口为 `/admin`，都由网关提供。Center 只提供 API/OIDC 和同步控制面，不再托管前端；网关镜像包含 `gateway/static` 的静态构建产物，并把 `/api/*`、`/oauth2/*`、`/.well-known/*` 转发到 Center，其余路径返回前端文件。
 
 ## 可用性与恢复
 
@@ -129,18 +129,18 @@ Center 只发布一个活动公钥，不提供新旧密钥并行验证窗口。�
 `adscope-gateway` 是自研 Rust 服务，镜像内同时包含网关二进制和 Nuxt 静态前端。构建：
 
 ```text
-cd center/web
+cd gateway/web
 bun install --frozen-lockfile
 bun run build
-mkdir -p ../../gateway/web
-cp -R .output/public/. ../../gateway/web/
+mkdir -p ../static
+cp -R .output/public/. ../static/
 cd ../..
 docker build -f gateway/Dockerfile -t ghcr.io/example/adscope-gateway:0.2.0 .
 ```
 
-静态前端产物先复制到 `gateway/web`，镜像构建时直接复制到 `/app/web`。
+静态前端产物先复制到 `gateway/static`，镜像构建时直接复制到 `/app/web`。
 
-`gateway/web` 是仓库内的发布输入。修改 `center/web` 后需要重新构建并提交产物；发布流水线不安装前端依赖，也不在 CI 中构建前端。
+`gateway/static` 是仓库内的发布输入。修改 `gateway/web` 后需要重新构建并提交产物；发布流水线不安装前端依赖，也不在 CI 中构建前端。
 
 网关变量：
 

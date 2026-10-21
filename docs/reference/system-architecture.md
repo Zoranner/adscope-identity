@@ -100,9 +100,10 @@ Center 当前按单实例部署。SQLite 文件位于进程工作目录的 `data
 | `adscope-center` | Center API、认证、OIDC、管理面、密码处理和同步控制面 |
 | `adscope-connector` | Windows 服务、配置、本地 state、HTTP 客户端和域控执行 |
 | `adscope-gateway` | TLS 终止、静态前端托管、API/OIDC 转发、入口开关 |
-| `center/web` | Nuxt 页面，构建进网关镜像 |
+| `gateway/web` | Nuxt 页面源码 |
+| `gateway/static` | 网关镜像内置的静态构建产物 |
 
-`adscope-gateway` 用 axum/axum-server 终止 TLS，用 reqwest 流式转发 `/api/*`、`/oauth2/*`、`/.well-known/*`，其余路径返回 `center/web` 的静态构建产物。它不实现 OIDC 签名、不保存用户/Token/私钥；Center 不托管前端。
+`adscope-gateway` 用 axum/axum-server 终止 TLS，用 reqwest 流式转发 `/api/*`、`/oauth2/*`、`/.well-known/*`，其余路径返回 `gateway/static` 的静态构建产物。它不实现 OIDC 签名、不保存用户/Token/私钥；Center 不托管前端。
 
 中心服务内部按职责分为：
 

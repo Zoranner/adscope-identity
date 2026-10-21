@@ -6,8 +6,9 @@
 center             中心服务 API、认证、OIDC Provider、管理面和同步控制面
 center/src/oidc    OIDC 配置、JWT/JWKS、授权参数校验和协议端点
 center/src/routes  普通用户、管理会话、管理接口和 Connector 接口
-center/web         Nuxt Web，构建进网关镜像
 gateway            自研 Rust 网关：TLS、静态前端、API/OIDC 转发、入口开关
+gateway/web        Nuxt Web 源码
+gateway/static     网关镜像内置的静态构建产物
 connector          域内 Connector、HTTP 客户端、本地 state 和域控写入
 crates/protocol    同步契约、目录计划和共享数据结构
 crates/store       数据库访问、revision 和 OAuth 持久化
@@ -44,12 +45,12 @@ docker compose up -d center
 如需单独构建 Web：
 
 ```text
-cd center/web
+cd gateway/web
 bun install --frozen-lockfile
 bun run build
 ```
 
-网关镜像托管 `center/web` 的静态构建产物；修改前端后需要重新构建并提交 `gateway/web`，发布流水线不现场构建前端。本地联调时把 `WEB_ROOT` 指向 `center/web/.output/public`，配置 `CENTER_URL`、TLS 证书和私钥后运行 `cargo run -p adscope-gateway`；完整变量见 [网关说明](../../gateway/README.md)。普通用户入口为 `/login`，管理入口为 `/admin`，都由网关提供。
+网关镜像托管 `gateway/static` 的静态构建产物；修改前端后需要重新构建并提交 `gateway/static`，发布流水线不现场构建前端。本地联调时把 `WEB_ROOT` 指向 `gateway/web/.output/public`，配置 `CENTER_URL`、TLS 证书和私钥后运行 `cargo run -p adscope-gateway`；完整变量见 [网关说明](../../gateway/README.md)。普通用户入口为 `/login`，管理入口为 `/admin`，都由网关提供。
 
 Connector 通过 MSI 安装并注册 Windows 服务。安装示例：
 
@@ -80,13 +81,13 @@ cargo test --manifest-path crates/store/Cargo.toml
 cargo clippy --manifest-path crates/store/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-Web 代码修改后在 `center/web` 下执行：
+Web 代码修改后在 `gateway/web` 下执行：
 
 ```text
 bun run typecheck
 bun run build
 ```
 
-如修改了 `center/web/tests` 下的测试，可直接执行 `bun test`。
+如修改了 `gateway/web/tests` 下的测试，可直接执行 `bun test`。
 
 文档修改至少检查链接、标题、接口路径和术语一致性。文档检查不代表真实 AD、TLS、密钥保护或生产权限已经验收。

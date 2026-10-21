@@ -8,7 +8,7 @@
 
 ## 范围与依据
 
-本次评审覆盖根工作区中的 `center`、`connector`、`crates/protocol`、`crates/store`、`center/web` 以及部署、发布和参考文档。评审依据为仓库 README、技术参考、部署与安全文档、Cargo/Nuxt 配置、现有测试脚本，以及 Rust 与 Nuxt/Vue 工程评审基线。
+本次评审覆盖根工作区中的 `center`、`connector`、`crates/protocol`、`crates/store`、`gateway/web` 以及部署、发布和参考文档。评审依据为仓库 README、技术参考、部署与安全文档、Cargo/Nuxt 配置、现有测试脚本，以及 Rust 与 Nuxt/Vue 工程评审基线。
 
 本次只评估工程边界、凭据处理、可验证性和文档一致性，不评价 AD 域控、TLS 反向代理、真实 OIDC 客户端或生产权限的实际部署效果。
 
@@ -20,7 +20,7 @@
 
 ### 管理凭证被持久化到浏览器 localStorage
 
-`ADSS_MANAGEMENT_TOKEN` 是管理面生产密钥，但 `useAdminApi` 在加载、显式保存及成功鉴权后都会读取或写入 `localStorage`。[useAdminApi.ts](../../center/web/app/composables/useAdminApi.ts#L43) 将其恢复到页面状态，[useAdminApi.ts](../../center/web/app/composables/useAdminApi.ts#L53) 和 [useAdminApi.ts](../../center/web/app/composables/useAdminApi.ts#L97) 将其持久化。安全边界明确要求该 token 只能受限保存，且管理接口可写入目录、域配置和凭据事实。[security-boundary.md](../reference/security-boundary.md#L45)
+`ADSS_MANAGEMENT_TOKEN` 是管理面生产密钥，但 `useAdminApi` 在加载、显式保存及成功鉴权后都会读取或写入 `localStorage`。[useAdminApi.ts](../../gateway/web/app/composables/useAdminApi.ts#L43) 将其恢复到页面状态，[useAdminApi.ts](../../gateway/web/app/composables/useAdminApi.ts#L53) 和 [useAdminApi.ts](../../gateway/web/app/composables/useAdminApi.ts#L97) 将其持久化。安全边界明确要求该 token 只能受限保存，且管理接口可写入目录、域配置和凭据事实。[security-boundary.md](../reference/security-boundary.md#L45)
 
 同源脚本执行、浏览器配置文件读取或共用工作站都会取得长期管理凭证。管理 token 应默认仅保存在内存中并在页面关闭后失效；若确有持久会话需求，应改由服务端签发具备过期和撤销语义的受保护会话，不能复用部署级共享密钥。
 
@@ -44,7 +44,7 @@ Center 允许任意非空 `ADSS_MANAGEMENT_TOKEN`、`ADSS_USER_SESSION_KEY` 和�
 
 ### Nuxt 构建带警告仍被视为成功
 
-`bun run build` 返回成功，但 Nuxt/Nitro 输出 `cache-driver.mjs` 未解析而被 externalize、H3 named exports 未使用两条警告。前端依赖使用范围版本约束，[package.json](../../center/web/package.json#L12) 会使可解析的 Nuxt/Nitro/H3 组合随安装漂移。
+`bun run build` 返回成功，但 Nuxt/Nitro 输出 `cache-driver.mjs` 未解析而被 externalize、H3 named exports 未使用两条警告。前端依赖使用范围版本约束，[package.json](../../gateway/web/package.json#L12) 会使可解析的 Nuxt/Nitro/H3 组合随安装漂移。
 
 当前构建不能作为零警告交付物放行。应定位这两条警告对应的依赖组合或构建配置，固定兼容版本并把零警告构建纳入门禁。
 
@@ -64,7 +64,7 @@ Center 将 `state.batch_limit` 传入目录查询。[routes.rs](../../center/src
 
 ### 前端缺少 lint、格式检查和测试入口
 
-前端 `package.json` 仅定义开发、生成、构建和 typecheck 脚本。[package.json](../../center/web/package.json#L5) 仓库没有 ESLint/Prettier 配置；已有 `tests/oidc-ui.test.ts`，但没有稳定的测试脚本。参考文档也只列出 typecheck 与 build。[README.md](../reference/README.md#L64)
+前端 `package.json` 仅定义开发、生成、构建和 typecheck 脚本。[package.json](../../gateway/web/package.json#L5) 仓库没有 ESLint/Prettier 配置；已有 `tests/oidc-ui.test.ts`，但没有稳定的测试脚本。参考文档也只列出 typecheck 与 build。[README.md](../reference/README.md#L64)
 
 这会使 Vue/TypeScript 风格、静态错误和已有单元测试无法由一个可重复命令验证。应以 Bun 增加只检查的 lint、format check、test 入口并在文档中列出。
 
