@@ -75,6 +75,23 @@ impl AppState {
         )
     }
 
+    pub fn new_for_tests_with_issuers(
+        repository: Repository,
+        password_encryption_key: impl Into<String>,
+        oidc_issuers: &[&str],
+        oidc_private_key_pem: &[u8],
+    ) -> Self {
+        Self::with_password_providers(
+            repository,
+            DEFAULT_BATCH_LIMIT,
+            Arc::new(BuiltInPasswordEncryption::new(password_encryption_key)),
+            Arc::new(DeterministicPasswordHash),
+            UserSessionIssuer::for_tests("test-user-session-key"),
+            "test-management-token".to_string(),
+            oidc_service_for_tests_with_issuers(oidc_issuers, oidc_private_key_pem),
+        )
+    }
+
     pub fn with_batch_limit_for_tests(
         repository: Repository,
         batch_limit: usize,
@@ -119,7 +136,13 @@ impl AppState {
 }
 
 fn oidc_service_for_tests(issuer: &str, private_key_pem: &[u8]) -> OidcService {
-    let config = OidcConfig::new(issuer, private_key_pem.to_vec(), false)
+    let config = OidcConfig::new_single_issuer_legacy(issuer, private_key_pem.to_vec(), false)
+        .expect("test OIDC configuration must be valid");
+    OidcService::new(config).expect("test OIDC private key must be valid")
+}
+
+fn oidc_service_for_tests_with_issuers(issuers: &[&str], private_key_pem: &[u8]) -> OidcService {
+    let config = OidcConfig::from_issuers(issuers, private_key_pem.to_vec(), false)
         .expect("test OIDC configuration must be valid");
     OidcService::new(config).expect("test OIDC private key must be valid")
 }

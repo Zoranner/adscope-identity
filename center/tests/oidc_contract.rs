@@ -29,7 +29,14 @@ const MANAGEMENT_TOKEN: &str = "test-management-token";
 const MANAGEMENT_CSRF_TOKEN: &str = "test-management-csrf-token";
 const TEST_ENCRYPTION_KEY: &str = "test-password-encryption-key";
 const TEST_OIDC_ISSUER: &str = "https://center.example.test";
+const TEST_OIDC_HOST: &str = "center.example.test";
 const TEST_OIDC_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/oidc-private-key.pem");
+const PORTAL_A_ISSUER: &str = "https://auth-a.example.com";
+const PORTAL_A_HOST: &str = "auth-a.example.com";
+const PORTAL_B_ISSUER: &str = "https://auth-b.example.com";
+const PORTAL_B_HOST: &str = "auth-b.example.com";
+const PORTAL_C_ISSUER: &str = "https://auth-c.example.com";
+const PORTAL_C_HOST: &str = "auth-c.example.com";
 const OIDC_CLIENT_ID: &str = "client_oidc_contract";
 const OIDC_REDIRECT_URI: &str = "https://client.example.test/callback?source=adscope";
 const OIDC_STATE: &str = "state-original";
@@ -96,7 +103,9 @@ async fn token_endpoint_exchanges_web_code_and_issues_bound_rs256_tokens() {
         assert_eq!(header.alg, Algorithm::RS256);
         assert_eq!(header.kid.as_deref(), Some(oidc.key_id()));
     }
-    let access_claims = oidc.verify_access_token(access_token).unwrap();
+    let access_claims = oidc
+        .verify_access_token_for_issuer(TEST_OIDC_ISSUER, access_token)
+        .unwrap();
     assert_eq!(access_claims.sub, "1001");
     assert_eq!(access_claims.client_id, TOKEN_WEB_CLIENT_ID);
     assert_eq!(access_claims.scope, "openid profile email phone");
@@ -105,7 +114,9 @@ async fn token_endpoint_exchanges_web_code_and_issues_bound_rs256_tokens() {
         format!("{TEST_OIDC_ISSUER}/oauth2/userinfo")
     );
     assert_eq!(access_claims.exp - access_claims.iat, 300);
-    let id_claims = oidc.verify_id_token(id_token, TOKEN_WEB_CLIENT_ID).unwrap();
+    let id_claims = oidc
+        .verify_id_token_for_issuer(TEST_OIDC_ISSUER, id_token, TOKEN_WEB_CLIENT_ID)
+        .unwrap();
     assert_eq!(id_claims.sub, "1001");
     assert_eq!(id_claims.nonce, OIDC_NONCE);
     assert_eq!(id_claims.auth_time, 1_700_000_000);
@@ -151,7 +162,7 @@ async fn token_endpoint_exchanges_public_desktop_code_without_client_secret() {
     assert_eq!(body["expires_in"], 300);
     assert_eq!(body["scope"], "openid profile email phone");
     let id_token = body["id_token"].as_str().unwrap();
-    oidc.verify_id_token(id_token, TOKEN_DESKTOP_CLIENT_ID)
+    oidc.verify_id_token_for_issuer(TEST_OIDC_ISSUER, id_token, TOKEN_DESKTOP_CLIENT_ID)
         .unwrap();
     let id_payload = jwt_payload(id_token);
     assert!(id_payload.get("email").is_none());
@@ -1066,6 +1077,247 @@ async fn jwks_endpoint_is_public() {
 }
 
 #[tokio::test]
+async fn multi_issuer_discovery_uses_normalized_request_host() {
+    let TestApp { app, .. } = multi_issuer_test_app().await;
+
+    for (host, issuer) in [
+        (PORTAL_A_HOST, PORTAL_A_ISSUER),
+        (PORTAL_B_HOST, PORTAL_B_ISSUER),
+        (PORTAL_C_HOST, PORTAL_C_ISSUER),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(with_host(
+                empty_request(Method::GET, "/.well-known/openid-configuration"),
+                host,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["issuer"], issuer);
+        assert_eq!(
+            body["authorization_endpoint"],
+            format!("{issuer}/oauth2/authorize")
+        );
+        assert_eq!(body["token_endpoint"], format!("{issuer}/oauth2/token"));
+        assert_eq!(
+            body["userinfo_endpoint"],
+            format!("{issuer}/oauth2/userinfo")
+        );
+        assert_eq!(body["jwks_uri"], format!("{issuer}/oauth2/jwks"));
+    }
+
+    let normalized = app
+        .oneshot(with_host(
+            empty_request(Method::GET, "/.well-known/openid-configuration"),
+            "auth-a.example.com.:443",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(normalized.status(), StatusCode::OK);
+    let body = json_body(normalized).await;
+    assert_eq!(body["issuer"], PORTAL_A_ISSUER);
+}
+
+#[tokio::test]
+async fn unknown_and_missing_hosts_return_404_for_oidc_routes() {
+    let TestApp { app, .. } = multi_issuer_test_app().await;
+    for (method, path) in [
+        (Method::GET, "/.well-known/openid-configuration"),
+        (Method::GET, "/oauth2/jwks"),
+        (Method::GET, "/oauth2/authorize"),
+        (Method::GET, "/oauth2/token"),
+        (Method::POST, "/oauth2/token"),
+        (Method::GET, "/oauth2/userinfo"),
+    ] {
+        let request = if method == Method::POST {
+            with_host(
+                raw_token_request(Body::empty(), "application/x-www-form-urlencoded", None),
+                "core.example.com",
+            )
+        } else {
+            with_host(empty_request(method.clone(), path), "core.example.com")
+        };
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{} {path}",
+            method.as_str()
+        );
+    }
+
+    let missing_host = app
+        .oneshot(empty_request(
+            Method::GET,
+            "/.well-known/openid-configuration",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(missing_host.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn authorization_code_issuer_must_match_token_request_issuer() {
+    let TestApp {
+        app,
+        repository,
+        oidc,
+    } = multi_issuer_test_app().await;
+    seed_user(&repository).await;
+    seed_token_client(&repository, OAuthClientType::Desktop).await;
+    seed_token_code_for_issuer(
+        &repository,
+        "a-code",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+        PORTAL_A_ISSUER,
+    )
+    .await;
+
+    let wrong_issuer = app
+        .clone()
+        .oneshot(with_host(
+            token_request(
+                TOKEN_DESKTOP_CLIENT_ID,
+                TOKEN_DESKTOP_REDIRECT_URI,
+                "a-code",
+                None,
+            ),
+            PORTAL_B_HOST,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(wrong_issuer, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+
+    seed_token_code_for_issuer(
+        &repository,
+        "legacy-code-without-issuer",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+        "",
+    )
+    .await;
+    let legacy_code = app
+        .clone()
+        .oneshot(with_host(
+            token_request(
+                TOKEN_DESKTOP_CLIENT_ID,
+                TOKEN_DESKTOP_REDIRECT_URI,
+                "legacy-code-without-issuer",
+                None,
+            ),
+            PORTAL_A_HOST,
+        ))
+        .await
+        .unwrap();
+    assert_token_error(legacy_code, StatusCode::BAD_REQUEST, "invalid_grant", None).await;
+
+    seed_token_code_for_issuer(
+        &repository,
+        "a-code-2",
+        TOKEN_DESKTOP_CLIENT_ID,
+        TOKEN_DESKTOP_REDIRECT_URI,
+        unix_seconds() as i64 + 120,
+        PORTAL_A_ISSUER,
+    )
+    .await;
+    let matched = app
+        .oneshot(with_host(
+            token_request(
+                TOKEN_DESKTOP_CLIENT_ID,
+                TOKEN_DESKTOP_REDIRECT_URI,
+                "a-code-2",
+                None,
+            ),
+            PORTAL_A_HOST,
+        ))
+        .await
+        .unwrap();
+    assert_token_headers(&matched, StatusCode::OK);
+    let body = json_body(matched).await;
+    let access_claims = oidc
+        .verify_access_token_for_issuer(PORTAL_A_ISSUER, body["access_token"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(access_claims.iss, PORTAL_A_ISSUER);
+    assert_eq!(access_claims.aud, "https://auth-a.example.com/oauth2/userinfo");
+    let id_claims = oidc
+        .verify_id_token_for_issuer(
+            PORTAL_A_ISSUER,
+            body["id_token"].as_str().unwrap(),
+            TOKEN_DESKTOP_CLIENT_ID,
+        )
+        .unwrap();
+    assert_eq!(id_claims.iss, PORTAL_A_ISSUER);
+    assert_eq!(id_claims.aud, TOKEN_DESKTOP_CLIENT_ID);
+}
+
+#[tokio::test]
+async fn access_token_is_rejected_by_another_issuer_userinfo() {
+    let TestApp {
+        app,
+        repository,
+        oidc,
+    } = multi_issuer_test_app().await;
+    seed_user(&repository).await;
+    seed_oidc_client(&repository).await;
+    let token = oidc
+        .issue_access_token_for_issuer(PORTAL_A_ISSUER, "1001", OIDC_CLIENT_ID, "openid")
+        .unwrap();
+
+    let wrong_issuer = app
+        .clone()
+        .oneshot(with_host(
+            auth_request(Method::GET, "/oauth2/userinfo", &token),
+            PORTAL_B_HOST,
+        ))
+        .await
+        .unwrap();
+    assert_invalid_token(wrong_issuer).await;
+
+    let right_issuer = app
+        .oneshot(with_host(
+            auth_request(Method::GET, "/oauth2/userinfo", &token),
+            PORTAL_A_HOST,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(right_issuer.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn multi_issuer_authorization_approval_records_current_issuer() {
+    let TestApp {
+        app, repository, ..
+    } = multi_issuer_test_app().await;
+    seed_user(&repository).await;
+    seed_oidc_client(&repository).await;
+    let cookie = login_cookie_for_host(&app, PORTAL_B_HOST).await;
+    let csrf = authorization_csrf_for_host(&app, &cookie, PORTAL_B_HOST).await;
+    let response = app
+        .oneshot(form_request_for_host(
+            "/oauth2/authorize",
+            &authorization_form("approve", &csrf),
+            &cookie,
+            PORTAL_B_HOST,
+        ))
+        .await
+        .unwrap();
+    let code = approved_code(response);
+    let stored = repository
+        .consume_authorization_code(&sha256_token(&code), unix_seconds() as i64)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(stored.issuer, PORTAL_B_ISSUER);
+}
+
+#[tokio::test]
 async fn userinfo_without_bearer_token_returns_invalid_token() {
     let TestApp { app, .. } = test_app().await;
 
@@ -1083,14 +1335,17 @@ fn access_token_has_fixed_claims_scope_and_lifetime() {
     let oidc = test_oidc_service();
     let issued_at = unix_seconds();
     let token = oidc
-        .issue_access_token_at(
+        .issue_access_token_at_for_issuer(
+            TEST_OIDC_ISSUER,
             "1001",
             OIDC_CLIENT_ID,
             "openid profile email phone",
             issued_at,
         )
         .unwrap();
-    let claims = oidc.verify_access_token(&token).unwrap();
+    let claims = oidc
+        .verify_access_token_for_issuer(TEST_OIDC_ISSUER, &token)
+        .unwrap();
 
     assert_eq!(claims.iss, TEST_OIDC_ISSUER);
     assert_eq!(claims.sub, "1001");
@@ -1100,12 +1355,17 @@ fn access_token_has_fixed_claims_scope_and_lifetime() {
     assert_eq!(claims.iat, issued_at);
     assert_eq!(claims.exp - claims.iat, 300);
     assert!(
-        oidc.issue_access_token("1001", OIDC_CLIENT_ID, "profile")
+        oidc.issue_access_token_for_issuer(TEST_OIDC_ISSUER, "1001", OIDC_CLIENT_ID, "profile",)
             .is_err()
     );
     assert!(
-        oidc.issue_access_token("1001", OIDC_CLIENT_ID, "openid  profile")
-            .is_err()
+        oidc.issue_access_token_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid  profile",
+        )
+        .is_err()
     );
 }
 
@@ -1114,34 +1374,69 @@ fn access_token_enforces_clock_skew_audience_and_fixed_ttl() {
     let oidc = test_oidc_service();
     let now = unix_seconds();
     let within_clock_skew = oidc
-        .issue_access_token_at("1001", OIDC_CLIENT_ID, "openid", now + 30)
+        .issue_access_token_at_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid",
+            now + 30,
+        )
         .unwrap();
-    assert!(oidc.verify_access_token(&within_clock_skew).is_ok());
+    assert!(
+        oidc.verify_access_token_for_issuer(TEST_OIDC_ISSUER, &within_clock_skew)
+            .is_ok()
+    );
 
     let future = oidc
-        .issue_access_token_at("1001", OIDC_CLIENT_ID, "openid", now + 61)
+        .issue_access_token_at_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid",
+            now + 61,
+        )
         .unwrap();
-    assert!(oidc.verify_access_token(&future).is_err());
+    assert!(
+        oidc.verify_access_token_for_issuer(TEST_OIDC_ISSUER, &future)
+            .is_err()
+    );
 
     let expired = oidc
-        .issue_access_token_at("1001", OIDC_CLIENT_ID, "openid", now - 331)
+        .issue_access_token_at_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid",
+            now - 331,
+        )
         .unwrap();
-    assert!(oidc.verify_access_token(&expired).is_err());
+    assert!(
+        oidc.verify_access_token_for_issuer(TEST_OIDC_ISSUER, &expired)
+            .is_err()
+    );
 
     let valid = oidc
-        .issue_access_token_at("1001", OIDC_CLIENT_ID, "openid", now)
+        .issue_access_token_at_for_issuer(TEST_OIDC_ISSUER, "1001", OIDC_CLIENT_ID, "openid", now)
         .unwrap();
-    let mut claims = oidc.verify_access_token(&valid).unwrap();
+    let mut claims = oidc
+        .verify_access_token_for_issuer(TEST_OIDC_ISSUER, &valid)
+        .unwrap();
     claims.aud = "https://center.example.test/oauth2/not-userinfo".to_string();
     assert!(
-        oidc.verify_access_token(&signed_access_token(&oidc, &claims))
+        oidc.verify_access_token_for_issuer(
+            TEST_OIDC_ISSUER,
+            &signed_access_token(&oidc, &claims),
+        )
             .is_err()
     );
 
     claims.aud = "https://center.example.test/oauth2/userinfo".to_string();
     claims.exp += 1;
     assert!(
-        oidc.verify_access_token(&signed_access_token(&oidc, &claims))
+        oidc.verify_access_token_for_issuer(
+            TEST_OIDC_ISSUER,
+            &signed_access_token(&oidc, &claims),
+        )
             .is_err()
     );
 }
@@ -1158,14 +1453,22 @@ async fn userinfo_rejects_non_oidc_invalid_and_expired_tokens() {
 
     let user_session = login_token(&app).await;
     let valid = oidc
-        .issue_access_token("1001", OIDC_CLIENT_ID, "openid")
+        .issue_access_token_for_issuer(TEST_OIDC_ISSUER, "1001", OIDC_CLIENT_ID, "openid")
         .unwrap();
     let bad_signature = corrupt_signature(&valid);
-    let mut wrong_audience_claims = oidc.verify_access_token(&valid).unwrap();
+    let mut wrong_audience_claims = oidc
+        .verify_access_token_for_issuer(TEST_OIDC_ISSUER, &valid)
+        .unwrap();
     wrong_audience_claims.aud = "https://center.example.test/oauth2/not-userinfo".to_string();
     let wrong_audience = signed_access_token(&oidc, &wrong_audience_claims);
     let expired = oidc
-        .issue_access_token_at("1001", OIDC_CLIENT_ID, "openid", unix_seconds() - 331)
+        .issue_access_token_at_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid",
+            unix_seconds() - 331,
+        )
         .unwrap();
 
     for token in [user_session, bad_signature, wrong_audience, expired] {
@@ -1196,7 +1499,7 @@ async fn userinfo_returns_only_claims_granted_by_scope() {
     seed_oidc_client(&repository).await;
 
     let openid_token = oidc
-        .issue_access_token("1001", OIDC_CLIENT_ID, "openid")
+        .issue_access_token_for_issuer(TEST_OIDC_ISSUER, "1001", OIDC_CLIENT_ID, "openid")
         .unwrap();
     let openid_response = app
         .clone()
@@ -1208,7 +1511,12 @@ async fn userinfo_returns_only_claims_granted_by_scope() {
     assert_eq!(json_body(openid_response).await, json!({ "sub": "1001" }));
 
     let full_token = oidc
-        .issue_access_token("1001", OIDC_CLIENT_ID, "openid profile email phone")
+        .issue_access_token_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid profile email phone",
+        )
         .unwrap();
     let full_response = app
         .oneshot(auth_request(Method::GET, "/oauth2/userinfo", &full_token))
@@ -1245,7 +1553,12 @@ async fn userinfo_omits_empty_optional_values_and_falls_back_to_telephone() {
     .await;
     seed_oidc_client(&repository).await;
     let token = oidc
-        .issue_access_token("1001", OIDC_CLIENT_ID, "openid email phone")
+        .issue_access_token_for_issuer(
+            TEST_OIDC_ISSUER,
+            "1001",
+            OIDC_CLIENT_ID,
+            "openid email phone",
+        )
         .unwrap();
 
     let response = app
@@ -1286,7 +1599,7 @@ async fn userinfo_rechecks_current_user_and_client_state() {
     seed_user(&repository).await;
     let mut client = seed_oidc_client(&repository).await;
     let token = oidc
-        .issue_access_token("1001", OIDC_CLIENT_ID, "openid")
+        .issue_access_token_for_issuer(TEST_OIDC_ISSUER, "1001", OIDC_CLIENT_ID, "openid")
         .unwrap();
 
     client.enabled = false;
@@ -1339,7 +1652,7 @@ async fn userinfo_rejects_missing_user_and_api_me_rejects_oidc_access_token() {
     } = test_app().await;
     seed_oidc_client(&repository).await;
     let missing_user_token = oidc
-        .issue_access_token("missing", OIDC_CLIENT_ID, "openid")
+        .issue_access_token_for_issuer(TEST_OIDC_ISSUER, "missing", OIDC_CLIENT_ID, "openid")
         .unwrap();
     assert_invalid_token(
         app.clone()
@@ -1355,7 +1668,7 @@ async fn userinfo_rejects_missing_user_and_api_me_rejects_oidc_access_token() {
 
     seed_user(&repository).await;
     let oidc_token = oidc
-        .issue_access_token("1001", OIDC_CLIENT_ID, "openid")
+        .issue_access_token_for_issuer(TEST_OIDC_ISSUER, "1001", OIDC_CLIENT_ID, "openid")
         .unwrap();
     let response = app
         .oneshot(auth_request(Method::GET, "/api/me", &oidc_token))
@@ -2294,6 +2607,10 @@ fn form_request(uri: &str, form: &str, cookie: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn form_request_for_host(uri: &str, form: &str, cookie: &str, host: &str) -> Request<Body> {
+    with_host(form_request(uri, form, cookie), host)
+}
+
 fn token_request(
     client_id: &str,
     redirect_uri: &str,
@@ -2380,6 +2697,15 @@ async fn assert_token_error(
     );
 }
 
+fn with_host(mut request: Request<Body>, host: &str) -> Request<Body> {
+    request.headers_mut().insert(
+        header::HOST,
+        host.parse()
+            .expect("test host must be a valid header value"),
+    );
+    request
+}
+
 fn cookie_request(method: Method, uri: &str, cookie: &str) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -2396,15 +2722,22 @@ fn session_cookie_value(set_cookie: &str) -> String {
 }
 
 async fn login_cookie(app: &axum::Router) -> String {
+    login_cookie_for_host(app, TEST_OIDC_HOST).await
+}
+
+async fn login_cookie_for_host(app: &axum::Router, host: &str) -> String {
     let response = app
         .clone()
-        .oneshot(json_request(
-            Method::POST,
-            "/api/auth/login",
-            &UserLoginRequest {
-                username: "test-user".to_string(),
-                password: "UserPass123!".to_string(),
-            },
+        .oneshot(with_host(
+            json_request(
+                Method::POST,
+                "/api/auth/login",
+                &UserLoginRequest {
+                    username: "test-user".to_string(),
+                    password: "UserPass123!".to_string(),
+                },
+            ),
+            host,
         ))
         .await
         .unwrap();
@@ -2413,13 +2746,20 @@ async fn login_cookie(app: &axum::Router) -> String {
 }
 
 async fn authorization_csrf(app: &axum::Router, cookie: &str) -> String {
+    authorization_csrf_for_host(app, cookie, TEST_OIDC_HOST).await
+}
+
+async fn authorization_csrf_for_host(app: &axum::Router, cookie: &str, host: &str) -> String {
     let context_uri = format!(
         "/api/oauth2/authorize/context?{}",
         authorization_uri().split_once('?').unwrap().1
     );
     let response = app
         .clone()
-        .oneshot(cookie_request(Method::GET, &context_uri, cookie))
+        .oneshot(with_host(
+            cookie_request(Method::GET, &context_uri, cookie),
+            host,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -2485,6 +2825,23 @@ async fn test_app() -> TestApp {
     }
 }
 
+async fn multi_issuer_test_app() -> TestApp {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    let state = AppState::new_for_tests_with_issuers(
+        repository.clone(),
+        TEST_ENCRYPTION_KEY,
+        &[PORTAL_A_ISSUER, PORTAL_B_ISSUER, PORTAL_C_ISSUER],
+        TEST_OIDC_PRIVATE_KEY,
+    );
+    let oidc = state.oidc.clone();
+    TestApp {
+        app: build_router(state),
+        repository,
+        oidc,
+    }
+}
+
 async fn seed_token_client(repository: &Repository, client_type: OAuthClientType) {
     let (client_id, client_secret_hash, redirect_uris) = match client_type {
         OAuthClientType::Web => (
@@ -2525,9 +2882,29 @@ async fn seed_token_code(
     redirect_uri: &str,
     expires_at: i64,
 ) {
+    seed_token_code_for_issuer(
+        repository,
+        code,
+        client_id,
+        redirect_uri,
+        expires_at,
+        TEST_OIDC_ISSUER,
+    )
+    .await;
+}
+
+async fn seed_token_code_for_issuer(
+    repository: &Repository,
+    code: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    expires_at: i64,
+    issuer: &str,
+) {
     repository
         .store_authorization_code(adscope_store::AuthorizationCodeRecord {
             code_hash: sha256_token(code),
+            issuer: issuer.to_string(),
             client_id: client_id.to_string(),
             employee_id: "1001".to_string(),
             redirect_uri: redirect_uri.to_string(),
@@ -2615,7 +2992,12 @@ async fn seed_oidc_client(repository: &Repository) -> OAuthClientRecord {
 
 fn test_oidc_service() -> OidcService {
     OidcService::new(
-        OidcConfig::new(TEST_OIDC_ISSUER, TEST_OIDC_PRIVATE_KEY.to_vec(), false).unwrap(),
+        OidcConfig::new_single_issuer_legacy(
+            TEST_OIDC_ISSUER,
+            TEST_OIDC_PRIVATE_KEY.to_vec(),
+            false,
+        )
+        .unwrap(),
     )
     .unwrap()
 }

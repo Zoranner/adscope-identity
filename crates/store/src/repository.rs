@@ -80,6 +80,28 @@ impl Repository {
         Ok(())
     }
 
+    async fn ensure_authorization_code_issuer_column(&self) -> anyhow::Result<()> {
+        let columns = self
+            .db
+            .query_all_raw(Statement::from_string(
+                self.db.get_database_backend(),
+                "PRAGMA table_info(oauth_authorization_codes)",
+            ))
+            .await?
+            .into_iter()
+            .map(|row| row.try_get::<String>("", "name"))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if !columns.iter().any(|column| column == "issuer") {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE oauth_authorization_codes ADD COLUMN issuer TEXT NOT NULL DEFAULT ''",
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     pub async fn initialize_schema(&self) -> anyhow::Result<()> {
         self.db
             .execute_unprepared(
@@ -206,6 +228,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
                 r#"
 CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
     code_hash TEXT PRIMARY KEY NOT NULL,
+    issuer TEXT NOT NULL DEFAULT '',
     client_id TEXT NOT NULL,
     employee_id TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
@@ -218,6 +241,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
 "#,
             )
             .await?;
+        self.ensure_authorization_code_issuer_column().await?;
         self.ensure_metadata().await?;
         Ok(())
     }

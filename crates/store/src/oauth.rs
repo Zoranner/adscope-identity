@@ -39,6 +39,7 @@ pub(crate) fn authorization_code_active_model(
 ) -> anyhow::Result<oauth_authorization_code::ActiveModel> {
     Ok(oauth_authorization_code::ActiveModel {
         code_hash: Set(record.code_hash),
+        issuer: Set(record.issuer),
         client_id: Set(record.client_id),
         employee_id: Set(record.employee_id),
         redirect_uri: Set(record.redirect_uri),
@@ -72,6 +73,7 @@ impl TryFrom<oauth_authorization_code::Model> for AuthorizationCodeRecord {
     fn try_from(model: oauth_authorization_code::Model) -> anyhow::Result<Self> {
         Ok(Self {
             code_hash: model.code_hash,
+            issuer: model.issuer,
             client_id: model.client_id,
             employee_id: model.employee_id,
             redirect_uri: model.redirect_uri,

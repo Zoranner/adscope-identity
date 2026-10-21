@@ -175,6 +175,7 @@ pub(crate) mod oauth_authorization_code {
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false)]
         pub code_hash: String,
+        pub issuer: String,
         pub client_id: String,
         pub employee_id: String,
         pub redirect_uri: String,

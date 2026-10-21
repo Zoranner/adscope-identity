@@ -146,14 +146,16 @@ impl OidcService {
         &self.jwks
     }
 
-    pub fn issue_id_token(
+    pub fn issue_id_token_for_issuer(
         &self,
+        issuer: &str,
         subject: &str,
         audience: &str,
         auth_time: u64,
         nonce: &str,
     ) -> anyhow::Result<String> {
-        self.issue_id_token_with_user_claims(
+        self.issue_id_token_with_user_claims_for_issuer(
+            issuer,
             subject,
             audience,
             auth_time,
@@ -162,8 +164,9 @@ impl OidcService {
         )
     }
 
-    pub(crate) fn issue_id_token_with_user_claims(
+    pub(crate) fn issue_id_token_with_user_claims_for_issuer(
         &self,
+        issuer: &str,
         subject: &str,
         audience: &str,
         auth_time: u64,
@@ -175,7 +178,7 @@ impl OidcService {
             .checked_add(self.config.token_ttl().as_secs())
             .ok_or_else(|| anyhow::anyhow!("ID token expiration overflow"))?;
         let claims = IdTokenClaims {
-            iss: self.config.issuer().to_string(),
+            iss: issuer.to_string(),
             aud: audience.to_string(),
             sub: subject.to_string(),
             iat,
@@ -190,7 +193,12 @@ impl OidcService {
         self.encode_claims(&claims)
     }
 
-    pub fn verify_id_token(&self, token: &str, audience: &str) -> anyhow::Result<IdTokenClaims> {
+    pub fn verify_id_token_for_issuer(
+        &self,
+        issuer: &str,
+        token: &str,
+        audience: &str,
+    ) -> anyhow::Result<IdTokenClaims> {
         let header = decode_header(token)?;
         anyhow::ensure!(header.alg == Algorithm::RS256, "ID token must use RS256");
         anyhow::ensure!(
@@ -199,7 +207,7 @@ impl OidcService {
         );
         let mut validation = Validation::new(Algorithm::RS256);
         validation.leeway = MAX_CLOCK_SKEW_SECONDS;
-        validation.set_issuer(&[self.config.issuer()]);
+        validation.set_issuer(&[issuer]);
         validation.set_audience(&[audience]);
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         let claims = decode::<IdTokenClaims>(token, &self.decoding_key, &validation)?.claims;
@@ -219,17 +227,25 @@ impl OidcService {
         Ok(claims)
     }
 
-    pub fn issue_access_token(
+    pub fn issue_access_token_for_issuer(
         &self,
+        issuer: &str,
         subject: &str,
         client_id: &str,
         scope: &str,
     ) -> anyhow::Result<String> {
-        self.issue_access_token_at(subject, client_id, scope, current_unix_seconds()?)
+        self.issue_access_token_at_for_issuer(
+            issuer,
+            subject,
+            client_id,
+            scope,
+            current_unix_seconds()?,
+        )
     }
 
-    pub fn issue_access_token_at(
+    pub fn issue_access_token_at_for_issuer(
         &self,
+        issuer: &str,
         subject: &str,
         client_id: &str,
         scope: &str,
@@ -240,9 +256,9 @@ impl OidcService {
             .checked_add(self.config.token_ttl().as_secs())
             .ok_or_else(|| anyhow::anyhow!("OIDC access token expiration overflow"))?;
         self.encode_claims(&AccessTokenClaims {
-            iss: self.config.issuer().to_string(),
+            iss: issuer.to_string(),
             sub: subject.to_string(),
-            aud: self.userinfo_audience(),
+            aud: Self::userinfo_audience(issuer),
             client_id: client_id.to_string(),
             scope: scope.to_string(),
             iat: issued_at,
@@ -250,7 +266,11 @@ impl OidcService {
         })
     }
 
-    pub fn verify_access_token(&self, token: &str) -> anyhow::Result<AccessTokenClaims> {
+    pub fn verify_access_token_for_issuer(
+        &self,
+        issuer: &str,
+        token: &str,
+    ) -> anyhow::Result<AccessTokenClaims> {
         let header = decode_header(token)?;
         anyhow::ensure!(
             header.alg == Algorithm::RS256,
@@ -260,10 +280,10 @@ impl OidcService {
             header.kid.as_deref() == Some(self.key_id()),
             "OIDC access token kid is not active"
         );
-        let audience = self.userinfo_audience();
+        let audience = Self::userinfo_audience(issuer);
         let mut validation = Validation::new(Algorithm::RS256);
         validation.leeway = MAX_CLOCK_SKEW_SECONDS;
-        validation.set_issuer(&[self.config.issuer()]);
+        validation.set_issuer(&[issuer]);
         validation.set_audience(&[audience.as_str()]);
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         let claims = decode::<AccessTokenClaims>(token, &self.decoding_key, &validation)?.claims;
@@ -280,8 +300,8 @@ impl OidcService {
         Ok(claims)
     }
 
-    fn userinfo_audience(&self) -> String {
-        format!("{}/oauth2/userinfo", self.config.issuer())
+    fn userinfo_audience(issuer: &str) -> String {
+        format!("{issuer}/oauth2/userinfo")
     }
 
     fn encode_claims<T: Serialize>(&self, claims: &T) -> anyhow::Result<String> {
@@ -303,15 +323,13 @@ mod tests {
     use super::{IdTokenClaims, OidcService, config::OidcConfig};
 
     const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/oidc-private-key.pem");
+    const ISSUER: &str = "https://center.example.test";
 
     #[test]
     fn invalid_private_key_is_rejected() {
-        let config = OidcConfig::new(
-            "https://center.example.test",
-            b"not a private key".to_vec(),
-            false,
-        )
-        .unwrap();
+        let config =
+            OidcConfig::new_single_issuer_legacy(ISSUER, b"not a private key".to_vec(), false)
+                .unwrap();
         assert!(OidcService::new(config).is_err());
     }
 
@@ -320,12 +338,9 @@ mod tests {
         let private_key =
             RsaPrivateKey::from_pkcs8_pem(std::str::from_utf8(PRIVATE_KEY).unwrap()).unwrap();
         let pkcs1_pem = private_key.to_pkcs1_pem(Default::default()).unwrap();
-        let config = OidcConfig::new(
-            "https://center.example.test",
-            pkcs1_pem.as_bytes().to_vec(),
-            false,
-        )
-        .unwrap();
+        let config =
+            OidcConfig::new_single_issuer_legacy(ISSUER, pkcs1_pem.as_bytes().to_vec(), false)
+                .unwrap();
 
         assert!(OidcService::new(config).is_ok());
     }
@@ -365,7 +380,7 @@ mod tests {
     fn id_token_verifies_with_jwks_and_has_fixed_contract() {
         let service = test_service();
         let token = service
-            .issue_id_token("1001", "client-web", 1_700_000_000, "nonce-value")
+            .issue_id_token_for_issuer(ISSUER, "1001", "client-web", 1_700_000_000, "nonce-value")
             .unwrap();
         let header = decode_header(&token).unwrap();
         assert_eq!(header.alg, Algorithm::RS256);
@@ -375,29 +390,63 @@ mod tests {
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).unwrap();
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = false;
-        validation.set_issuer(&["https://center.example.test"]);
+        validation.set_issuer(&[ISSUER]);
         validation.set_audience(&["client-web"]);
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         let claims = decode::<IdTokenClaims>(&token, &decoding_key, &validation)
             .unwrap()
             .claims;
 
-        assert_eq!(claims.iss, "https://center.example.test");
+        assert_eq!(claims.iss, ISSUER);
         assert_eq!(claims.aud, "client-web");
         assert_eq!(claims.sub, "1001");
         assert_eq!(claims.auth_time, 1_700_000_000);
         assert_eq!(claims.nonce, "nonce-value");
         assert_eq!(claims.exp - claims.iat, 300);
         assert_eq!(
-            service.verify_id_token(&token, "client-web").unwrap(),
+            service
+                .verify_id_token_for_issuer(ISSUER, &token, "client-web")
+                .unwrap(),
             claims
         );
-        assert!(service.verify_id_token(&token, "other-client").is_err());
+        assert!(
+            service
+                .verify_id_token_for_issuer(ISSUER, &token, "other-client")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn tokens_use_explicit_issuer() {
+        let service = test_service();
+        for issuer in [
+            "https://auth-a.example.com",
+            "https://auth-b.example.com",
+            "https://auth-c.example.com",
+        ] {
+            let access = service
+                .issue_access_token_for_issuer(issuer, "1001", "client-web", "openid")
+                .unwrap();
+            let access_claims = service
+                .verify_access_token_for_issuer(issuer, &access)
+                .unwrap();
+            assert_eq!(access_claims.iss, issuer);
+            assert_eq!(access_claims.aud, format!("{issuer}/oauth2/userinfo"));
+
+            let id = service
+                .issue_id_token_for_issuer(issuer, "1001", "client-web", 1_700_000_000, "nonce")
+                .unwrap();
+            let id_claims = service
+                .verify_id_token_for_issuer(issuer, &id, "client-web")
+                .unwrap();
+            assert_eq!(id_claims.iss, issuer);
+            assert_eq!(id_claims.aud, "client-web");
+        }
     }
 
     fn test_service() -> OidcService {
         OidcService::new(
-            OidcConfig::new("https://center.example.test", PRIVATE_KEY.to_vec(), false).unwrap(),
+            OidcConfig::new_single_issuer_legacy(ISSUER, PRIVATE_KEY.to_vec(), false).unwrap(),
         )
         .unwrap()
     }
@@ -405,11 +454,8 @@ mod tests {
     fn service_with_generated_rsa_key(bits: usize) -> anyhow::Result<OidcService> {
         let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, bits)?;
         let pkcs1_pem = private_key.to_pkcs1_pem(Default::default())?;
-        let config = OidcConfig::new(
-            "https://center.example.test",
-            pkcs1_pem.as_bytes().to_vec(),
-            false,
-        )?;
+        let config =
+            OidcConfig::new_single_issuer_legacy(ISSUER, pkcs1_pem.as_bytes().to_vec(), false)?;
         OidcService::new(config)
     }
 }

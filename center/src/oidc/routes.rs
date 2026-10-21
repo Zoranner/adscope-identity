@@ -63,11 +63,33 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/oauth2/authorize/context", get(authorization_context))
 }
 
+fn request_issuer<'a>(state: &'a AppState, headers: &HeaderMap) -> Option<&'a str> {
+    let mut values = headers.get_all(header::HOST).iter();
+    let host = match (values.next(), values.next()) {
+        (None, None) => None,
+        (Some(value), None) => Some(value.to_str().ok()?),
+        _ => return None,
+    };
+    state.oidc.config().issuer_for_host(host)
+}
+
+fn issuer_not_found() -> Response {
+    let mut response = StatusCode::NOT_FOUND.into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 async fn authorize(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Response {
+    if request_issuer(&state, &headers).is_none() {
+        return issuer_not_found();
+    }
     let request = match authorization_from_uri(&uri) {
         Ok(request) => request,
         Err(error) => return error.into_response(),
@@ -102,7 +124,11 @@ async fn authorization_context(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Response {
+    if request_issuer(&state, &headers).is_none() {
+        return issuer_not_found();
+    }
     let request = match authorization_from_uri(&uri) {
         Ok(request) => request,
         Err(error) => return error.into_response(),
@@ -146,8 +172,12 @@ async fn authorization_context(
 async fn confirm_authorization(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     form: Result<Form<AuthorizationDecisionForm>, FormRejection>,
 ) -> Response {
+    let Some(issuer) = request_issuer(&state, &headers) else {
+        return issuer_not_found();
+    };
     let Form(form) = match form {
         Ok(form) => form,
         Err(rejection) => {
@@ -185,7 +215,7 @@ async fn confirm_authorization(
 
     match decision.as_str() {
         "cancel" => validated.redirect_error("access_denied", true),
-        "approve" => approve_authorization(&state, validated, session, now).await,
+        "approve" => approve_authorization(&state, validated, session, now, issuer).await,
         _ => validated.redirect_error("invalid_request", true),
     }
 }
@@ -195,6 +225,7 @@ async fn approve_authorization(
     validated: ValidatedAuthorization,
     session: UserSession,
     now: u64,
+    issuer: &str,
 ) -> Response {
     let Ok(now_i64) = i64::try_from(now) else {
         return AuthorizationError::server_error().into_response();
@@ -223,6 +254,7 @@ async fn approve_authorization(
     };
     let record = AuthorizationCodeRecord {
         code_hash: sha256_token(&code),
+        issuer: issuer.to_string(),
         client_id: validated.client.client_id,
         employee_id: session.employee_id,
         redirect_uri: validated.request.redirect_uri.clone(),
@@ -318,9 +350,10 @@ async fn validate_authorization(
 
 async fn openid_configuration(
     State(state): State<AppState>,
-) -> (HeaderMap, Json<OpenIdConfiguration>) {
-    let issuer = state.oidc.config().issuer();
-    public_metadata_json(OpenIdConfiguration {
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Json<OpenIdConfiguration>), OidcRouteError> {
+    let issuer = request_issuer(&state, &headers).ok_or(OidcRouteError::NotFound)?;
+    Ok(public_metadata_json(OpenIdConfiguration {
         issuer: issuer.to_string(),
         authorization_endpoint: format!("{issuer}/oauth2/authorize"),
         token_endpoint: format!("{issuer}/oauth2/token"),
@@ -333,11 +366,17 @@ async fn openid_configuration(
         scopes_supported: ["openid", "profile", "email", "phone"],
         token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
         code_challenge_methods_supported: ["S256"],
-    })
+    }))
 }
 
-async fn jwks(State(state): State<AppState>) -> impl IntoResponse {
-    public_metadata_json(state.oidc.jwks().clone())
+async fn jwks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, OidcRouteError> {
+    if request_issuer(&state, &headers).is_none() {
+        return Err(OidcRouteError::NotFound);
+    }
+    Ok(public_metadata_json(state.oidc.jwks().clone()))
 }
 
 async fn token(
@@ -345,18 +384,25 @@ async fn token(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
-    match exchange_token(&state, &headers, body).await {
+    let Some(issuer) = request_issuer(&state, &headers) else {
+        return issuer_not_found();
+    };
+    match exchange_token(&state, issuer, &headers, body).await {
         Ok(response) => token_json(response).into_response(),
         Err(error) => error.into_response(),
     }
 }
 
-async fn token_method_not_allowed() -> TokenError {
-    TokenError::invalid_request(StatusCode::METHOD_NOT_ALLOWED)
+async fn token_method_not_allowed(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if request_issuer(&state, &headers).is_none() {
+        return issuer_not_found();
+    }
+    TokenError::invalid_request(StatusCode::METHOD_NOT_ALLOWED).into_response()
 }
 
 async fn exchange_token(
     state: &AppState,
+    issuer: &str,
     headers: &HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<TokenResponse, TokenError> {
@@ -390,6 +436,9 @@ async fn exchange_token(
         .map_err(|_| TokenError::server_error())?
         .ok_or_else(TokenError::invalid_grant)?;
     let record = exchange.code;
+    if record.issuer != issuer {
+        return Err(TokenError::invalid_grant());
+    }
     let client = exchange.client.ok_or_else(TokenError::invalid_grant)?;
     if !client.enabled
         || client.client_id != authenticated_client.client_id
@@ -423,7 +472,7 @@ async fn exchange_token(
         .ok_or_else(TokenError::invalid_grant)?;
     let access_token = state
         .oidc
-        .issue_access_token(&user.employee_id, &client.client_id, &scope)
+        .issue_access_token_for_issuer(issuer, &user.employee_id, &client.client_id, &scope)
         .map_err(|_| TokenError::server_error())?;
     let profile = record.scopes.iter().any(|scope| scope == "profile");
     let email = record.scopes.iter().any(|scope| scope == "email");
@@ -453,7 +502,8 @@ async fn exchange_token(
     };
     let id_token = state
         .oidc
-        .issue_id_token_with_user_claims(
+        .issue_id_token_with_user_claims_for_issuer(
+            issuer,
             &user.employee_id,
             &client.client_id,
             auth_time,
@@ -537,10 +587,11 @@ async fn userinfo(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<(HeaderMap, Json<UserInfoResponse>), OidcRouteError> {
+    let issuer = request_issuer(&state, &headers).ok_or(OidcRouteError::NotFound)?;
     let token = bearer_token(&headers).ok_or(OidcRouteError::InvalidToken)?;
     let claims = state
         .oidc
-        .verify_access_token(token)
+        .verify_access_token_for_issuer(issuer, token)
         .map_err(|_| OidcRouteError::InvalidToken)?;
     let client = state
         .repository
@@ -1183,6 +1234,7 @@ impl IntoResponse for TokenError {
 
 #[derive(Clone, Copy)]
 enum OidcRouteError {
+    NotFound,
     InvalidToken,
     ServerError,
 }
@@ -1190,6 +1242,7 @@ enum OidcRouteError {
 impl IntoResponse for OidcRouteError {
     fn into_response(self) -> Response {
         let (status, error) = match self {
+            Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::InvalidToken => (StatusCode::UNAUTHORIZED, "invalid_token"),
             Self::ServerError => (StatusCode::INTERNAL_SERVER_ERROR, "server_error"),
         };

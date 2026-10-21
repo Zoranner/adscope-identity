@@ -41,6 +41,7 @@ impl fmt::Debug for OAuthClientRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuthorizationCodeRecord {
     pub code_hash: String,
+    pub issuer: String,
     pub client_id: String,
     pub employee_id: String,
     pub redirect_uri: String,

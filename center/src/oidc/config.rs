@@ -1,21 +1,136 @@
 use std::{
+    collections::HashSet,
+    env,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use url::Url;
 
-const ISSUER_ENV: &str = "OIDC_ISSUER";
+const ISSUERS_ENV: &str = "OIDC_ISSUERS";
+const LEGACY_ISSUER_ENV: &str = "OIDC_ISSUER";
 const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "OIDC_LOOPBACK_HTTP";
 const AUTHORIZATION_CODE_TTL_SECONDS: u64 = 120;
 const TOKEN_TTL_SECONDS: u64 = 300;
 const CONTAINER_PRIVATE_KEY_PATH: &str = "/run/secrets/oidc-private-key.pem";
 const LOCAL_PRIVATE_KEY_PATH: &str = "secrets/oidc-private-key.pem";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OidcIssuer {
+    issuer: String,
+    host: String,
+}
+
+impl OidcIssuer {
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        let value = value.trim();
+        let url = Url::parse(value).context("OIDC issuer must be an absolute URL")?;
+        ensure!(url.scheme() == "https", "OIDC issuer must use HTTPS");
+        ensure!(url.host().is_some(), "OIDC issuer must include a host");
+        ensure!(
+            url.username().is_empty() && url.password().is_none(),
+            "OIDC issuer must not include userinfo"
+        );
+        ensure!(
+            url.query().is_none(),
+            "OIDC issuer must not include a query"
+        );
+        ensure!(
+            url.fragment().is_none(),
+            "OIDC issuer must not include a fragment"
+        );
+        ensure!(url.path() == "/", "OIDC issuer path must be '/' or empty");
+
+        let host = url
+            .host_str()
+            .expect("validated issuer has a host")
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        ensure!(!host.is_empty(), "OIDC issuer host must not be empty");
+
+        let mut normalized = url;
+        normalized
+            .set_host(Some(&host))
+            .expect("validated issuer host must remain valid");
+        normalized.set_path("");
+        let issuer = normalized.as_str().trim_end_matches('/').to_string();
+        let host = issuer
+            .strip_prefix("https://")
+            .expect("validated issuer uses HTTPS")
+            .to_string();
+
+        Ok(Self { issuer, host })
+    }
+
+    fn as_str(&self) -> &str {
+        &self.issuer
+    }
+}
+
+fn normalize_host(value: &str) -> Option<String> {
+    let url = Url::parse(&format!("https://{value}")).ok()?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return None;
+    }
+    let mut normalized = url;
+    normalized.set_host(Some(&host)).ok()?;
+    normalized.set_path("");
+    Some(
+        normalized
+            .as_str()
+            .trim_start_matches("https://")
+            .trim_end_matches('/')
+            .to_string(),
+    )
+}
+
+fn ensure_unique_hosts(issuers: &[OidcIssuer]) -> anyhow::Result<()> {
+    let mut hosts = HashSet::new();
+    for issuer in issuers {
+        ensure!(
+            hosts.insert(issuer.host.as_str()),
+            "OIDC_ISSUERS must not contain duplicate hosts"
+        );
+    }
+    Ok(())
+}
+
+fn parse_issuer_list(value: &str) -> anyhow::Result<Vec<OidcIssuer>> {
+    let values = value.split(',').map(str::trim).collect::<Vec<_>>();
+    ensure!(
+        !values.is_empty() && values.iter().all(|value| !value.is_empty()),
+        "OIDC_ISSUERS must contain at least one issuer"
+    );
+    let issuers = values
+        .iter()
+        .map(|value| OidcIssuer::parse(value))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    ensure_unique_hosts(&issuers)?;
+    Ok(issuers)
+}
+
+fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
+    match env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[derive(Clone)]
 pub struct OidcConfig {
-    issuer: Url,
+    issuers: Vec<OidcIssuer>,
+    legacy_single_issuer: bool,
     private_key_pem: Vec<u8>,
     allow_insecure_web_loopback_redirects: bool,
     authorization_code_ttl: Duration,
@@ -23,33 +138,48 @@ pub struct OidcConfig {
 }
 
 impl OidcConfig {
-    pub fn new(
+    pub fn new_single_issuer_legacy(
         issuer: &str,
         private_key_pem: Vec<u8>,
         allow_insecure_web_loopback_redirects: bool,
     ) -> anyhow::Result<Self> {
-        let issuer = Url::parse(issuer).context("OIDC_ISSUER must be an absolute URL")?;
-        ensure!(issuer.scheme() == "https", "OIDC_ISSUER must use HTTPS");
-        ensure!(issuer.host().is_some(), "OIDC_ISSUER must include a host");
-        ensure!(
-            issuer.username().is_empty() && issuer.password().is_none(),
-            "OIDC_ISSUER must not include userinfo"
-        );
-        ensure!(
-            issuer.query().is_none(),
-            "OIDC_ISSUER must not include a query"
-        );
-        ensure!(
-            issuer.fragment().is_none(),
-            "OIDC_ISSUER must not include a fragment"
-        );
-        ensure!(
-            issuer.path() == "/",
-            "OIDC_ISSUER path must be '/' or empty"
-        );
+        Self::build(
+            vec![OidcIssuer::parse(issuer)?],
+            private_key_pem,
+            allow_insecure_web_loopback_redirects,
+            true,
+        )
+    }
 
+    pub fn from_issuers(
+        issuers: &[&str],
+        private_key_pem: Vec<u8>,
+        allow_insecure_web_loopback_redirects: bool,
+    ) -> anyhow::Result<Self> {
+        ensure!(!issuers.is_empty(), "at least one OIDC issuer is required");
+        let issuers = issuers
+            .iter()
+            .map(|issuer| OidcIssuer::parse(issuer))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        ensure_unique_hosts(&issuers)?;
+        Self::build(
+            issuers,
+            private_key_pem,
+            allow_insecure_web_loopback_redirects,
+            false,
+        )
+    }
+
+    fn build(
+        issuers: Vec<OidcIssuer>,
+        private_key_pem: Vec<u8>,
+        allow_insecure_web_loopback_redirects: bool,
+        legacy_single_issuer: bool,
+    ) -> anyhow::Result<Self> {
+        ensure!(!issuers.is_empty(), "at least one OIDC issuer is required");
         Ok(Self {
-            issuer,
+            issuers,
+            legacy_single_issuer,
             private_key_pem,
             allow_insecure_web_loopback_redirects,
             authorization_code_ttl: Duration::from_secs(AUTHORIZATION_CODE_TTL_SECONDS),
@@ -64,8 +194,16 @@ impl OidcConfig {
     }
 
     pub(crate) fn from_env_with_private_key_path(private_key_path: &Path) -> anyhow::Result<Self> {
-        let issuer =
-            std::env::var(ISSUER_ENV).map_err(|_| anyhow::anyhow!("{ISSUER_ENV} is required"))?;
+        let issuers_env = optional_env(ISSUERS_ENV)?;
+        let legacy_issuer_env = optional_env(LEGACY_ISSUER_ENV)?;
+        let (issuers, legacy_single_issuer) = match (issuers_env, legacy_issuer_env) {
+            (Some(_), Some(_)) => {
+                bail!("{ISSUERS_ENV} and {LEGACY_ISSUER_ENV} must not both be set")
+            }
+            (Some(value), None) => (parse_issuer_list(&value)?, false),
+            (None, Some(value)) => (vec![OidcIssuer::parse(&value)?], true),
+            (None, None) => bail!("{ISSUERS_ENV} or {LEGACY_ISSUER_ENV} is required"),
+        };
         let private_key_pem = std::fs::read(private_key_path).with_context(|| {
             format!(
                 "failed to read OIDC private key at {}",
@@ -81,10 +219,11 @@ impl OidcConfig {
                 Err(error) => return Err(error.into()),
             };
 
-        Self::new(
-            &issuer,
+        Self::build(
+            issuers,
             private_key_pem,
             allow_insecure_web_loopback_redirects,
+            legacy_single_issuer,
         )
     }
 
@@ -97,8 +236,15 @@ impl OidcConfig {
         }
     }
 
-    pub fn issuer(&self) -> &str {
-        self.issuer.as_str().trim_end_matches('/')
+    pub fn issuer_for_host(&self, host: Option<&str>) -> Option<&str> {
+        if self.legacy_single_issuer {
+            return self.issuers.first().map(OidcIssuer::as_str);
+        }
+        let host = normalize_host(host?)?;
+        self.issuers
+            .iter()
+            .find(|issuer| issuer.host == host)
+            .map(OidcIssuer::as_str)
     }
 
     pub fn allow_insecure_web_loopback_redirects(&self) -> bool {
@@ -127,7 +273,12 @@ mod tests {
     #[test]
     fn issuer_must_be_an_https_origin() {
         assert!(
-            OidcConfig::new("https://center.example.test", PRIVATE_KEY.to_vec(), false).is_ok()
+            OidcConfig::new_single_issuer_legacy(
+                "https://center.example.test",
+                PRIVATE_KEY.to_vec(),
+                false,
+            )
+            .is_ok()
         );
         for issuer in [
             "http://center.example.test",
@@ -137,7 +288,7 @@ mod tests {
             "https://user@center.example.test",
         ] {
             assert!(
-                OidcConfig::new(issuer, PRIVATE_KEY.to_vec(), false).is_err(),
+                OidcConfig::new_single_issuer_legacy(issuer, PRIVATE_KEY.to_vec(), false).is_err(),
                 "unexpectedly accepted {issuer}"
             );
         }
@@ -145,8 +296,12 @@ mod tests {
 
     #[test]
     fn fixed_protocol_ttls_are_exposed() {
-        let config =
-            OidcConfig::new("https://center.example.test", PRIVATE_KEY.to_vec(), false).unwrap();
+        let config = OidcConfig::new_single_issuer_legacy(
+            "https://center.example.test",
+            PRIVATE_KEY.to_vec(),
+            false,
+        )
+        .unwrap();
         assert_eq!(config.authorization_code_ttl().as_secs(), 120);
         assert_eq!(config.token_ttl().as_secs(), 300);
     }
@@ -178,6 +333,80 @@ mod tests {
         assert_eq!(
             OidcConfig::private_key_path_from(Path::new("missing-working-directory")),
             Path::new("/run/secrets/oidc-private-key.pem")
+        );
+    }
+
+    #[test]
+    fn multiple_issuers_are_normalized_and_selected_by_host() {
+        let config = OidcConfig::from_issuers(
+            &[
+                "https://auth-a.example.com.:443",
+                "https://auth-b.example.com",
+                "https://auth-c.example.com:8443",
+            ],
+            PRIVATE_KEY.to_vec(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.issuer_for_host(Some("auth-a.example.com.:443")),
+            Some("https://auth-a.example.com")
+        );
+        assert_eq!(
+            config.issuer_for_host(Some("auth-b.example.com")),
+            Some("https://auth-b.example.com")
+        );
+        assert_eq!(
+            config.issuer_for_host(Some("auth-c.example.com:8443")),
+            Some("https://auth-c.example.com:8443")
+        );
+        assert_eq!(config.issuer_for_host(Some("core.example.com")), None);
+        assert_eq!(config.issuer_for_host(None), None);
+    }
+
+    #[test]
+    fn issuer_lists_reject_invalid_duplicate_and_empty_origins() {
+        for issuer in [
+            "http://auth-a.example.com",
+            "https://auth-a.example.com/path",
+            "https://auth-a.example.com?query=value",
+            "https://auth-a.example.com#fragment",
+            "https://user@auth-a.example.com",
+        ] {
+            assert!(
+                OidcConfig::from_issuers(&[issuer], PRIVATE_KEY.to_vec(), false).is_err(),
+                "unexpectedly accepted {issuer}"
+            );
+        }
+
+        assert!(
+            OidcConfig::from_issuers(
+                &["https://auth-a.example.com", "https://auth-a.example.com.:443"],
+                PRIVATE_KEY.to_vec(),
+                false,
+            )
+            .is_err()
+        );
+        assert!(OidcConfig::from_issuers(&[], PRIVATE_KEY.to_vec(), false).is_err());
+    }
+
+    #[test]
+    fn legacy_single_issuer_ignores_request_host() {
+        let config = OidcConfig::new_single_issuer_legacy(
+            "https://center.example.test",
+            PRIVATE_KEY.to_vec(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.issuer_for_host(Some("attacker.example.test")),
+            Some("https://center.example.test")
+        );
+        assert_eq!(
+            config.issuer_for_host(None),
+            Some("https://center.example.test")
         );
     }
 }

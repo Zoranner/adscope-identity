@@ -9,6 +9,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const ISSUER: &str = "https://auth-a.example.com";
+
 #[tokio::test]
 async fn oauth_client_crud_sorts_and_round_trips_both_client_types() {
     let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -169,6 +171,72 @@ async fn authorization_code_is_consumed_once_and_expired_code_is_destroyed() {
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn authorization_code_issuer_round_trips() {
+    let repository = sqlite_repository().await;
+    let code = authorization_code("issuer-code", 2_000);
+
+    repository
+        .store_authorization_code(code.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        repository
+            .consume_authorization_code("issuer-code", 1_999)
+            .await
+            .unwrap(),
+        Some(code)
+    );
+}
+
+#[tokio::test]
+async fn old_authorization_code_table_gains_empty_issuer_column() {
+    let (database_url, database_path) = sqlite_file_database_url("issuer-migration");
+    let db = Database::connect(&database_url).await.unwrap();
+    db.execute_unprepared(
+        r#"
+CREATE TABLE oauth_authorization_codes (
+    code_hash TEXT PRIMARY KEY NOT NULL,
+    client_id TEXT NOT NULL,
+    employee_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    auth_time BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL
+)
+"#,
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        r#"
+INSERT INTO oauth_authorization_codes (
+    code_hash, client_id, employee_id, redirect_uri, scopes,
+    nonce, code_challenge, auth_time, expires_at
+) VALUES ('old-code', 'client', '1001', 'https://client.example.com/callback',
+          '["openid"]', 'nonce', 'challenge', 1000, 2000)
+"#,
+    )
+    .await
+    .unwrap();
+    db.close().await.unwrap();
+
+    let repository = Repository::connect(&database_url).await.unwrap();
+    repository.initialize_schema().await.unwrap();
+
+    let old_code = repository
+        .consume_authorization_code("old-code", 1_999)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old_code.issuer, "");
+
+    std::fs::remove_file(database_path).ok();
 }
 
 #[tokio::test]
@@ -472,6 +540,7 @@ fn oauth_client(client_id: &str, client_type: OAuthClientType) -> OAuthClientRec
 fn authorization_code(code_hash: &str, expires_at: i64) -> AuthorizationCodeRecord {
     AuthorizationCodeRecord {
         code_hash: code_hash.to_string(),
+        issuer: ISSUER.to_string(),
         client_id: "client".to_string(),
         employee_id: "1001".to_string(),
         redirect_uri: "https://client.example.com/callback".to_string(),
