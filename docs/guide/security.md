@@ -10,7 +10,7 @@
 
 主服务必须配置高熵 `PASSWORD_ENCRYPTION_KEY`、`SESSION_KEY` 和 `MANAGEMENT_TOKEN`。这些密钥通过受限 `.env`、系统环境变量、Windows DPAPI、Secret Manager 或等价机制注入，不进入源码、日志或配置仓库。
 
-OIDC 使用独立 RSA 私钥签发 RS256 ID token 和 access token。私钥至少为 2048 位，通过受限文件提供给 Center，不写入仓库、`.env`、环境变量、容器镜像或日志。OIDC 私钥只用于 token 签名，不是网关使用的 TLS 证书。
+OIDC 使用独立 RSA 私钥签发 RS256 ID token 和 access token。私钥至少为 2048 位，通过受限文件提供给 Core，不写入仓库、`.env`、环境变量、容器镜像或日志。OIDC 私钥只用于 token 签名，不是 Portal 使用的 TLS 证书。
 
 Connector key 按域独立保存，是 Connector `.env` 中唯一的同步秘密；运行时不得写入日志、错误响应或配置仓库。Connector 不保存 LDAP bind DN 或 LDAP 密码。
 
@@ -27,7 +27,7 @@ Center 不签发 refresh token，也没有远程撤销单个浏览器 SSO 会话
 Center 当前是单实例 SQLite 服务，以下能力尚未实现：
 
 - 只有用户名和密码登录，没有 MFA。
-- 登录和授权接口没有应用级限流或账号锁定；外网入口应在外网网关或前置 WAF 增加登录限流。
+- 登录和授权接口没有应用级限流或账号锁定；外网入口应在外网 Portal 或前置 WAF 增加登录限流。
 - 没有 OIDC 审计事件，也没有按管理员身份的操作审计。
 - 没有 refresh token、token revocation、introspection 或远程会话撤销。禁用用户会阻止新的授权、授权码兑换和 UserInfo，但已签发 ID Token 最多继续有效 5 分钟，浏览器 SSO Cookie 默认最多 1 小时。
 - 只有一把活动 RSA 签名密钥，JWKS 不保留旧 key；更换私钥需要维护窗口。
@@ -39,23 +39,25 @@ Center 当前是单实例 SQLite 服务，以下能力尚未实现：
 
 ## OIDC 网络入口
 
-Center 只使用一个 canonical issuer；三个网关的入口域名和证书可以不同。网关负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不保存用户、Token 或签名私钥，也不签发本地 Token。
+Center 是唯一身份数据中心，但不是 OIDC issuer。内网入口 A、内网入口 B和外网各有一个 Portal，分别以 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com` 作为 issuer。Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不保存用户、Token 或签名私钥，也不签发本地 Token。
 
-网关终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。Center 本身不管理 TLS 证书。
+三个 Portal 共用 Center 的一把 RSA 私钥和同一份 JWKS，但登录 Cookie 都是 host-only，不共享登录态。Portal 转发到 Center 时用 `PUBLIC_ISSUER` 覆盖 Host，不信任客户端 Host 或 `X-Forwarded-Host`。Core 只接受 `OIDC_ISSUERS` 白名单内的 Host，直接访问 `core.example.com` 的 OIDC 路径返回 `404`。
 
-三个入口域名可以重定向到 canonical issuer，但 OIDC 客户端应直接使用 canonical issuer 做 discovery、authorize 和校验 `iss`。当前 `adscope_sso` Cookie 没有 `Domain` 属性，用不同入口域名登录会产生独立登录态。
+Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。Center 本身不管理 TLS 证书。Portal 可以自己终止 TLS，也可以在受信网络或本机回环上使用 HTTP 监听，由前置反向代理终止 TLS；只配置一个 TLS 文件时启动失败。
 
-每个网关通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。网关命中禁用路由时直接返回 `403` 错误页，不转发给 Center；Center 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Connector 同步。内网入口 A、内网入口 B网关可以开启管理，外网网关关闭管理。网关必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
+依赖方使用所属 Portal 的 issuer 做 discovery、authorize 和校验 `iss`。授权码和 access token 都绑定签发时的 issuer，跨 Portal 兑换返回 `invalid_grant`，跨 Portal 使用 access token 返回 `401 invalid_token`。
+
+每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。Portal 命中禁用路由时直接返回 `403` 错误页，不转发给 Core；Core 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Syncer 同步。内网入口 A、内网入口 B Portal 设置 `ADMIN_ENABLED=true`，外网 Portal 设置 `ADMIN_ENABLED=false`。
 
 ## 传输要求
 
-主服务必须位于 TLS 后面。Connector 调用 `/api/connector/sync` 获取凭据材料时，响应不能经过明文 HTTP，网关、日志、tracing、错误回显和崩溃 dump 不记录响应体。
+主服务必须位于 TLS 后面。Syncer 调用 `/api/connector/sync` 获取凭据材料时，响应不能经过明文 HTTP，Portal、日志、tracing、错误回显和崩溃 dump 不记录响应体。
 
 Connector 仅通过 `ldap://<FQDN>:389` 访问域控，并以 `NetworkService` 下的主机计算机账号发起 Kerberos GSS-API 认证。域控 FQDN 必须对应 LDAP SPN；GSS-API 协商的保密层失败即停止该批次，不回退到 Simple Authentication、NTLM、LDAP over TLS 或 StartTLS。
 
 ## 日志和诊断
 
-应用、网关、tracing、错误回显和崩溃 dump 不得记录普通用户 token、OIDC access token、ID token、授权码、客户端 secret、SSO Cookie、CSRF token 或完整授权请求。排障日志只保留必要的请求标识、端点、结果状态和不含凭据的错误分类。
+应用、Portal、tracing、错误回显和崩溃 dump 不得记录普通用户 token、OIDC access token、ID token、授权码、客户端 secret、SSO Cookie、CSRF token 或完整授权请求。排障日志只保留必要的请求标识、端点、结果状态和不含凭据的错误分类。
 
 ## 权限边界
 
@@ -63,6 +65,6 @@ Connector 仅通过 `ldap://<FQDN>:389` 访问域控，并以 `NetworkService` �
 
 管理入口必须使用独立保护，不能复用普通用户 token。域、OU、用户、组、管理员代设密码和同步状态查询接口都属于管理面。
 
-内网管理可以复用内网网关，但外网入口不得暴露管理面。Center 只校验 `MANAGEMENT_TOKEN`，不判断请求来源网络；来源限制由网关、防火墙、VLAN 或 VPN 负责。
+内网管理可以复用内网 Portal，但外网入口不得暴露管理面。Core 只校验 `MANAGEMENT_TOKEN`，不判断请求来源网络；来源限制由 Portal、防火墙、VLAN 或 VPN 负责。
 
 域管理员只向 `<DOMAIN>\<CONNECTOR-HOST>$` 委派镜像根和隔离 OU 内的必要权限，不使用 `superuser`、其他内置本地服务身份或本地账户。权限包括创建、移动、属性写入、组成员写入、禁用和 Reset Password，且不得扩展到委派范围外。

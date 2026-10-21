@@ -10,17 +10,19 @@ Center 是受限的 OIDC Provider，不是通用身份平台。当前只支持�
 - Web confidential client 和 Desktop public client。
 - RS256 ID Token 和 access token，有效期均为 5 分钟。
 
-当前不支持 device authorization、refresh token、token introspection、token revocation、动态客户端注册、front-channel/back-channel logout、静默登录、多个 issuer、MFA 和 `groups`/`roles` 声明。Discovery 只声明实际支持的能力，依赖方不应根据未声明的端点做兼容猜测。
+当前支持三个固定 Portal issuer，但不支持动态客户端注册、device authorization、refresh token、token introspection、token revocation、front-channel/back-channel logout、静默登录、跨 Portal SSO、MFA 和 `groups`/`roles` 声明。Discovery 只声明实际支持的能力，依赖方不应根据未声明的端点做兼容猜测。
 
 ## Issuer 与端点
 
-Center 只使用一个外部配置的 canonical issuer：
+Core 只作为后端，不作为 issuer。三个 Portal 分别是所属网络的 OIDC issuer：
 
 ```text
-OIDC_ISSUER=https://sso.example.com
+内网入口 A：https://auth-a.example.com
+内网入口 B：https://auth-b.example.com
+外网：    https://auth-c.example.com
 ```
 
-issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragment。Discovery、JWKS、授权、Token 和 UserInfo 地址都由该 issuer 生成，不读取请求 `Host`、`Forwarded` 或 `X-Forwarded-*`。
+Core 的 `OIDC_ISSUERS` 是这三个 issuer 的白名单。每个 Portal 用 `PUBLIC_ISSUER` 覆盖转发到 Core 的 Host，Core 按 Host 选择当前 issuer；`core.example.com` 不在白名单，直接访问其 OIDC 路径返回 `404`。issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragment。
 
 | 端点 | 路径 |
 | --- | --- |
@@ -30,13 +32,13 @@ issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragm
 | UserInfo | `/oauth2/userinfo` |
 | JWKS | `/oauth2/jwks` |
 
-canonical issuer 应使用长期稳定的 DNS 名称。修改 issuer 会改变 Token 的 `iss`，依赖方据此计算的人员键也会随之变化。
+issuer 应使用长期稳定的 DNS 名称。修改 issuer 会改变 Token 的 `iss`，依赖方据此计算的人员键也会随之变化。
 
-三个网关的入口域名和证书可以完全不同：内网使用自定义域名和内部 CA/自签证书，外网使用正式域名和公网 CA 证书。issuer 不随入口域名变化，固定为外网正式域名，由外网网关承载。内网服务器本身可以访问外网和 Center，所以内网 OIDC 客户端直接使用这个 issuer，不需要分离 DNS，也不需要把 issuer 域名写进内网证书 SAN。网关入口域名和证书见 [系统架构](system-architecture.md)。
+三个 Portal 的 issuer 和证书可以完全不同：内网使用内部 CA 或自签证书，外网使用公网 CA 证书。依赖方使用所属网络的 Portal issuer；客户端记录在 Core 中保持全局，不绑定 issuer，由依赖方自己选择 Portal。Portal 入口和证书见 [系统架构](system-architecture.md)。
 
-内网用户访问内网网关入口时，浏览器必须信任内部 CA 或自签证书；OIDC 客户端访问外网 issuer 时使用系统信任的公网 CA。不能关闭 TLS 校验。
+内网用户访问内网 Portal 时，浏览器必须信任内部 CA 或自签证书；外网客户端使用系统信任的公网 CA。不能关闭 TLS 校验。Portal 可以自己终止 TLS，也可以由前置反向代理终止，此时 Portal 使用 HTTP 监听。
 
-授权码流程由用户浏览器打开 issuer 登录页，所以内网用户浏览器也必须能访问 canonical issuer；这是部署前置条件。
+授权码流程由用户浏览器打开所属 Portal 的登录页。三个 Portal 的 Cookie 都是 host-only，独立登录、独立退出；跨 Portal 兑换授权码返回 `invalid_grant`，跨 Portal 使用 access token 返回 `401 invalid_token`。
 
 ## 客户端登记
 
@@ -89,7 +91,7 @@ Token 响应包含 `access_token`、`token_type=Bearer`、`expires_in=300`、`id
 依赖方校验 ID Token 时应至少检查：
 
 - 使用 JWKS 验证 RS256 签名，header 的 `kid` 与当前 JWKS 匹配。
-- `iss` 等于配置的 canonical issuer。
+- `iss` 等于本次使用的 Portal issuer。
 - `aud` 等于本客户端 ID。
 - `exp`、`iat` 有效，允许最多 30 秒时钟偏差。
 - `nonce` 等于本次授权请求生成的值。
@@ -124,7 +126,7 @@ ID Token 只用于登录时确认人员。Center 的 access token 只用于调�
 
 ## 签名密钥
 
-OIDC 使用一把 RSA 私钥签名，JWKS 发布对应公钥。当前私钥是挂载文件，不是环境变量；`OIDC_ISSUER` 是 issuer，不是签名密钥。
+OIDC 使用一把 RSA 私钥签名，JWKS 发布对应公钥。当前私钥是挂载文件，不是环境变量；`OIDC_ISSUERS` 是 issuer 白名单，不是签名密钥，三个 issuer 共用这一把私钥。
 
 轮换就是替换 PEM 文件并重建 Center：
 
@@ -132,64 +134,64 @@ OIDC 使用一把 RSA 私钥签名，JWKS 发布对应公钥。当前私钥是�
 docker compose up -d --force-recreate center
 ```
 
-不需要修改数据库、`client_id`、client secret 或 `OIDC_ISSUER`。普通 `restart` 可能重新读取原地覆盖的文件；如果文件是原子替换的，使用 `--force-recreate` 更确定。
+不需要修改数据库、`client_id`、client secret 或 Portal issuer 配置。普通 `restart` 可能重新读取原地覆盖的文件；如果文件是原子替换的，使用 `--force-recreate` 更确定。
 
 当前只有一把活动密钥，没有新旧重叠。轮换后新 Token 使用新 `kid`；Center 立即拒绝旧 access token，依赖方刷新 JWKS 后旧 ID Token 也会失效，最长影响约 5 分钟 Token 加 5 分钟 JWKS 缓存。没有合规要求时，一年一次或怀疑泄露时轮换即可；只有要求轮换期间零停机时，才需要双 key/JWKS 重叠。
 
-## 网关接入
+## Portal 接入
 
-当前只有一个 Center。内网入口 A、内网入口 B各有一个登录网关；外网只有一个网关，由外网 A和外网 B共用：
+当前只有一个 Core。内网入口 A、内网入口 B各有一个 Portal；外网只有一个 Portal，由外网 A和外网 B共用。四个 Syncer 直接访问 Core，不经过 Portal：
 
 完整网络拓扑见 [系统架构](system-architecture.md)。
 
 ```text
 内网入口 A客户端
   -> https://auth-a.example.com
-  -> 内网入口 A网关
-  -> center:8080
+  -> 内网入口 A Portal
+  -> https://core.example.com
 
 内网入口 B客户端
   -> https://auth-b.example.com
-  -> 内网入口 B网关
-  -> center:8080
+  -> 内网入口 B Portal
+  -> https://core.example.com
 
 外网客户端
-  -> https://sso.example.com
-  -> 外网网关
-  -> center:8080
+  -> https://auth-c.example.com
+  -> 外网 Portal
+  -> https://core.example.com
 ```
 
-`adscope-gateway` 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断。登录/管理开关由各网关自己的环境变量控制，不依赖 Center 区分来源。网关服务终止 TLS，证书由容器挂载。
+`adscope-gateway` 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断。登录/管理开关由各 Portal 自己的环境变量控制，不依赖 Core 区分来源。Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
 
-三个网关不是三个 Center，也不各自持有用户目录或签名密钥。它们托管各自的前端，并把 API/OIDC 转发到同一个 Center。
+三个 Portal 不是三个 Core，也不各自持有用户目录或签名密钥。它们托管各自的前端，用 `PUBLIC_ISSUER` 覆盖转发 Host，并把 API/OIDC 转发到同一个 Core。
 
 ### 登录与管理开关
 
-每个网关是独立进程/容器，各自读取两个环境变量。环境变量天然按网关隔离，Center 不识别站点来源；这两个变量属于网关，不属于 Center 的 `.env`。
+每个 Portal 是独立进程/容器，各自读取两个环境变量。环境变量天然按 Portal 隔离，Core 不识别站点来源；这两个变量属于 Portal，不属于 Core 的 `.env`。
 
 | 变量 | `false` 时拦截 | `false` 时仍可用 |
 | --- | --- | --- |
 | `LOGIN_ENABLED` | `/login`、`/authorize`、`/oauth2/authorize`、`/api/auth/login`、`/api/oauth2/authorize/context` | Discovery、JWKS、Token、UserInfo、`/api/me/*`、退出登录 |
 | `ADMIN_ENABLED` | `/admin`、`/admin/*`、`/api/admin`、`/api/admin/*` | 用户登录、Token、UserInfo、Connector 同步 |
 
-- 网关命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Center。
-- 网关只对这两组路径做判断，其他路径照常转发给 Center。
-- 内网入口 A、内网入口 B网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
-- 外网网关设置 `ADMIN_ENABLED=false`；`LOGIN_ENABLED` 按需要开关。
+- Portal 命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Core。
+- Portal 只对这两组路径做判断，其他路径照常转发给 Core。
+- 内网入口 A、内网入口 B Portal 设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 外网 Portal 设置 `ADMIN_ENABLED=false`。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Connector 同步。
-- Center 不参与开关判断。
-- 网关必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
+- Core 不参与开关判断。
+- Portal 必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
 
-网关边界：
+Portal 边界：
 
-- 网关终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。
-- 网关不修改 `iss`、`sub`、`aud`、`nonce` 或签名，不持有 OIDC 签名私钥，不签发本地 Token。
-- 不要把 OIDC 签名私钥放在网关上，也不要在网关上实现 OIDC Broker 或独立 issuer。
+- Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。
+- Portal 不修改 `iss`、`sub`、`aud`、`nonce` 或签名，不持有 OIDC 签名私钥，不签发本地 Token。
+- 不要把 OIDC 签名私钥放在 Portal 上；Portal 的 issuer 身份来自其公开域名和固定 Host，不来自本地签名密钥。
 
-三个入口域名可以 302 到 canonical issuer；OIDC 客户端不要把入口域名作为 discovery、authorize 或 issuer 地址。当前 SSO Cookie 没有 `Domain` 属性，用不同入口域名登录会产生独立登录态。
+三个 Portal 的 SSO Cookie 都没有 `Domain` 属性，分别独立登录和退出；本次不实现跨 Portal SSO、共享 Cookie 或统一登出。
 
-Center 不终止 TLS。每个网关容器持有自己的入口域名证书；外网网关还必须持有 canonical issuer 域名的证书。Center 故障时，网关返回 502/503，不能在网关本地签发 Token。
+Core 不终止 TLS。Portal 自己终止 TLS 时持有自己的 issuer 域名证书；由前置反向代理终止时，Portal 只在受信网络或本机回环上使用 HTTP。Core 故障时，Portal 返回 502/503，不能在 Portal 本地签发 Token。
 
 ## 当前部署前置条件
 
@@ -203,11 +205,11 @@ Center 不终止 TLS。每个网关容器持有自己的入口域名证书；外
 - Center 多副本、数据库主备、PostgreSQL 或共享数据库。
 - HSM/KMS 签名。
 
-外网入口暴露登录页前，应在外网网关或前置 WAF 增加登录限流，并明确是否接受仅密码认证的风险。Center 当前是单实例 SQLite，不能通过增加副本获得高可用。
+外网入口暴露登录页前，应在外网 Portal 或前置 WAF 增加登录限流，并明确是否接受仅密码认证的风险。Core 当前是单实例 SQLite，不能通过增加副本获得高可用。
 
 ## 依赖方接入要点
 
-- 使用 canonical issuer 获取 Discovery；三个入口域名只作为用户入口，不写入依赖方配置。
+- 使用所属 Portal 的 issuer 获取 Discovery；客户端记录保持全局，不把 client 绑定到某个 issuer。
 - 使用 Authorization Code + PKCE S256，不实现 device grant 或 refresh 兼容分支。
 - 生成并校验 `state` 和 `nonce`，每次授权都接受确认页。
 - 回调地址与登记值完全一致；Desktop 使用 loopback IP，不使用 `localhost`。

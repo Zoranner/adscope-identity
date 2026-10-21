@@ -169,23 +169,23 @@ Authorization: Bearer <access_token>
 
 ## OIDC 统一登录
 
-Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `sub` 直接使用用户 `employee_id`，OIDC access token 只用于 UserInfo，不能用于 `/api/me/*`。
+Core 只接受预登记客户端通过 Portal 使用 Authorization Code Flow 登录。OIDC `sub` 直接使用用户 `employee_id`，OIDC access token 只用于 UserInfo，不能用于 `/api/me/*`。
 
-当前只支持 Authorization Code + PKCE S256，不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或多个 issuer。Discovery 和所有端点都从配置的 canonical `OIDC_ISSUER` 生成，依赖方必须使用 canonical issuer 获取 Discovery；三个网关入口域名可以不同，但 issuer 不随入口域名变化。多网络网关只负责 TLS、转发和入口开关，不签发自己的 Token。
+当前只支持 Authorization Code + PKCE S256 和三个 Portal issuer，不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或跨 Portal SSO。Core 从 `OIDC_ISSUERS` 读取 issuer 白名单，按请求 Host 选择当前 issuer；Portal 用 `PUBLIC_ISSUER` 覆盖 Host。OIDC 客户端记录保持全局，不绑定 issuer，依赖方按所属网络选择 Portal。
 
 ### Discovery
 
 `GET /.well-known/openid-configuration`
 
-响应由配置的外部 issuer 生成，不根据请求 `Host` 或代理头推导：
+响应由当前请求 Host 对应的 issuer 生成；Host 必须命中 `OIDC_ISSUERS` 白名单。缺少 Host、`core.example.com` 或其他未登记 Host 返回 `404`。
 
 ```json
 {
-  "issuer": "https://center.example.com",
-  "authorization_endpoint": "https://center.example.com/oauth2/authorize",
-  "token_endpoint": "https://center.example.com/oauth2/token",
-  "userinfo_endpoint": "https://center.example.com/oauth2/userinfo",
-  "jwks_uri": "https://center.example.com/oauth2/jwks",
+  "issuer": "https://auth-a.example.com",
+  "authorization_endpoint": "https://auth-a.example.com/oauth2/authorize",
+  "token_endpoint": "https://auth-a.example.com/oauth2/token",
+  "userinfo_endpoint": "https://auth-a.example.com/oauth2/userinfo",
+  "jwks_uri": "https://auth-a.example.com/oauth2/jwks",
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code"],
   "subject_types_supported": ["public"],
@@ -203,6 +203,8 @@ Center 只接受预登记客户端使用 Authorization Code Flow 登录。OIDC `
 `GET /oauth2/jwks`
 
 响应只发布签发令牌所用 RSA 公钥：
+
+三个 issuer 共用 Core 的一把 RSA 私钥，因此 JWKS 内容相同；通过任一已登记 Portal 获取。未知 Host 返回 `404`。
 
 ```json
 {
@@ -356,7 +358,7 @@ Pragma: no-cache
 Authorization: Bearer <access_token>
 ```
 
-服务端校验 JWT 签名、`kid`、issuer、UserInfo audience、有效期和 scope，并重新读取客户端与用户状态。客户端不存在或停用、用户不存在或禁用时，access token 按无效处理。
+服务端按当前请求 Host 选择 issuer，校验 JWT 签名、`kid`、issuer、UserInfo audience、有效期和 scope，并重新读取客户端与用户状态。跨 issuer 使用 access token 返回 `401 invalid_token`；客户端不存在或停用、用户不存在或禁用时同样按无效处理。
 
 响应字段由 access token 中的 scope 决定：
 
@@ -379,7 +381,7 @@ Authorization: Bearer <access_token>
 
 ### 依赖方校验
 
-依赖方应使用 canonical issuer 的 Discovery 和 JWKS，并至少校验：
+依赖方应使用所属 Portal issuer 的 Discovery 和 JWKS，并至少校验：
 
 - RS256 签名、`kid`、`iss`、`aud`、`exp` 和 `iat`。
 - 授权请求生成的 `nonce` 与 ID Token 中的值一致。
@@ -387,11 +389,11 @@ Authorization: Bearer <access_token>
 
 当前 ID Token 不包含 `nbf`、`azp`、`groups`、`roles` 或 `email_verified`，依赖方不要强制要求这些字段。`sub` 是 `employee_id`，应作为人员主键；邮箱、显示名和工号字符串不能替代 `sub` 作为授权依据。
 
-ID Token 用于登录时确认人员，Center access token 只用于 `/oauth2/userinfo`，不能作为依赖方业务 API 的 Bearer token。Center 不签发 refresh token，也不能撤销已签发的 ID Token；依赖方需要长期会话或设备凭据时，应自行维护有效期、重新验证和撤销策略。
+ID Token 用于登录时确认人员，Core access token 只用于 `/oauth2/userinfo`，不能作为依赖方业务 API 的 Bearer token。Core 不签发 refresh token，也不能撤销已签发的 ID Token；依赖方需要长期会话或设备凭据时，应自行维护有效期、重新验证和撤销策略。
 
 ### OIDC 错误
 
-未知客户端、停用客户端和未登记的 `redirect_uri` 返回 Center 本地 `400 Bad Request`，响应为 `{"error":"invalid_request"}`，不设置 `Location`。只有客户端和回调地址已验证后，授权错误才通过 `303 See Other` 返回该回调地址：
+未知 Host 的 OIDC 路径返回 `404`。未知客户端、停用客户端和未登记的 `redirect_uri` 返回 Core 本地 `400 Bad Request`，响应为 `{"error":"invalid_request"}`，不设置 `Location`。只有客户端和回调地址已验证后，授权错误才通过 `303 See Other` 返回该回调地址：
 
 | `error` | 含义 |
 | --- | --- |
@@ -409,7 +411,7 @@ Token 端点只返回 JSON，不跳转：
 | `405 Method Not Allowed` | `invalid_request` | 使用了非 POST 方法。 |
 | `401 Unauthorized` | `invalid_client` | Web Basic 认证失败，或客户端类型与认证方式不匹配；响应包含 `WWW-Authenticate: Basic`。 |
 | `400 Bad Request` | `unsupported_grant_type` | `grant_type` 不是 `authorization_code`。 |
-| `400 Bad Request` | `invalid_grant` | 授权码未知、过期、已使用，绑定字段或 PKCE 不匹配，或兑换时客户端、用户状态不再有效。 |
+| `400 Bad Request` | `invalid_grant` | 授权码未知、过期、已使用、issuer 不匹配，绑定字段或 PKCE 不匹配，或兑换时客户端、用户状态不再有效。 |
 | `500 Internal Server Error` | `server_error` | 数据库、时间或签名处理失败。 |
 
 UserInfo 对缺少、格式非法、签名错误、过期或状态失效的 token 返回 `401 Unauthorized`、`{"error":"invalid_token"}` 和 `WWW-Authenticate: Bearer error="invalid_token"`。

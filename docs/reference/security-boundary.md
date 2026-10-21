@@ -20,11 +20,11 @@
 
 - 只允许通过主服务 TLS 调用 `/api/connector/sync`。
 - 成功响应设置 `Cache-Control: no-store`。
-- 网关、日志、tracing、错误回显和崩溃 dump 不记录响应体。
+- Portal、日志、tracing、错误回显和崩溃 dump 不记录响应体。
 - Connector 不把明文密码写入本地 state、日志或配置。
 - Connector 设置密码后立即丢弃明文。
 
-自动化测试只能验证协议、编码、映射和错误处理，不能替代 TLS、日志链路、网关缓存和真实域控权限验收。
+自动化测试只能验证协议、编码、映射和错误处理，不能替代 TLS、日志链路、Portal 缓存和真实域控权限验收。
 
 ## Connector Key
 
@@ -52,25 +52,25 @@ Connector key 是域绑定共享密钥。部署时应通过 Windows DPAPI、Secr
 
 `/api/admin/*` 不得在缺少管理入口保护的情况下暴露给公网或普通用户入口。
 
-内网管理可以复用内网网关；外网入口不得暴露管理面。Center 只校验 `MANAGEMENT_TOKEN`，不判断请求来源网络；来源限制由网关、防火墙、VLAN 或 VPN 负责。
+内网管理可以复用内网 Portal；外网入口不得暴露管理面。Center 只校验 `MANAGEMENT_TOKEN`，不判断请求来源网络；来源限制由 Portal、防火墙、VLAN 或 VPN 负责。
 
 ## OIDC 身份与 issuer
 
-Center OIDC 复用现有用户名和密码校验，不复制账号或身份资料。OIDC `sub` 使用用户 `employee_id`；`profile`、`email` 和 `phone` 声明从用户表读取。OIDC access token 只授权访问 `/oauth2/userinfo`，不能代替普通用户 Bearer token、管理会话 Cookie 或 Connector key。
+Core OIDC 复用现有用户名和密码校验，不复制账号或身份资料。OIDC `sub` 使用用户 `employee_id`；`profile`、`email` 和 `phone` 声明从用户表读取。OIDC access token 只授权访问 `/oauth2/userinfo`，不能代替普通用户 Bearer token、管理会话 Cookie 或 Syncer key。
 
-`OIDC_ISSUER` 必须是仅包含 HTTPS scheme、host 和可选端口的外部 origin，不接受 userinfo、业务路径、query 或 fragment。Discovery 地址、JWT `iss` 和各公开端点都从该配置生成，不能根据 `Host`、`Forwarded` 或 `X-Forwarded-*` 动态推导。三个网关的入口域名和证书可以不同，但 issuer 不随入口域名变化；内网服务器可以直接访问外网 issuer，不需要分离 DNS。
+`OIDC_ISSUERS` 是 Core 接受的 Portal issuer 白名单。每一项必须是仅包含 HTTPS scheme、host 和可选端口的外部 origin，不接受 userinfo、业务路径、query 或 fragment。Host 统一小写、去掉末尾点和默认 `:443`，非默认端口保留。`core.example.com` 不加入白名单，直接访问其 discovery、JWKS、authorize、token 或 userinfo 返回 `404`。Portal 用 `PUBLIC_ISSUER` 覆盖转发 Host，Core 不信任客户端 Host、`Forwarded` 或 `X-Forwarded-Host`。
 
 Docker 中签名私钥固定从 `/run/secrets/oidc-private-key.pem` 读取；从仓库根目录本地调试时，Center 优先读取 `./secrets/oidc-private-key.pem`。密钥必须是至少 2048 位的 RSA PKCS#8 或 PKCS#1 PEM，不能写入数据库、源码、日志、镜像或发布包。根目录 `secrets/` 必须保持 Git 忽略。Center 使用 `RS256` 签发 ID Token 和 access token，JWKS 只发布当前公钥；服务端不保存历史签名密钥集合，也不提供管理端密钥轮换接口。
 
 ## OIDC 网络接入
 
-Center 只使用一个 canonical issuer；三个网关的入口域名和证书可以不同。网关负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不在网关上实现 OIDC Broker 或独立 issuer。
+Core 只做后端；三个 Portal 分别作为内网入口 A、内网入口 B和外网的 issuer。Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不在 Portal 上实现 OIDC Broker 或本地签发 Token。
 
-网关终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。Center 本身不管理 TLS 证书。
+Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。Core 本身不管理 TLS 证书。Portal 可以自己终止 TLS，也可以由前置反向代理终止；使用 HTTP 监听时只能暴露在本机回环或受信网络。
 
-三个入口域名可以重定向到 canonical issuer，但 OIDC 客户端应直接使用 canonical issuer 做 discovery、authorize 和校验 `iss`。当前 `adscope_sso` Cookie 没有 `Domain` 属性，用不同入口域名登录会产生独立登录态。Center 故障时，网关返回 502/503，不能在网关本地签发 Token。
+三个 Portal 的 `adscope_sso` Cookie 都没有 `Domain` 属性，独立登录和退出，不共享登录态。授权码和 access token 绑定当前 issuer，跨 Portal 兑换返回 `invalid_grant`，跨 Portal 调用 UserInfo 返回 `401 invalid_token`。Core 故障时，Portal 返回 502/503，不能在 Portal 本地签发 Token。
 
-每个网关通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。网关命中禁用路由时直接返回 `403` 错误页，不转发给 Center；Center 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Connector 同步。内网入口 A、内网入口 B网关可以开启管理，外网网关关闭管理。网关必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
+每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。Portal 命中禁用路由时直接返回 `403` 错误页，不转发给 Core；Core 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Syncer 同步。内网入口 A、内网入口 B Portal 设置 `ADMIN_ENABLED=true`，外网 Portal 设置 `ADMIN_ENABLED=false`。
 
 ## OIDC 授权确认
 
@@ -131,7 +131,7 @@ OIDC Provider 只提供 Authorization Code Flow、`authorization_code` grant、`
 - HSM/KMS 签名。
 - `groups`、`roles`、`email_verified` 等扩展声明。
 
-外网入口暴露登录页前，应在外网网关或前置 WAF 增加登录限流，并明确仅密码认证的风险。依赖方不能把 Center 的登录态当作自身会话，应自行维护设备凭据、会话有效期和撤销。
+外网入口暴露登录页前，应在外网 Portal 或前置 WAF 增加登录限流，并明确仅密码认证的风险。依赖方不能把 Center 的登录态当作自身会话，应自行维护设备凭据、会话有效期和撤销。
 
 ## AD 权限
 

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-labelledby="title desc">
   <title id="title">Adscope 网络架构</title>
-  <desc id="desc">一个 Center，三个登录网关，四个 Connector Windows 服务。前端和入口开关在网关，Center 只做 API/OIDC 和数据。内网入口 A、内网入口 B各一个网关，外网一个网关由外网 A和外网 B共用；三个入口域名和证书不同，OIDC issuer 固定为 https://sso.example.com 并由外网网关承载；四个局域网对应四个 AD 域；每个网关通过 LOGIN_ENABLED、ADMIN_ENABLED 环境变量控制登录和管理，命中禁用路由时返回错误页。</desc>
+  <desc id="desc">一个 Core，三个 Portal，四个 Syncer Windows 服务。Core 是唯一身份数据中心和 OIDC 后端，但不是 issuer；内网入口 A、内网入口 B和外网各有一个 Portal，分别以 https://auth-a.example.com、https://auth-b.example.com、https://auth-c.example.com 作为 issuer，共用 Core 的一把 RSA 私钥和同一份 JWKS。Portal 用 PUBLIC_ISSUER 覆盖转发 Host，Core 只接受 OIDC_ISSUERS 白名单；core.example.com 的 OIDC 路径返回 404。Portal 按网络划分，Syncer 按 AD 域划分并直接访问 Core；四个局域网对应四个 AD 域；每个 Portal 通过 LOGIN_ENABLED、ADMIN_ENABLED 环境变量控制登录和管理，外网 Portal 关闭管理。</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -22,10 +22,10 @@
     </style>
   </defs>
 
-  <rect width="1800" height="1180" fill="#f8fafc"/>
+  <rect width="1800" height="1200" fill="#f8fafc"/>
 
   <text x="900" y="52" text-anchor="middle" class="title">Adscope 网络架构</text>
-  <text x="900" y="86" text-anchor="middle" class="subtitle">一个 Center · 三个入口网关 · 四个 Connector · 入口域名/证书独立，issuer 统一</text>
+  <text x="900" y="86" text-anchor="middle" class="subtitle">一个 Core · 三个 Portal · 四个 Syncer · 每个 Portal 是所属网络的 issuer</text>
 
   <text x="40" y="100" class="section">用户接入面</text>
   <text x="40" y="820" class="section">AD 同步面</text>
@@ -33,11 +33,11 @@
   <!-- Clients -->
   <rect x="120" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
   <text x="300" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">内网入口 A 用户 / OIDC 客户端</text>
-  <text x="300" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 A网关</text>
+  <text x="300" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 A Portal</text>
 
   <rect x="720" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
   <text x="900" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">内网入口 B 用户 / OIDC 客户端</text>
-  <text x="900" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 B网关</text>
+  <text x="900" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 B Portal</text>
 
   <rect x="1320" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
   <text x="1500" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">外网用户 / OIDC 客户端</text>
@@ -45,30 +45,30 @@
 
   <!-- Gateways -->
   <rect x="120" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
-  <text x="300" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 A网关</text>
-  <text x="300" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：auth-a.example.com</text>
-  <text x="300" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 自签证书</text>
+  <text x="300" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 A Portal</text>
+  <text x="300" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">issuer：https://auth-a.example.com</text>
+  <text x="300" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 自签/前置代理</text>
   <text x="300" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 管理</text>
 
   <rect x="720" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
-  <text x="900" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 B网关</text>
-  <text x="900" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：auth-b.example.com</text>
-  <text x="900" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 自签证书</text>
+  <text x="900" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 B Portal</text>
+  <text x="900" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">issuer：https://auth-b.example.com</text>
+  <text x="900" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 自签/前置代理</text>
   <text x="900" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 管理</text>
 
   <rect x="1320" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
-  <text x="1500" y="285" text-anchor="middle" class="box-title" fill="#ffffff">外网网关</text>
-  <text x="1500" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：sso.example.com</text>
-  <text x="1500" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 公网 CA（issuer）</text>
+  <text x="1500" y="285" text-anchor="middle" class="box-title" fill="#ffffff">外网 Portal</text>
+  <text x="1500" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">issuer：https://auth-c.example.com</text>
+  <text x="1500" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 公网 CA/前置代理</text>
   <text x="1500" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 不管理</text>
 
   <!-- Center -->
   <rect x="650" y="470" width="500" height="180" rx="16" fill="#1d4ed8" filter="url(#shadow)"/>
-  <text x="900" y="514" text-anchor="middle" class="box-title" fill="#ffffff">Center（唯一实例）</text>
-  <text x="900" y="552" text-anchor="middle" class="box-sub" fill="#dbeafe">Axum API / OIDC / SQLite</text>
-  <text x="900" y="580" text-anchor="middle" class="box-sub" fill="#dbeafe">OIDC Provider / 管理面 / 同步控制面</text>
+  <text x="900" y="514" text-anchor="middle" class="box-title" fill="#ffffff">Core（唯一实例）</text>
+  <text x="900" y="552" text-anchor="middle" class="box-sub" fill="#dbeafe">当前代码名 Center · Axum API / SQLite</text>
+  <text x="900" y="580" text-anchor="middle" class="box-sub" fill="#dbeafe">OIDC 签名后端 / 管理面 / 同步控制面</text>
   <rect x="700" y="600" width="400" height="30" rx="15" fill="#1e40af"/>
-  <text x="900" y="621" text-anchor="middle" class="box-sub" fill="#dbeafe">OIDC issuer: https://sso.example.com</text>
+  <text x="900" y="621" text-anchor="middle" class="box-sub" fill="#dbeafe">issuer 白名单 + 共用 RSA 密钥 / JWKS</text>
 
   <!-- Client to gateway -->
   <path d="M300 190 V250" class="line" marker-end="url(#arrow)"/>
@@ -82,34 +82,34 @@
   <path d="M300 360 V415 H750 V470" class="line" marker-end="url(#arrow)"/>
   <path d="M900 360 V470" class="line" marker-end="url(#arrow)"/>
   <path d="M1500 360 V415 H1050 V470" class="line" marker-end="url(#arrow)"/>
-  <text x="300" y="390" text-anchor="middle" class="link">HTTPS</text>
-  <text x="900" y="390" text-anchor="middle" class="link">HTTPS</text>
-  <text x="1500" y="390" text-anchor="middle" class="link">HTTPS</text>
+  <text x="300" y="390" text-anchor="middle" class="link">HTTPS + PUBLIC_ISSUER Host</text>
+  <text x="900" y="390" text-anchor="middle" class="link">HTTPS + PUBLIC_ISSUER Host</text>
+  <text x="1500" y="390" text-anchor="middle" class="link">HTTPS + PUBLIC_ISSUER Host</text>
 
   <!-- Switch note -->
   <text x="60" y="510" class="section">登录 / 管理</text>
-  <text x="60" y="540" class="box-sub" fill="#475569">网关环境变量</text>
+  <text x="60" y="540" class="box-sub" fill="#475569">Portal 环境变量</text>
   <text x="60" y="566" class="box-sub" fill="#475569">LOGIN_ENABLED / ADMIN_ENABLED</text>
   <text x="60" y="592" class="box-sub" fill="#475569">禁用时返回错误页</text>
 
   <!-- Connectors: four LANs / four AD domains -->
   <rect x="70" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="230" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">内网入口 A Connector</text>
+  <text x="230" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 A Syncer</text>
   <text x="230" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="230" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
   <rect x="510" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="670" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">外网 A Connector</text>
+  <text x="670" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 B Syncer</text>
   <text x="670" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="670" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
   <rect x="950" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="1110" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">内网入口 B Connector</text>
+  <text x="1110" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 C Syncer</text>
   <text x="1110" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="1110" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
   <rect x="1390" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="1550" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">外网 B Connector</text>
+  <text x="1550" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 D Syncer</text>
   <text x="1550" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="1550" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
@@ -150,6 +150,6 @@
   <text x="1126" y="1000" text-anchor="start" class="link">LDAP 389 + Kerberos</text>
   <text x="1566" y="1000" text-anchor="start" class="link">LDAP 389 + Kerberos</text>
 
-  <text x="40" y="1148" class="subtitle">说明：三个网关入口域名和证书不同；issuer 固定为 https://sso.example.com，由外网网关承载，内网可直接访问。</text>
-  <text x="40" y="1172" class="subtitle">四个局域网对应四个 AD 域和四个 Connector；网关托管前端但不保存用户/Token/签名私钥；登录/管理开关由各网关环境变量控制。</text>
+  <text x="40" y="1148" class="subtitle">说明：内网入口 A、内网入口 B、外网各有一个 Portal，分别以 auth-a.example.com、auth-b.example.com、auth-c.example.com 作为 issuer；Core 只接受 OIDC_ISSUERS 白名单，core.example.com 的 OIDC 路径返回 404。</text>
+  <text x="40" y="1172" class="subtitle">四个局域网对应四个 AD 域和四个 Syncer；Portal 托管前端但不保存用户/Token/签名私钥，三个 issuer 共用 Core 的一把 RSA 私钥；登录/管理开关由各 Portal 环境变量控制。</text>
 </svg>

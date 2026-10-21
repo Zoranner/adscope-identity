@@ -120,6 +120,8 @@
 
 Web 客户端创建或重新生成 secret 时，明文只通过带 `Cache-Control: no-store` 的管理响应返回。数据库只保存新 secret 的摘要，重新生成时直接替换旧摘要，不保存 secret 版本或并行有效期。Desktop 客户端不生成 secret。
 
+OIDC 客户端记录在全局范围内维护，不绑定 issuer；同一个客户端可以由依赖方选择任一所属网络的 Portal 发起登录。
+
 删除客户端会移除该客户端配置。授权码兑换时仍会读取客户端记录；客户端不存在或已停用时，授权码不能换取令牌。
 
 ### `oauth_authorization_codes`
@@ -129,6 +131,7 @@ Web 客户端创建或重新生成 secret 时，明文只通过带 `Cache-Contro
 | 字段 | 含义 |
 | --- | --- |
 | `code_hash` | 授权码的 `sha256:` 摘要，也是表主键。 |
+| `issuer` | 签发该授权码的 Portal issuer；旧库补列后默认为空字符串。 |
 | `client_id` | 授权码绑定的客户端 ID。 |
 | `employee_id` | 授权用户的稳定标识，对应 OIDC `sub`。 |
 | `redirect_uri` | 授权请求实际使用的回调地址，Token 请求必须完全一致。 |
@@ -138,7 +141,9 @@ Web 客户端创建或重新生成 secret 时，明文只通过带 `Cache-Contro
 | `auth_time` | 浏览器登录发生时间的 Unix 秒数。 |
 | `expires_at` | 授权码到期时间的 Unix 秒数。 |
 
-授权码明文只通过已验证的 `redirect_uri` 返回，不写入数据库。记录有效期为 120 秒；Token 端点按 `code_hash` 原子删除记录后再完成兑换校验，所以同一授权码最多只有一个并发请求能够取得记录。未知、过期、已兑换或绑定信息不匹配的授权码都不能产生令牌。
+授权码明文只通过已验证的 `redirect_uri` 返回，不写入数据库。记录有效期为 120 秒；Token 端点按 `code_hash` 原子删除记录后再完成兑换校验，所以同一授权码最多只有一个并发请求能够取得记录。授权码必须与当前请求 Host 对应的 issuer 一致，否则返回 `invalid_grant`。未知、过期、已兑换、issuer 不匹配或绑定信息不匹配的授权码都不能产生令牌。
+
+`issuer` 为空的记录只会来自旧库升级前已签发的授权码。它们不参与数据回填，按 issuer 不匹配处理；最长 120 秒后自然过期并由清理逻辑删除。
 
 授权码没有已使用状态字段。兑换会删除目标记录；生成新授权码前会按到期时间有限批量清理过期记录，不保存兑换结果、历史同意或授权事件。
 
@@ -178,7 +183,7 @@ Web 客户端创建或重新生成 secret 时，明文只通过带 `Cache-Contro
 
 OAuth 客户端写入不推进目录或凭据 revision。创建客户端时生成稳定 `client_id`，客户端类型和 ID 在普通更新中保持不变；Web secret 只能通过创建或 secret 重新生成接口写入摘要。
 
-授权确认只写入一条短期 `oauth_authorization_codes` 记录。授权码兑换在数据库事务内删除目标记录，并在同一事务中读取绑定的客户端和用户；数据库不写入 token、会话或授权历史。
+授权确认只写入一条短期 `oauth_authorization_codes` 记录，并把当前 Portal issuer 写入 `issuer`。授权码兑换在数据库事务内删除目标记录，并在同一事务中读取绑定的客户端和用户；数据库不写入 token、会话或授权历史。
 
 Connector 确认只更新 `domains` 中目标通道的 applied revision。服务端必须拒绝倒退确认，也必须拒绝超过全局 revision 的确认。
 
