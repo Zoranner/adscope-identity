@@ -341,15 +341,15 @@ fn default_web_root() -> PathBuf {
     }
 
     for candidate in [
-        PathBuf::from("web"),
-        PathBuf::from("center/web/.output/public"),
+        PathBuf::from("gateway/static"),
+        PathBuf::from("gateway/web/.output/public"),
     ] {
         if candidate.join("index.html").is_file() {
             return candidate;
         }
     }
 
-    PathBuf::from("web")
+    PathBuf::from("gateway/static")
 }
 
 #[cfg(test)]

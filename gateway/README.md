@@ -9,14 +9,14 @@
 
 ## 构建
 
-先在 `center/web` 构建静态前端，再把产物放进 `gateway/web`：
+先在 `gateway/web` 构建静态前端，再把产物放进 `gateway/static`：
 
 ```text
-cd center/web
+cd gateway/web
 bun install --frozen-lockfile
 bun run build
-mkdir -p ../../gateway/web
-cp -R .output/public/. ../../gateway/web/
+mkdir -p ../static
+cp -R .output/public/. ../static/
 cd ../..
 ```
 
@@ -26,9 +26,9 @@ cd ../..
 docker build -f gateway/Dockerfile -t ghcr.io/example/adscope-gateway:0.2.0 .
 ```
 
-镜像内包含 `center/web` 的静态构建产物和网关二进制。Center 镜像不再包含前端。
+镜像内包含 `gateway/static` 的静态构建产物和网关二进制。Center 镜像不再包含前端。
 
-`gateway/web` 是仓库内的发布输入。修改 `center/web` 后必须重新生成并提交；发布流水线不会安装前端依赖或在 CI 中构建前端。
+`gateway/static` 是仓库内的发布输入。修改 `gateway/web` 后必须重新生成并提交；发布流水线不会安装前端依赖或在 CI 中构建前端。
 
 ## 环境变量
 
@@ -36,7 +36,7 @@ docker build -f gateway/Dockerfile -t ghcr.io/example/adscope-gateway:0.2.0 .
 | --- | --- | --- |
 | `CENTER_URL` | 是 | Center 根地址，例如 `http://center:8080` |
 | `LISTEN_ADDR` | 否 | 默认 `0.0.0.0:8443` |
-| `WEB_ROOT` | 否 | 默认 `/app/web`；本地调试可指向 `center/web/.output/public` |
+| `WEB_ROOT` | 否 | 默认 `/app/web`；本地调试可指向 `gateway/web/.output/public` |
 | `LOGIN_ENABLED` | 否 | `true` 或 `false`，默认 `true` |
 | `ADMIN_ENABLED` | 否 | `true` 或 `false`，默认 `true` |
 | `TLS_CERT_FILE` | 是 | TLS 证书文件路径 |

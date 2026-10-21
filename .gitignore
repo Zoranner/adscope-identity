@@ -3,8 +3,9 @@ crates/*/Cargo.lock
 node_modules/
 .nuxt/
 .output/
-center/web/dist/
 dist/
+!gateway/static/
+!gateway/static/**
 /.idea/
 /.vscode/
 *.log

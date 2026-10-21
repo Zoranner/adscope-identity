@@ -1,1 +1,1 @@
-gateway/web/** -text -whitespace
+gateway/static/** -text -whitespace

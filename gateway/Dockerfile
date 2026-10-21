@@ -17,7 +17,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /app adscope
 COPY --from=rust-build /src/target/release/adscope-gateway /app/adscope-gateway
-COPY gateway/web/ /app/web/
+COPY gateway/static/ /app/web/
 ENV LISTEN_ADDR=0.0.0.0:8443 \
     WEB_ROOT=/app/web
 WORKDIR /app
