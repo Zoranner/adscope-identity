@@ -4,7 +4,7 @@
 
 Adscope 管理多个独立 Windows Server AD 域中的组织结构、用户、组和密码，并为预登记应用提供受限的 OIDC 统一登录。
 
-系统只有一个 Center、三个登录网关（上海内网、武汉内网、外网）和四个 Connector（四个局域网、四个 AD 域）：
+系统只有一个 Center、三个登录网关（内网入口 A、内网入口 B、外网）和四个 Connector（四个局域网、四个 AD 域）：
 
 - Center 是账号、目录、凭据、OIDC 客户端和一次性授权码的唯一事实源。
 - Connector 是域内执行器，只把 Center 的当前期望状态写入本地 AD 域控。
@@ -24,8 +24,8 @@ SVG 源文件：[adscope-network-architecture.svg](images/adscope-network-archit
 
 图中的关键关系：
 
-- 上海内网、武汉内网、外网三个网关都指向同一个 Center，不是三个 Center。
-- 外网只有一个网关，由上海外网和武汉外网共用。
+- 内网入口 A、内网入口 B、外网三个网关都指向同一个 Center，不是三个 Center。
+- 外网只有一个网关，由外网 A和外网 B共用。
 - 网关负责 TLS、静态前端、API/OIDC 转发和登录/管理两组路径判断，不保存用户、Token 或签名私钥。
 - 管理面由内网网关的 `ADMIN_ENABLED` 控制；外网网关关闭管理。Connector 使用独立网络、端口或 ACL。
 - Connector 是安装在各 AD 域的 Windows 服务，不是容器，也不是网关。
@@ -39,8 +39,8 @@ SVG 源文件：[adscope-network-architecture.svg](images/adscope-network-archit
 
 | 网关 | 用户入口 | 证书 | 承载的 issuer |
 | --- | --- | --- | --- |
-| 上海内网 | `sso.sh.corp.example` | 内部 CA 或自签，SAN 含入口域名 | — |
-| 武汉内网 | `sso.wh.corp.example` | 内部 CA 或自签，SAN 含入口域名 | — |
+| 内网入口 A | `auth-a.example.com` | 内部 CA 或自签，SAN 含入口域名 | — |
+| 内网入口 B | `auth-b.example.com` | 内部 CA 或自签，SAN 含入口域名 | — |
 | 外网 | `sso.example.com` | 公网 CA，SAN 含 `sso.example.com` | `https://sso.example.com` |
 
 三个入口域名只负责把用户带到对应网关。OIDC issuer 是协议标识，不是网关入口域名；系统只使用一个 issuer，固定为外网正式域名，由外网网关承载。内网服务器本身可以访问外网和 Center，因此内网 OIDC 客户端直接使用这个 issuer，不需要分离 DNS，也不需要把 issuer 域名写进内网证书 SAN。这样同一套 `client_id`、`sub` 和 JWKS 可以跨三个入口使用，不需要维护三套客户端登记。
@@ -64,7 +64,7 @@ SVG 源文件：[adscope-network-architecture.svg](images/adscope-network-archit
 
 - 网关命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Center。
 - 网关只对这两组路径做判断；其他 API/OIDC 路径转发给 Center，其余路径返回前端静态文件。
-- 上海内网、武汉内网网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 内网入口 A、内网入口 B网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
 - 外网网关设置 `ADMIN_ENABLED=false`；`LOGIN_ENABLED` 按需要开关。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Connector 同步。

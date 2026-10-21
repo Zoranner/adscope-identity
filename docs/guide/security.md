@@ -45,7 +45,7 @@ Center 只使用一个 canonical issuer；三个网关的入口域名和证书�
 
 三个入口域名可以重定向到 canonical issuer，但 OIDC 客户端应直接使用 canonical issuer 做 discovery、authorize 和校验 `iss`。当前 `adscope_sso` Cookie 没有 `Domain` 属性，用不同入口域名登录会产生独立登录态。
 
-每个网关通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。网关命中禁用路由时直接返回 `403` 错误页，不转发给 Center；Center 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Connector 同步。上海内网、武汉内网网关可以开启管理，外网网关关闭管理。网关必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
+每个网关通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。网关命中禁用路由时直接返回 `403` 错误页，不转发给 Center；Center 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Connector 同步。内网入口 A、内网入口 B网关可以开启管理，外网网关关闭管理。网关必须能按这两组路径判断；只能整站开关的实现无法独立控制登录和管理。
 
 ## 传输要求
 

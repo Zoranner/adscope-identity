@@ -86,7 +86,7 @@ jobs:
       - name: Build and export Center image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          IMAGE: ghcr.io/zoranner/adscope-center
+          IMAGE: ghcr.io/example/adscope-center
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -117,7 +117,7 @@ jobs:
       - name: Build and export Gateway image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          IMAGE: ghcr.io/zoranner/adscope-gateway
+          IMAGE: ghcr.io/example/adscope-gateway
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |

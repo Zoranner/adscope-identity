@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "adscope-center-web",
+      "name": "adscope-gateway-web",
       "dependencies": {
         "@iconify-json/ph": "^1.2.2",
         "@nuxt/icon": "^2.5.1",

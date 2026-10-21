@@ -35,7 +35,7 @@ const enabledOptions = [
     </div>
 
     <div class="grid grid-cols-2 gap-[var(--spacing-lg)] max-[720px]:grid-cols-1">
-      <Input v-model="form.upn_suffix" label="UPN 后缀" help-text="例如 rd.kim" required />
+      <Input v-model="form.upn_suffix" label="UPN 后缀" help-text="例如 example.com" required />
       <Select v-model="form.enabled" label="状态" :options="enabledOptions" />
     </div>
 

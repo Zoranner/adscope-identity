@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180" role="img" aria-labelledby="title desc">
   <title id="title">Adscope 网络架构</title>
-  <desc id="desc">一个 Center，三个登录网关，四个 Connector Windows 服务。前端和入口开关在网关，Center 只做 API/OIDC 和数据。上海内网、武汉内网各一个网关，外网一个网关由上海外网和武汉外网共用；三个入口域名和证书不同，OIDC issuer 固定为 https://sso.example.com 并由外网网关承载；四个局域网对应四个 AD 域；每个网关通过 LOGIN_ENABLED、ADMIN_ENABLED 环境变量控制登录和管理，命中禁用路由时返回错误页。</desc>
+  <desc id="desc">一个 Center，三个登录网关，四个 Connector Windows 服务。前端和入口开关在网关，Center 只做 API/OIDC 和数据。内网入口 A、内网入口 B各一个网关，外网一个网关由外网 A和外网 B共用；三个入口域名和证书不同，OIDC issuer 固定为 https://sso.example.com 并由外网网关承载；四个局域网对应四个 AD 域；每个网关通过 LOGIN_ENABLED、ADMIN_ENABLED 环境变量控制登录和管理，命中禁用路由时返回错误页。</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -32,27 +32,27 @@
 
   <!-- Clients -->
   <rect x="120" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
-  <text x="300" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">上海内网用户 / OIDC 客户端</text>
-  <text x="300" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问上海内网网关</text>
+  <text x="300" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">内网入口 A 用户 / OIDC 客户端</text>
+  <text x="300" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 A网关</text>
 
   <rect x="720" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
-  <text x="900" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">武汉内网用户 / OIDC 客户端</text>
-  <text x="900" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问武汉内网网关</text>
+  <text x="900" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">内网入口 B 用户 / OIDC 客户端</text>
+  <text x="900" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 B网关</text>
 
   <rect x="1320" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
   <text x="1500" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">外网用户 / OIDC 客户端</text>
-  <text x="1500" y="170" text-anchor="middle" class="box-sub" fill="#475569">上海外网 + 武汉外网共用</text>
+  <text x="1500" y="170" text-anchor="middle" class="box-sub" fill="#475569">外网 A + 外网 B共用</text>
 
   <!-- Gateways -->
   <rect x="120" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
-  <text x="300" y="285" text-anchor="middle" class="box-title" fill="#ffffff">上海内网网关</text>
-  <text x="300" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：sso.sh.corp.example</text>
+  <text x="300" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 A网关</text>
+  <text x="300" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：auth-a.example.com</text>
   <text x="300" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 自签证书</text>
   <text x="300" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 管理</text>
 
   <rect x="720" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
-  <text x="900" y="285" text-anchor="middle" class="box-title" fill="#ffffff">武汉内网网关</text>
-  <text x="900" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：sso.wh.corp.example</text>
+  <text x="900" y="285" text-anchor="middle" class="box-title" fill="#ffffff">内网入口 B网关</text>
+  <text x="900" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">入口：auth-b.example.com</text>
   <text x="900" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 自签证书</text>
   <text x="900" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 管理</text>
 
@@ -94,22 +94,22 @@
 
   <!-- Connectors: four LANs / four AD domains -->
   <rect x="70" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="230" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">上海内网 Connector</text>
+  <text x="230" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">内网入口 A Connector</text>
   <text x="230" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="230" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
   <rect x="510" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="670" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">上海外网 Connector</text>
+  <text x="670" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">外网 A Connector</text>
   <text x="670" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="670" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
   <rect x="950" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="1110" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">武汉内网 Connector</text>
+  <text x="1110" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">内网入口 B Connector</text>
   <text x="1110" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="1110" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
   <rect x="1390" y="850" width="320" height="110" rx="14" fill="#c2410c" filter="url(#shadow)"/>
-  <text x="1550" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">武汉外网 Connector</text>
+  <text x="1550" y="890" text-anchor="middle" class="box-title-small" fill="#ffffff">外网 B Connector</text>
   <text x="1550" y="918" text-anchor="middle" class="box-sub" fill="#ffedd5">Windows 服务</text>
   <text x="1550" y="942" text-anchor="middle" class="box-sub" fill="#ffedd5">HTTPS 拉取 + confirm</text>
 
@@ -125,19 +125,19 @@
 
   <!-- AD domain controllers -->
   <rect x="110" y="1030" width="240" height="100" rx="14" fill="#334155" filter="url(#shadow)"/>
-  <text x="230" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">上海内网 AD 域控</text>
+  <text x="230" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 A 域控</text>
   <text x="230" y="1098" text-anchor="middle" class="box-sub" fill="#cbd5e1">LDAP 389 + Kerberos</text>
 
   <rect x="550" y="1030" width="240" height="100" rx="14" fill="#334155" filter="url(#shadow)"/>
-  <text x="670" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">上海外网 AD 域控</text>
+  <text x="670" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 B 域控</text>
   <text x="670" y="1098" text-anchor="middle" class="box-sub" fill="#cbd5e1">LDAP 389 + Kerberos</text>
 
   <rect x="990" y="1030" width="240" height="100" rx="14" fill="#334155" filter="url(#shadow)"/>
-  <text x="1110" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">武汉内网 AD 域控</text>
+  <text x="1110" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 C 域控</text>
   <text x="1110" y="1098" text-anchor="middle" class="box-sub" fill="#cbd5e1">LDAP 389 + Kerberos</text>
 
   <rect x="1430" y="1030" width="240" height="100" rx="14" fill="#334155" filter="url(#shadow)"/>
-  <text x="1550" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">武汉外网 AD 域控</text>
+  <text x="1550" y="1070" text-anchor="middle" class="box-title-small" fill="#ffffff">AD 域 D 域控</text>
   <text x="1550" y="1098" text-anchor="middle" class="box-sub" fill="#cbd5e1">LDAP 389 + Kerberos</text>
 
   <!-- Connector to AD -->

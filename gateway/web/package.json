@@ -1,5 +1,5 @@
 {
-  "name": "adscope-center-web",
+  "name": "adscope-gateway-web",
   "private": true,
   "type": "module",
   "scripts": {

@@ -138,19 +138,19 @@ docker compose up -d --force-recreate center
 
 ## 网关接入
 
-当前只有一个 Center。上海内网、武汉内网各有一个登录网关；外网只有一个网关，由上海外网和武汉外网共用：
+当前只有一个 Center。内网入口 A、内网入口 B各有一个登录网关；外网只有一个网关，由外网 A和外网 B共用：
 
 完整网络拓扑见 [系统架构](system-architecture.md)。
 
 ```text
-上海内网客户端
-  -> https://sso.sh.corp.example
-  -> 上海内网网关
+内网入口 A客户端
+  -> https://auth-a.example.com
+  -> 内网入口 A网关
   -> center:8080
 
-武汉内网客户端
-  -> https://sso.wh.corp.example
-  -> 武汉内网网关
+内网入口 B客户端
+  -> https://auth-b.example.com
+  -> 内网入口 B网关
   -> center:8080
 
 外网客户端
@@ -174,7 +174,7 @@ docker compose up -d --force-recreate center
 
 - 网关命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Center。
 - 网关只对这两组路径做判断，其他路径照常转发给 Center。
-- 上海内网、武汉内网网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 内网入口 A、内网入口 B网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
 - 外网网关设置 `ADMIN_ENABLED=false`；`LOGIN_ENABLED` 按需要开关。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Connector 同步。

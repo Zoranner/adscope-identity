@@ -5,7 +5,7 @@
 Center、Gateway 和 Connector 是三个独立部署单元，部署方式不同：
 
 - Center 使用 [deploy/center/docker-compose.yml](../../deploy/center/docker-compose.yml) 作为 Docker 服务。复制 [deploy/center/.env.example](../../deploy/center/.env.example) 为 `deploy/center/.env`，替换所有占位值后通过 Compose 启动。
-- Gateway 使用 `ghcr.io/zoranner/adscope-gateway:<version>` 镜像，每个网关一个容器，环境变量和 TLS 证书分别配置；运行示例见 [gateway/README.md](../../gateway/README.md)。
+- Gateway 使用 `ghcr.io/example/adscope-gateway:<version>` 镜像，每个网关一个容器，环境变量和 TLS 证书分别配置；运行示例见 [gateway/README.md](../../gateway/README.md)。
 - Connector 作为 MSI 安装包运行。安装时通过 MSI 参数写入运行配置并注册 Windows 服务。
 
 Center 和 Gateway 加入预先创建的外部 Docker 网络 `adscope`：
@@ -15,7 +15,7 @@ docker network create adscope
 ```
 
 Center 和 Gateway 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/zoranner/adscope-center:0.2.0` 和 `ghcr.io/zoranner/adscope-gateway:0.2.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/example/adscope-center:0.2.0` 和 `ghcr.io/example/adscope-gateway:0.2.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -104,8 +104,8 @@ OIDC issuer 由外网网关服务；三个网关的入口域名和证书可以�
 
 | 网关 | 用户入口 | 证书 |
 | --- | --- | --- |
-| 上海内网 | `https://sso.sh.corp.example` | 内部 CA 或自签，SAN 含入口域名 |
-| 武汉内网 | `https://sso.wh.corp.example` | 内部 CA 或自签，SAN 含入口域名 |
+| 内网入口 A | `https://auth-a.example.com` | 内部 CA 或自签，SAN 含入口域名 |
+| 内网入口 B | `https://auth-b.example.com` | 内部 CA 或自签，SAN 含入口域名 |
 | 外网 | `https://sso.example.com` | 公网 CA，SAN 含 `sso.example.com` |
 
 OIDC issuer 由外网网关承载。内网服务器本身可以访问外网和 Center，所以内网 OIDC 客户端直接使用 `https://sso.example.com`；不需要分离 DNS，也不需要把 issuer 域名写进内网证书。内网网关的证书只覆盖自己的入口域名。
@@ -135,7 +135,7 @@ bun run build
 mkdir -p ../../gateway/web
 cp -R .output/public/. ../../gateway/web/
 cd ../..
-docker build -f gateway/Dockerfile -t ghcr.io/zoranner/adscope-gateway:0.2.0 .
+docker build -f gateway/Dockerfile -t ghcr.io/example/adscope-gateway:0.2.0 .
 ```
 
 静态前端产物先复制到 `gateway/web`，镜像构建时直接复制到 `/app/web`。
@@ -163,12 +163,12 @@ Center 只配置一个 canonical `OIDC_ISSUER`。三个网关各自使用自己�
 完整网络拓扑见 [系统架构](../reference/system-architecture.md)。
 
 ```text
-上海内网：https://sso.sh.corp.example -> 上海内网网关 -> center:8080
-武汉内网：https://sso.wh.corp.example -> 武汉内网网关 -> center:8080
+内网入口 A：https://auth-a.example.com -> 内网入口 A网关 -> center:8080
+内网入口 B：https://auth-b.example.com -> 内网入口 B网关 -> center:8080
 外网：    https://sso.example.com       -> 外网网关     -> center:8080
 ```
 
-上海内网、武汉内网、外网三个登录网关都指向同一个 Center；外网只有一个网关，由上海外网和武汉外网共用。Center 只有一个，不是每个网关一个副本。
+内网入口 A、内网入口 B、外网三个登录网关都指向同一个 Center；外网只有一个网关，由外网 A和外网 B共用。Center 只有一个，不是每个网关一个副本。
 
 网关负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断；登录/管理开关由各网关自己的环境变量控制，不写进 Center 的 `.env`。Center 不参与开关判断。网关服务终止 TLS，证书由容器挂载；Center 本身不管理 TLS 证书。
 
@@ -185,7 +185,7 @@ Center 只配置一个 canonical `OIDC_ISSUER`。三个网关各自使用自己�
 
 - 网关命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Center。
 - 网关只对这两组路径做判断；其他 API/OIDC 路径转发给 Center，其余路径返回前端静态文件。
-- 上海内网、武汉内网网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 内网入口 A、内网入口 B网关可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
 - 外网网关设置 `ADMIN_ENABLED=false`；`LOGIN_ENABLED` 按需要开关。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Connector 同步。
@@ -213,10 +213,10 @@ Connector 是域内常驻同步进程。安装 MSI 时填写配置后，Connecto
 Connector 至少需要设置域控制器 LDAP 地址：
 
 ```text
-DOMAIN_CONTROLLER_LDAP_URL=ldap://dc01.rd.kim:389
+DOMAIN_CONTROLLER_LDAP_URL=ldap://dc01.example.com:389
 ```
 
-Connector 主机必须加入 `rd.kim` 域，并以 `NetworkService` 服务身份运行。LDAP 地址只接受 `ldap://<FQDN>:389`；Connector 使用主机计算机账号 `RD\<CONNECTOR-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
+Connector 主机必须加入 `example.com` 域，并以 `NetworkService` 服务身份运行。LDAP 地址只接受 `ldap://<FQDN>:389`；Connector 使用主机计算机账号 `<DOMAIN>\<CONNECTOR-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
 
 历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `MATCH_LEGACY_USERS_BY_USERNAME=1`。此时 Connector 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写 Center 中的 `employee_id`。迁移完成后应关闭该开关。
 
@@ -242,7 +242,7 @@ Connector 在运行目录下自动维护 `adscope-connector-state.json`。文件
 - 前端静态文件由网关镜像托管，Center 不提供前端，不单独开放 Nuxt 开发服务。
 - 外网入口必须在外网网关或前置 WAF 提供登录限流；当前 Center 没有 MFA、登录锁定和 OIDC 审计。
 - OIDC 接入点不得持有签名私钥或本地签发 Token；Center 故障时不做兜底认证。
-- 上海内网、武汉内网各有一个独立网关；外网共用一个网关，关闭时会影响上海外网和武汉外网的登录入口。
+- 内网入口 A、内网入口 B各有一个独立网关；外网共用一个网关，关闭时会影响外网 A和外网 B的登录入口。
 - 三个网关的入口域名和证书可以不同；内网证书只需覆盖入口域名，内网服务器能访问外网 issuer。
 - 完成一次 SQLite 备份恢复演练和一次 OIDC 私钥轮换演练。
 - 依赖方本地会话设置明确上限；接受 Center 禁用不会立即撤销依赖方会话。

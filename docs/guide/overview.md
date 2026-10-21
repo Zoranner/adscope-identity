@@ -66,7 +66,7 @@ Center 为预登记 Web 和桌面应用提供受限的 OIDC Provider。当前只
 
 OIDC `sub` 直接使用用户 `employee_id`，同一用户通过不同网络或不同客户端登录时得到相同的人员标识。依赖方通过 canonical issuer 获取 Discovery 和 JWKS，校验 `iss`、`aud`、`nonce`、有效期和签名；access token 只用于 UserInfo，不能代替业务 API 的 Bearer token。
 
-系统只有一个 Center；上海内网、武汉内网各有一个登录网关，外网一个网关由上海外网和武汉外网共用；四个局域网、四个 AD 域各部署一个 Connector。三个入口域名和证书可以不同，入口负责 TLS、静态前端、API/OIDC 转发和两组路径开关，不保存用户、Token 或签名私钥，也不签发自己的 OIDC Token。每个网关通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理，禁用时直接返回错误页；关闭登录不撤销已签发 Token。入口和依赖方的详细契约见 [OIDC 统一登录接入](../reference/oidc-integration.md)。
+系统只有一个 Center；内网入口 A、内网入口 B各有一个登录网关，外网一个网关由外网 A和外网 B共用；四个局域网、四个 AD 域各部署一个 Connector。三个入口域名和证书可以不同，入口负责 TLS、静态前端、API/OIDC 转发和两组路径开关，不保存用户、Token 或签名私钥，也不签发自己的 OIDC Token。每个网关通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理，禁用时直接返回错误页；关闭登录不撤销已签发 Token。入口和依赖方的详细契约见 [OIDC 统一登录接入](../reference/oidc-integration.md)。
 
 Center 当前不支持 device authorization、refresh token、token 撤销、动态客户端注册、静默登录、MFA 和多 issuer。依赖方的本地会话、设备凭据和撤销由依赖方自行维护。
 
