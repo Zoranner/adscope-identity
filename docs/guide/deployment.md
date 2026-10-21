@@ -63,16 +63,16 @@ Center 按单实例部署。不要让多个 Center 副本共享同一个 SQLite 
 
 ## OIDC 私钥
 
-OIDC 使用至少 2048 位的 RSA 私钥签发 RS256 token。以下命令适用于使用普通 rootful Docker、已安装 OpenSSL 的 Linux 主机。示例在部署目录的 `app/secrets/` 中生成 3072 位 PKCS#8 PEM 私钥，再把文件设为 Center 容器用户 `10001:10001` 只读：
+OIDC 使用至少 2048 位的 RSA 私钥签发 RS256 token。以下命令适用于使用普通 rootful Docker、已安装 OpenSSL 的 Linux 主机。示例在部署目录的 `app/secrets/` 中生成 3072 位 PKCS#8 PEM 私钥，再把文件设为 Center 容器用户 `1000:1000` 只读：
 
 ```sh
 mkdir -p app/secrets data
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out app/secrets/oidc-private-key.pem
-sudo chown 10001:10001 app/secrets/oidc-private-key.pem
+sudo chown 1000:1000 app/secrets/oidc-private-key.pem
 sudo chmod 0400 app/secrets/oidc-private-key.pem
 ```
 
-将 `oidc-private-key.pem` 放在 Center 部署目录的 `app/secrets/` 中，并限制为 Center 容器用户可读。镜像固定以 UID/GID `10001:10001` 运行；如部署镜像修改了运行 UID/GID，应同步调整私钥文件属主。rootless Docker 或启用用户命名空间映射时，应使用映射后的宿主机 UID 和 GID。私钥正文不得进入仓库、`.env`、环境变量或镜像。Compose 将该目录只读挂载到 `/run/secrets`，Center 固定读取 `/run/secrets/oidc-private-key.pem`：
+将 `oidc-private-key.pem` 放在 Center 部署目录的 `app/secrets/` 中，并限制为 Center 容器用户可读。镜像固定以 UID/GID `1000:1000` 运行；如部署镜像修改了运行 UID/GID，应同步调整私钥文件属主。rootless Docker 或启用用户命名空间映射时，应使用映射后的宿主机 UID 和 GID。私钥正文不得进入仓库、`.env`、环境变量或镜像。Compose 将该目录只读挂载到 `/run/secrets`，Center 固定读取 `/run/secrets/oidc-private-key.pem`：
 
 ```yaml
 services:

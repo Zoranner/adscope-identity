@@ -15,12 +15,12 @@ LABEL org.opencontainers.image.version=$VERSION \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home /app adscope
+    && useradd --system --uid 1000 --home /app adscope
 COPY --from=rust-build /src/target/release/adscope-gateway /app/adscope-gateway
 COPY gateway/static/ /app/web/
 ENV LISTEN_ADDR=0.0.0.0:8443 \
     WEB_ROOT=/app/web
 WORKDIR /app
-USER 10001:10001
+USER 1000:1000
 EXPOSE 8443
 ENTRYPOINT ["/app/adscope-gateway"]
