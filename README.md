@@ -12,11 +12,13 @@
 - 域管理：管理员添加或修改 AD 域，获取该域 Syncer 使用的一次性 key，并查看同步状态。
 - 多域同步：Syncer 将 Core 维护的 OU、用户、组、成员关系和密码同步到各自负责的 AD 域。
 
-普通用户入口为 `/login`，管理入口为 `/admin`。内网入口 A、内网入口 B和外网各有一个 Portal，分别以 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com` 作为 OIDC issuer。依赖方按所属网络使用对应 Portal，三个 Portal 独立登录，不共享 Cookie。
+普通用户入口为 `/login`，管理入口为 `/admin`。内网 A、内网 B 和外网各有一个 Portal，分别以 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com` 作为 OIDC issuer。依赖方按所属网络使用对应 Portal，三个 Portal 独立登录，不共享 Cookie。
 
 ## 部署方式
 
 Core 以 Docker 服务运行，只提供 API/OIDC，SQLite 数据保存在部署目录的 `data/` 中。前端和管理页面由 `adscope-portal` 容器托管；Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
+
+Core、Portal 和 Syncer 的部署模板分别在 `deploy/core`、`deploy/portal` 和 `deploy/syncer`。
 
 统一登录在 Core 配置 `OIDC_ISSUERS` 和 `OIDC_LOOPBACK_HTTP=false`，每个 Portal 配置自己的 `PUBLIC_ISSUER`。Docker 部署目录的 `app/secrets/` 存放受限读取的 `oidc-private-key.pem`，Compose 将该目录只读挂载到容器中的 `/run/secrets/oidc-private-key.pem`；三个 issuer 共用这把密钥。
 

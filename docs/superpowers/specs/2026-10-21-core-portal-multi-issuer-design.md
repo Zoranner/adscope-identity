@@ -89,7 +89,7 @@ OIDC_ISSUERS=https://auth-a.example.com,https://auth-b.example.com,https://auth-
 ```text
 https://auth-a.example.com:443  -> https://auth-a.example.com
 https://auth-a.example.com      -> https://auth-a.example.com
-https://auth-a.example.com:8443 -> https://auth-a.example.com:8443
+https://auth-a.example.com:18086 -> https://auth-a.example.com:18086
 ```
 
 Core 建立 Host 到 issuer 的映射：
@@ -147,7 +147,7 @@ Portal 可以自己终止 TLS，也可以由前置反向代理终止 TLS。服�
 
 Portal 的监听规则：
 
-- `LISTEN_ADDR` 控制内网监听地址，默认 `0.0.0.0:8443`
+- `LISTEN_ADDR` 控制内网监听地址，固定为 `0.0.0.0:18086`
 - 同时提供 `TLS_CERT_FILE` 和 `TLS_KEY_FILE` 时监听 HTTPS
 - 两者都不提供时监听 HTTP
 - 只提供其中一个时启动失败

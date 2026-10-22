@@ -14,7 +14,7 @@ use serde_json::json;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
-const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8443";
+const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:18086";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicIssuer {

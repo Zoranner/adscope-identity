@@ -18,9 +18,9 @@ RUN apt-get update \
     && useradd --system --uid 1000 --home /app adscope
 COPY --from=rust-build /src/target/release/adscope-portal /app/adscope-portal
 COPY portal/static/ /app/web/
-ENV LISTEN_ADDR=0.0.0.0:8443 \
+ENV LISTEN_ADDR=0.0.0.0:18086 \
     WEB_ROOT=/app/web
 WORKDIR /app
 USER 1000:1000
-EXPOSE 8443
+EXPOSE 18086
 ENTRYPOINT ["/app/adscope-portal"]

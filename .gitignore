@@ -11,6 +11,7 @@ dist/
 *.log
 .env
 /secrets/
+deploy/portal/certs/
 *.db
 *.db-shm
 *.db-wal

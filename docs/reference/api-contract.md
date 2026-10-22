@@ -171,7 +171,7 @@ Authorization: Bearer <access_token>
 
 Core 只接受预登记客户端通过 Portal 使用 Authorization Code Flow 登录。OIDC `sub` 直接使用用户 `employee_id`，OIDC access token 只用于 UserInfo，不能用于 `/api/me/*`。
 
-当前只支持 Authorization Code + PKCE S256 和三个 Portal issuer，不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或跨 Portal SSO。Core 从 `OIDC_ISSUERS` 读取 issuer 白名单，按请求 Host 选择当前 issuer；Portal 用 `PUBLIC_ISSUER` 覆盖 Host。OIDC 客户端记录保持全局，不绑定 issuer，依赖方按所属网络选择 Portal。
+当前只支持 Authorization Code + PKCE S256 和一个或多个 Portal issuer；当前部署使用三个固定 issuer。不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或跨 Portal SSO。Core 从 `OIDC_ISSUERS` 读取 issuer 白名单，按请求 Host 选择当前 issuer；Portal 用 `PUBLIC_ISSUER` 覆盖 Host。OIDC 客户端记录保持全局，不绑定 issuer，依赖方按所属网络选择 Portal。
 
 ### Discovery
 

@@ -10,7 +10,7 @@ Core 是受限的 OIDC Provider，不是通用身份平台。当前只支持：
 - Web confidential client 和 Desktop public client。
 - RS256 ID Token 和 access token，有效期均为 5 分钟。
 
-当前支持三个固定 Portal issuer，但不支持动态客户端注册、device authorization、refresh token、token introspection、token revocation、front-channel/back-channel logout、静默登录、跨 Portal SSO、MFA 和 `groups`/`roles` 声明。Discovery 只声明实际支持的能力，依赖方不应根据未声明的端点做兼容猜测。
+Core 支持一个或多个 Portal issuer；当前部署使用三个固定 issuer。不支持动态客户端注册、device authorization、refresh token、token introspection、token revocation、front-channel/back-channel logout、静默登录、跨 Portal SSO、MFA 和 `groups`/`roles` 声明。Discovery 只声明实际支持的能力，依赖方不应根据未声明的端点做兼容猜测。
 
 ## Issuer 与端点
 

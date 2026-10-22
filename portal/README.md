@@ -37,7 +37,7 @@ docker build -f portal/Dockerfile -t ghcr.io/example/adscope-portal:0.2.0 .
 | --- | --- | --- |
 | `CORE_URL` | 是 | Core 根地址，例如 `http://core:8080` |
 | `PUBLIC_ISSUER` | 是 | 本 Portal 的公开 HTTPS origin，例如 `https://auth-a.example.com` |
-| `LISTEN_ADDR` | 否 | 默认 `0.0.0.0:8443` |
+| `LISTEN_ADDR` | 否 | 固定为 `0.0.0.0:18086`；这是容器内非特权端口，不是公开 issuer 端口 |
 | `WEB_ROOT` | 否 | 默认 `/app/web`；本地调试可指向 `portal/web/.output/public` |
 | `LOGIN_ENABLED` | 否 | `true` 或 `false`，默认 `true` |
 | `ADMIN_ENABLED` | 否 | `true` 或 `false`，默认 `true` |
@@ -50,14 +50,18 @@ docker build -f portal/Dockerfile -t ghcr.io/example/adscope-portal:0.2.0 .
 
 `TLS_CERT_FILE` 和 `TLS_KEY_FILE` 都不配置时，Portal 监听 HTTP，TLS 由前置反向代理终止；只配置其中一个时启动失败。内网 HTTP 监听只能暴露在本机回环或受信网络。
 
+Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口，并转发到 Portal 的 `127.0.0.1:18086`；不要把 `18086` 写进 issuer。`18086` 高于 1024，镜像以 UID `1000` 运行时可以直接绑定，不依赖 root 或额外 capability。
+
 ## 运行
+
+仓库提供单 Portal 的 Compose 部署模板，见 [deploy/portal/README.md](../deploy/portal/README.md)。下面的 `docker run` 示例用于本地或临时调试。
 
 内网入口 A Portal 由前置反向代理终止 TLS 的示例：
 
 ```text
 docker run -d --name adscope-portal-sh \
   --network adscope \
-  -p 443:8443 \
+  -p 127.0.0.1:18086:18086 \
   -e CORE_URL=http://core:8080 \
   -e PUBLIC_ISSUER=https://auth-a.example.com \
   -e LOGIN_ENABLED=true \

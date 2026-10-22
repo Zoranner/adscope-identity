@@ -5,14 +5,16 @@
 Core、Portal 和 Syncer 是三个独立部署单元，部署方式不同：
 
 - Core 使用 [deploy/core/docker-compose.yml](../../deploy/core/docker-compose.yml) 作为 Docker 服务。复制 [deploy/core/.env.example](../../deploy/core/.env.example) 为 `deploy/core/.env`，替换所有占位值后通过 Compose 启动。
-- Portal 使用 `ghcr.io/example/adscope-portal:<version>` 镜像，每个 Portal 一个容器，环境变量和 TLS 证书分别配置；运行示例见 [portal/README.md](../../portal/README.md)。
+- Portal 使用 `ghcr.io/example/adscope-portal:<version>` 镜像，每个 Portal 一个容器，环境变量和 TLS 证书分别配置。每个 Portal 复制 [deploy/portal/.env.example](../../deploy/portal/.env.example) 为 `.env`，按 [deploy/portal/README.md](../../deploy/portal/README.md) 在各自部署主机启动；镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。
 - Syncer 作为 MSI 安装包运行。安装时通过 MSI 参数写入运行配置并注册 Windows 服务。
 
-Core 和 Portal 加入预先创建的外部 Docker 网络 `adscope`：
+同一 Docker 主机上的 Core 和 Portal 如需通过服务名互相访问，可以加入预先创建的外部 Docker 网络 `adscope`：
 
 ```text
 docker network create adscope
 ```
+
+跨主机部署时不需要加入该网络，Portal 直接在 `CORE_URL` 中填写 Core 的公开地址 `https://core.example.com`。
 
 Core 和 Portal 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
 `ghcr.io/example/adscope-core:0.2.0` 和 `ghcr.io/example/adscope-portal:0.2.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
@@ -29,9 +31,9 @@ docker compose pull core
 docker compose up -d core
 ```
 
-Portal 升级使用同一版本标签，重建三个 Portal 容器即可；环境变量和证书挂载不变。
+Portal 升级使用同一版本标签，按实际部署数量重建对应容器即可；环境变量和证书挂载不变。
 
-Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.env.example)。Portal 变量和运行示例见 [portal/README.md](../../portal/README.md)。Syncer 配置由 MSI 安装参数或配置命令写入，不分发示例文件。
+Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.env.example)。Portal 的部署模板见 [deploy/portal](../../deploy/portal)，镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。Syncer 配置由 MSI 安装参数或配置命令写入，不分发示例文件。
 
 系统环境变量优先级高于进程读取的配置文件。生产环境可以由容器平台、Windows 服务环境或 Secret 管理系统注入普通密钥变量；OIDC RSA 私钥仍通过受限文件挂载。生产密钥不得写入仓库。
 
@@ -148,18 +150,20 @@ Portal 变量：
 | --- | --- |
 | `CORE_URL` | Core 根地址，例如 `http://core:8080` |
 | `PUBLIC_ISSUER` | 本 Portal 的公开 HTTPS origin |
-| `LISTEN_ADDR` | 默认 `0.0.0.0:8443` |
+| `LISTEN_ADDR` | 固定为 `0.0.0.0:18086` |
 | `WEB_ROOT` | 镜像内固定为 `/app/web` |
 | `LOGIN_ENABLED` | `true` 或 `false` |
 | `ADMIN_ENABLED` | `true` 或 `false` |
 | `TLS_CERT_FILE` | 证书文件路径；与 `TLS_KEY_FILE` 同时设置时启用 HTTPS |
 | `TLS_KEY_FILE` | 私钥文件路径；与 `TLS_CERT_FILE` 同时设置时启用 HTTPS |
 
-两项 TLS 变量都不设置时 Portal 监听 HTTP，交给前置反向代理终止 TLS；只设置一个时启动失败。三个 Portal 使用同一个镜像，只改 `PUBLIC_ISSUER`、监听方式和入口开关。完整运行示例见 [portal/README.md](../../portal/README.md)。
+`LISTEN_ADDR` 是容器内部固定监听端口 `18086`；公开 HTTPS 入口由前置代理转发到该端口，不要把内部监听端口直接写进 issuer。
+
+两项 TLS 变量都不设置时 Portal 监听 HTTP，交给前置反向代理终止 TLS；只设置一个时启动失败。各 Portal 使用同一个镜像；按实际数量部署，只有公开域名不同时 `PUBLIC_ISSUER` 才必须不同。当前三种 Portal 的参数见 [deploy/portal/README.md](../../deploy/portal/README.md)。
 
 ## OIDC 网络接入
 
-Core 配置三个 Portal issuer 的 `OIDC_ISSUERS` 白名单。三个 Portal 各自使用自己的公开域名和证书，但都把 API/OIDC 转发到同一个 Core 端口；静态前端由各自 Portal 返回：
+当前拓扑下 Core 在 `OIDC_ISSUERS` 中配置三个 Portal issuer；实现本身支持一个或多个，只部署一个 Portal 时只配置一个。三个 Portal 各自使用自己的公开域名和证书，但都把 API/OIDC 转发到同一个 Core 端口；静态前端由各自 Portal 返回：
 
 完整网络拓扑见 [系统架构](../reference/system-architecture.md)。
 
