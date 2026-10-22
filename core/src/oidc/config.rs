@@ -340,9 +340,9 @@ mod tests {
     fn multiple_issuers_are_normalized_and_selected_by_host() {
         let config = OidcConfig::from_issuers(
             &[
-                "https://auth-a.example.com.:443",
+                "https://AUTH-A.EXAMPLE.COM.:443",
                 "https://auth-b.example.com",
-                "https://auth-c.example.com:8443",
+                "https://auth-c.example.com:18086",
             ],
             PRIVATE_KEY.to_vec(),
             false,
@@ -350,7 +350,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            config.issuer_for_host(Some("auth-a.example.com.:443")),
+            config.issuer_for_host(Some("AUTH-A.EXAMPLE.COM.:443")),
             Some("https://auth-a.example.com")
         );
         assert_eq!(
@@ -358,8 +358,8 @@ mod tests {
             Some("https://auth-b.example.com")
         );
         assert_eq!(
-            config.issuer_for_host(Some("auth-c.example.com:8443")),
-            Some("https://auth-c.example.com:8443")
+            config.issuer_for_host(Some("auth-c.example.com:18086")),
+            Some("https://auth-c.example.com:18086")
         );
         assert_eq!(config.issuer_for_host(Some("core.example.com")), None);
         assert_eq!(config.issuer_for_host(None), None);
@@ -382,7 +382,10 @@ mod tests {
 
         assert!(
             OidcConfig::from_issuers(
-                &["https://auth-a.example.com", "https://auth-a.example.com.:443"],
+                &[
+                    "https://auth-a.example.com",
+                    "https://AUTH-A.EXAMPLE.COM.:443",
+                ],
                 PRIVATE_KEY.to_vec(),
                 false,
             )

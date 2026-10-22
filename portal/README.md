@@ -6,7 +6,7 @@
 - 把 `/api/*`、`/oauth2/*`、`/.well-known/*` 转发到 Core；Core 只做 API、OIDC 和数据。
 - 以 `PUBLIC_ISSUER` 作为本网络的 OIDC issuer，并在转发时用它覆盖 Host。
 
-Portal 不保存用户、Token 或 OIDC 签名私钥，也不签发自己的 Token；三个 Portal 共用 Core 的一把签名密钥，但 discovery、登录和回调都停留在各自 Portal 域名。
+Portal 不保存用户、Token 或 OIDC 签名私钥，也不签发自己的 Token；所有 Portal 共用 Core 的一把签名密钥，但 discovery、登录和回调都停留在各自 Portal 域名。
 
 ## 构建
 
@@ -56,10 +56,10 @@ Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口，�
 
 仓库提供单 Portal 的 Compose 部署模板，见 [deploy/portal/README.md](../deploy/portal/README.md)。下面的 `docker run` 示例用于本地或临时调试。
 
-内网入口 A Portal 由前置反向代理终止 TLS 的示例：
+由前置反向代理终止 TLS 的示例：
 
 ```text
-docker run -d --name adscope-portal-sh \
+docker run -d --name adscope-portal-a \
   --network adscope \
   -p 127.0.0.1:18086:18086 \
   -e CORE_URL=http://core:8080 \
@@ -69,12 +69,12 @@ docker run -d --name adscope-portal-sh \
   ghcr.io/example/adscope-portal:0.2.0
 ```
 
-如果 Portal 自己终止 TLS，再同时挂载并设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。三个 Portal 使用同一个镜像，只改 `PUBLIC_ISSUER`、监听方式和入口开关：
+如果 Portal 自己终止 TLS，再同时挂载并设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。所有 Portal 使用同一个镜像，按公开入口修改 `PUBLIC_ISSUER`、监听方式和入口开关。下面只是示例，实际可以部署一个或多个 Portal：
 
-| Portal | issuer | 监听/证书 | 登录 | 管理 |
+| 示例 | issuer | 监听/证书 | 登录 | 管理 |
 | --- | --- | --- | --- | --- |
 | 内网入口 A | `https://auth-a.example.com` | 内部 CA、自签或前置代理 | 开 | 开 |
 | 内网入口 B | `https://auth-b.example.com` | 内部 CA、自签或前置代理 | 开 | 开 |
-| 外网 | `https://auth-c.example.com` | 公网 CA 或前置代理 | 开 | 关 |
+| 外网入口 | `https://auth-c.example.com` | 公网 CA 或前置代理 | 开 | 关 |
 
-Portal 请求 Core 固定使用 `PUBLIC_ISSUER` 的 host 作为 `Host`；依赖方按所属网络把 issuer 配置为对应 Portal 地址。Syncer 直接访问 Core，不经过 Portal 的 OIDC 路由。
+Portal 请求 Core 固定使用 `PUBLIC_ISSUER` 的 host 作为 `Host`；依赖方把 issuer 配置为自己使用的 Portal 地址。同一公开 origin 下的多个副本复用同一个 `PUBLIC_ISSUER`。Syncer 直接访问 Core，不经过 Portal 的 OIDC 路由。

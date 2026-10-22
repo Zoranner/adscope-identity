@@ -58,19 +58,19 @@ Syncer key 是域绑定共享密钥。部署时应通过 Windows DPAPI、Secret 
 
 Core OIDC 复用现有用户名和密码校验，不复制账号或身份资料。OIDC `sub` 使用用户 `employee_id`；`profile`、`email` 和 `phone` 声明从用户表读取。OIDC access token 只授权访问 `/oauth2/userinfo`，不能代替普通用户 Bearer token、管理会话 Cookie 或 Syncer key。
 
-`OIDC_ISSUERS` 是 Core 接受的 Portal issuer 白名单。每一项必须是仅包含 HTTPS scheme、host 和可选端口的外部 origin，不接受 userinfo、业务路径、query 或 fragment。Host 统一小写、去掉末尾点和默认 `:443`，非默认端口保留。`core.example.com` 不加入白名单，直接访问其 discovery、JWKS、authorize、token 或 userinfo 返回 `404`。Portal 用 `PUBLIC_ISSUER` 覆盖转发 Host，Core 不信任客户端 Host、`Forwarded` 或 `X-Forwarded-Host`。
+`OIDC_ISSUERS` 是 Core 接受的 Portal issuer 白名单。每一项必须是仅包含 HTTPS scheme、host 和可选端口的外部 origin，不接受 userinfo、业务路径、query 或 fragment。Host 统一小写、去掉末尾点和默认 `:443`，非默认端口保留。Core 自己的后端地址不加入白名单，直接访问其 discovery、JWKS、authorize、token 或 userinfo 返回 `404`。Portal 用 `PUBLIC_ISSUER` 覆盖转发 Host，Core 不信任客户端 Host、`Forwarded` 或 `X-Forwarded-Host`。
 
 Docker 中签名私钥固定从 `/run/secrets/oidc-private-key.pem` 读取；从仓库根目录本地调试时，Core 优先读取 `./secrets/oidc-private-key.pem`。密钥必须是至少 2048 位的 RSA PKCS#8 或 PKCS#1 PEM，不能写入数据库、源码、日志、镜像或发布包。根目录 `secrets/` 必须保持 Git 忽略。Core 使用 `RS256` 签发 ID Token 和 access token，JWKS 只发布当前公钥；服务端不保存历史签名密钥集合，也不提供管理端密钥轮换接口。
 
 ## OIDC 网络接入
 
-Core 只做后端；三个 Portal 分别作为内网入口 A、内网入口 B和外网的 issuer。Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不在 Portal 上实现 OIDC Broker 或本地签发 Token。
+Core 只做后端；每个 Portal 作为自身公开入口的 issuer。Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不在 Portal 上实现 OIDC Broker 或本地签发 Token。
 
 Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。Core 本身不管理 TLS 证书。Portal 可以自己终止 TLS，也可以由前置反向代理终止；使用 HTTP 监听时只能暴露在本机回环或受信网络。
 
-三个 Portal 的 `adscope_sso` Cookie 都没有 `Domain` 属性，独立登录和退出，不共享登录态。授权码和 access token 绑定当前 issuer，跨 Portal 兑换返回 `invalid_grant`，跨 Portal 调用 UserInfo 返回 `401 invalid_token`。Core 故障时，Portal 返回 502/503，不能在 Portal 本地签发 Token。
+不同公开 origin 的 `adscope_sso` Cookie 都没有 `Domain` 属性，独立登录和退出，不共享登录态。授权码和 access token 绑定当前 issuer，跨 Portal 兑换返回 `invalid_grant`，跨 Portal 调用 UserInfo 返回 `401 invalid_token`。Core 故障时，Portal 返回 502/503，不能在 Portal 本地签发 Token。
 
-每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。Portal 命中禁用路由时直接返回 `403` 错误页，不转发给 Core；Core 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Syncer 同步。内网入口 A、内网入口 B Portal 设置 `ADMIN_ENABLED=true`，外网 Portal 设置 `ADMIN_ENABLED=false`。
+每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。Portal 命中禁用路由时直接返回 `403` 错误页，不转发给 Core；Core 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Syncer 同步。受信内网 Portal 可以开启管理，面向不受信网络的 Portal 必须设置 `ADMIN_ENABLED=false`。
 
 ## OIDC 授权确认
 

@@ -2,68 +2,66 @@
 
 ## 背景与目标
 
-当前实现只有一个 `OIDC_ISSUER`，所有网关共用同一个 issuer。实际部署中，内网入口 A、内网入口 B和外网是三个独立入口，OIDC 客户端必须使用各自网络的 Portal 地址。三个 Portal 的域名不同，登录 Cookie 也不跨域，因此单 issuer 无法让三个入口各自完成 OIDC 登录。
+当前实现只有一个 `OIDC_ISSUER`，所有 Portal 共用同一个 issuer。实际部署可以有一个或多个独立入口，当前示例使用三个，OIDC 客户端必须使用自己所属 Portal 的地址。不同公开 origin 的 Portal 域名不同，登录 Cookie 也不跨域，因此单 issuer 无法让多个入口各自完成 OIDC 登录。
 
 本设计把职责收敛为：
 
 ```text
 Core    唯一身份数据中心，保存事实、签发 Token
-Portal  每个网络一个认证入口，是该网络的 OIDC issuer
+Portal  按公开入口部署的认证入口，是该入口的 OIDC issuer
 Syncer  每个 AD 域一个目录同步器，只和 Core 交互
 ```
 
 目标：
 
-- 三个 Portal 各自作为 issuer，客户端使用所属网络的 Portal 地址
+- 每个 Portal 各自作为 issuer，客户端使用自己所属 Portal 的地址
+- Portal 数量不固定，可以只部署一个，也可以部署多个
+- 同一公开 origin 下可以运行多个 Portal 副本，复用同一个 `PUBLIC_ISSUER`
 - Core 不再作为 issuer，只作为后端
-- 三个 issuer 共用 Core 的一把 RSA 私钥
-- 三个 Portal 独立登录，不共享 Cookie
+- 所有 issuer 共用 Core 的一把 RSA 私钥
+- 不同公开 origin 的 Portal 独立登录，不共享 Cookie
 - OIDC 客户端不绑定 issuer，由依赖方自己选择 Portal
 
 成功标准：
 
-- 三个 Portal 的 discovery 分别返回自己的 issuer
+- 每个已部署 Portal 的 discovery 返回自己的 issuer
 - 每个 Portal 都能独立完成登录、授权、Token 和 UserInfo
-- `core.example.com` 的 OIDC 路径返回 404
+- Core 后端地址的 OIDC 路径返回 404
 - 跨 Portal 兑换授权码或使用 access token 被拒绝
-- 四个 Syncer 的同步行为不受影响
+- 每个 Syncer 的同步行为不受影响
 
 ## 术语与拓扑
 
 | 术语 | 当前代码名 | 数量 | 职责 |
 | --- | --- | --- | --- |
 | Core | `adscope-core` | 1 | API、OIDC 后端、SQLite、同步控制面 |
-| Portal | `adscope-portal` | 3 | TLS 入口、登录/管理页面、OIDC issuer、API/OIDC 转发 |
-| Syncer | `adscope-syncer` | 4 | AD 域内服务，拉取期望状态并写入域控 |
+| Portal | `adscope-portal` | 按公开入口 | TLS 入口、登录/管理页面、OIDC issuer、API/OIDC 转发 |
+| Syncer | `adscope-syncer` | 每个 AD 域 | 域内服务，拉取期望状态并写入域控 |
 
 代码和镜像的完整重命名不在本次范围，文档先使用 Core、Portal、Syncer 术语。
 
 ```text
-                              ┌──────────────────┐
-                              │      Core        │
-                              │  core.example.com    │
-                              └────────┬─────────┘
-                                       │
-              ┌────────────────────────┴────────────────────────┐
-              │                                                 │
-        Portal（3 个）                                    Syncer（4 个）
-       认证入口                                          目录同步器
-              │                                                 │
-   ┌──────────┼──────────┐              ┌──────────┬───────────┼───────────┐
-   │          │          │              │          │           │           │
- auth-a   auth-b  auth-c     内网入口 A域   外网 A域   内网入口 B域   外网 B域
-   │          │          │              │          │           │           │
-内网入口 A 用户 内网入口 B 用户 外网用户      内网入口 A AD  外网 A AD  内网入口 B AD  外网 B AD
+                         ┌──────────────────────────┐
+                         │           Core           │
+                         │  https://core.example.com │
+                         └────────────┬─────────────┘
+                                      │
+              ┌───────────────────────┴────────────────────────┐
+              │                                                │
+     Portal（1 个或多个）                              Syncer（每个 AD 域一个）
+     OIDC issuer / 认证入口                            目录同步器
+              │                                                │
+   入口 A / 入口 B / 入口 C（示例）                    AD 域 A / B / C（示例）
 ```
 
-Portal 按用户网络划分，所以是 3 个；Syncer 按 AD 域划分，所以是 4 个。外网 Portal 同时服务外网 A和外网 B用户，但两个外网 AD 域仍然各有一个 Syncer。
+Portal 按公开入口划分，示例使用 3 个，但可以只部署 1 个或部署更多；同一公开 origin 下的多个副本复用同一个 `PUBLIC_ISSUER`。Syncer 按 AD 域划分，有几个 AD 域就部署几个 Syncer。示例中的 3 和 4 只是当前拓扑，不是部署约束。
 
 | 地址 | 角色 | issuer |
 | --- | --- | --- |
 | `https://core.example.com` | Core 后端 | 否 |
-| `https://auth-a.example.com` | 内网入口 A Portal | 是 |
-| `https://auth-b.example.com` | 内网入口 B Portal | 是 |
-| `https://auth-c.example.com` | 外网 Portal | 是 |
+| `https://auth-a.example.com` | 入口 A Portal | 是 |
+| `https://auth-b.example.com` | 入口 B Portal | 是 |
+| `https://auth-c.example.com` | 入口 C Portal | 是 |
 
 ## issuer 解析
 
@@ -95,8 +93,8 @@ https://auth-a.example.com:18086 -> https://auth-a.example.com:18086
 Core 建立 Host 到 issuer 的映射：
 
 ```text
-auth-a.example.com        -> https://auth-a.example.com
-auth-b.example.com     -> https://auth-b.example.com
+auth-a.example.com -> https://auth-a.example.com
+auth-b.example.com -> https://auth-b.example.com
 auth-c.example.com -> https://auth-c.example.com
 ```
 
@@ -110,11 +108,11 @@ Host: core.example.com
   -> 不在白名单，OIDC 路径返回 404
 ```
 
-`core.example.com` 不作为 issuer，也不提供默认 issuer 回退。直接访问 Core 的 `/.well-known/openid-configuration`、`/oauth2/jwks`、`/oauth2/authorize`、`/oauth2/token` 或 `/oauth2/userinfo` 时，如果 Host 不在白名单，一律返回 404。
+Core 后端地址不作为 issuer，也不提供默认 issuer 回退。直接访问 Core 的 `/.well-known/openid-configuration`、`/oauth2/jwks`、`/oauth2/authorize`、`/oauth2/token` 或 `/oauth2/userinfo` 时，如果 Host 不在白名单，一律返回 404。
 
 issuer 是每次请求的上下文，不使用全局可变状态。登录、会话和 Connector API 不依赖 issuer；它们是否可访问由网络边界和 Portal 负责。
 
-过渡期兼容模式只用于旧部署升级窗口：只设置 `OIDC_ISSUER` 时，Core 继续按单 issuer 工作，不要求 Host 匹配；迁移完成后必须删除该变量。目标状态只使用 `OIDC_ISSUERS`，并且不把 `core.example.com` 加入列表。
+过渡期兼容模式只用于旧部署升级窗口：只设置 `OIDC_ISSUER` 时，Core 继续按单 issuer 工作，不要求 Host 匹配；迁移完成后必须删除该变量。目标状态只使用 `OIDC_ISSUERS`，并且不把 Core 后端地址加入列表。
 
 ## Portal 转发与 TLS
 
@@ -140,7 +138,7 @@ Portal 可以自己终止 TLS，也可以由前置反向代理终止 TLS。服�
 浏览器
   -> https://auth-a.example.com:443
   -> 反向代理终止 TLS
-  -> http://portal-sh:8080
+  -> http://portal:18086
   -> https://core.example.com
   -> Core
 ```
@@ -197,10 +195,10 @@ Token 规则：
 - ID token 的 `iss` 等于当前 issuer
 - access token 的 `iss` 等于当前 issuer
 - access token 的 `aud` 等于 `{当前 issuer}/oauth2/userinfo`
-- 三个 issuer 共用 Core 的一把 RSA 私钥
-- 三个 issuer 的 `kid` 和 JWKS 内容相同
+- 所有 issuer 共用 Core 的一把 RSA 私钥
+- 所有 issuer 的 `kid` 和 JWKS 内容相同
 - ID token 和 access token 的有效期保持 300 秒
-- 密钥轮换通过替换 Core 的 PEM 并重建 Core 完成，三个 issuer 同时切换；旧 token 最长 5 分钟后失效
+- 密钥轮换通过替换 Core 的 PEM 并重建 Core 完成，所有 issuer 同时切换；旧 token 最长 5 分钟后失效
 
 UserInfo：
 
@@ -212,9 +210,9 @@ UserInfo：
 JWKS 和 discovery：
 
 - OIDC 协议路径要求已知 issuer Host
-- `core.example.com` 不是 issuer，直接访问 discovery 或 JWKS 返回 404
+- Core 后端地址不是 issuer，直接访问 discovery 或 JWKS 返回 404
 - 客户端只能通过 Portal 获取 discovery 和 JWKS
-- 三个 Portal 的 discovery 分别返回各自的 issuer 和端点
+- 每个 Portal 的 discovery 返回自己的 issuer 和端点
 
 ## 配置
 
@@ -230,18 +228,18 @@ OIDC_LOOPBACK_HTTP=false
 Portal：
 
 ```text
-CENTER_URL=https://core.example.com
+CORE_URL=https://core.example.com
 PUBLIC_ISSUER=https://auth-a.example.com
 LOGIN_ENABLED=true
 ADMIN_ENABLED=true
 ```
 
-外网 Portal 设置 `ADMIN_ENABLED=false`。内网 Portal 可以同时开启登录和管理。
+面向不受信网络的 Portal 设置 `ADMIN_ENABLED=false`。受信内网 Portal 可以同时开启登录和管理。
 
-Syncer 的 `CENTER_URL` 继续指向 Core：
+Syncer 的 `CORE_URL` 继续指向 Core：
 
 ```text
-CENTER_URL=https://core.example.com
+CORE_URL=https://core.example.com
 ```
 
 Syncer 不使用 OIDC issuer，也不经过 Portal 的 OIDC 路由。
@@ -266,11 +264,11 @@ issuer TEXT NOT NULL DEFAULT ''
 
 - Core 只信任 `OIDC_ISSUERS` 白名单内的 Host
 - Portal 用 `PUBLIC_ISSUER` 覆盖 Host，不信任客户端 Host
-- `core.example.com` 不提供 OIDC issuer，不能作为客户端登录地址
+- Core 后端地址不提供 OIDC issuer，不能作为客户端登录地址
 - 授权码绑定 issuer，禁止跨 Portal 兑换
 - access token 绑定 issuer audience，禁止跨 Portal 使用
-- 三个 Portal 的登录 Cookie 都是 host-only，不共享登录态
-- 三个公开域名的 TLS 证书分别覆盖自己的域名；证书可以在 Portal 或前置反向代理上终止
+- 不同公开 origin 的 Portal Cookie 都是 host-only，不共享登录态
+- 每个公开域名的 TLS 证书覆盖自己的域名；证书可以在 Portal 或前置反向代理上终止
 - 内网 Portal 可以使用内部 CA 或自签证书，内网浏览器必须信任
 - Core 后端只允许 Portal、Syncer 和受信反向代理访问，不能直接暴露给普通用户
 - 外网 Portal 关闭管理入口
@@ -303,7 +301,7 @@ Core 配置测试：
 Core OIDC 测试：
 
 - 每个 Host 的 discovery 返回对应 issuer 和端点
-- `core.example.com` 的 discovery 和 JWKS 返回 404
+- Core 后端地址的 discovery 和 JWKS 返回 404
 - 每个 issuer 签发的 ID token `iss` 正确
 - 每个 issuer 签发的 access token audience 正确
 - 跨 issuer 兑换授权码返回 `invalid_grant`
@@ -320,22 +318,22 @@ Portal 测试：
 
 部署验证：
 
-- 三个 Portal 的 discovery 分别返回自己的 issuer
-- 三个 Portal 的登录页可访问
-- 三个 Portal 各自登录、各自退出，不共享 Cookie
+- 每个 Portal 的 discovery 返回自己的 issuer
+- 每个 Portal 的登录页可访问
+- 不同公开 origin 的 Portal 各自登录、各自退出，不共享 Cookie
 - 外网 Portal 的 `/admin` 返回 403
 - 内网 Portal 的管理入口正常
-- 四个 Syncer 的同步 revision 正常推进
+- 每个 Syncer 的同步 revision 正常推进
 
 ## 部署与迁移顺序
 
 1. Core 升级到支持 `OIDC_ISSUERS` 的版本，执行授权码表迁移
-2. Core 配置三个 Portal issuer，确认 `core.example.com` 的 OIDC 路径返回 404
+2. Core 配置实际部署的 Portal issuer，确认 Core 后端地址的 OIDC 路径返回 404
 3. Portal 逐个升级，配置 `PUBLIC_ISSUER`，按实际部署选择 HTTP 或 HTTPS 监听
 4. 前置反向代理按域名整体转发到 Portal，不做路径拆分
-5. 依赖方把 issuer 从 `core.example.com` 改为所属 Portal 地址
-6. 验证三个 Portal 的 discovery、登录、Token 和 UserInfo
-7. 验证四个 Syncer 的同步状态
+5. 依赖方把 issuer 从 Core 后端地址改为所属 Portal 地址
+6. 验证每个 Portal 的 discovery、登录、Token 和 UserInfo
+7. 验证每个 Syncer 的同步状态
 8. 稳定后移除旧的 `OIDC_ISSUER` 兼容配置
 
 ## 不在本次范围

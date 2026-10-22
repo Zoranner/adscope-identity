@@ -1111,7 +1111,7 @@ async fn multi_issuer_discovery_uses_normalized_request_host() {
     let normalized = app
         .oneshot(with_host(
             empty_request(Method::GET, "/.well-known/openid-configuration"),
-            "auth-a.example.com.:443",
+            "AUTH-A.EXAMPLE.COM.:443",
         ))
         .await
         .unwrap();
@@ -1244,7 +1244,10 @@ async fn authorization_code_issuer_must_match_token_request_issuer() {
         .verify_access_token_for_issuer(PORTAL_A_ISSUER, body["access_token"].as_str().unwrap())
         .unwrap();
     assert_eq!(access_claims.iss, PORTAL_A_ISSUER);
-    assert_eq!(access_claims.aud, "https://auth-a.example.com/oauth2/userinfo");
+    assert_eq!(
+        access_claims.aud,
+        "https://auth-a.example.com/oauth2/userinfo"
+    );
     let id_claims = oidc
         .verify_id_token_for_issuer(
             PORTAL_A_ISSUER,

@@ -100,19 +100,19 @@ OIDC_ISSUERS=https://auth-a.example.com,https://auth-b.example.com,https://auth-
 OIDC_LOOPBACK_HTTP=false
 ```
 
-`OIDC_ISSUERS` 是 Core 接受的 Portal issuer 白名单。每一项必须是 HTTPS origin，不能包含 userinfo、路径、查询参数或片段；Host 统一小写、去掉末尾点和默认 `:443`，非默认端口保留。不要加入 `core.example.com`，也不要在这里填写 Portal 的内网监听地址。
+`OIDC_ISSUERS` 是 Core 接受的 Portal issuer 白名单。每一项必须是 HTTPS origin，不能包含 userinfo、路径、查询参数或片段；Host 统一小写、去掉末尾点和默认 `:443`，非默认端口保留。不要加入 Core 自己的后端地址，也不要在这里填写 Portal 的内网监听地址。
 
-三个 Portal 分别服务不同网络，并且各自是所属网络的 OIDC issuer：
+部署几个公开入口，就登记几个不同的 issuer。示例使用三个入口，也可以只部署一个 Portal：
 
-| Portal | issuer | 证书 |
+| 示例 | issuer | 证书 |
 | --- | --- | --- |
 | 内网入口 A | `https://auth-a.example.com` | 内部 CA、自签或前置代理，SAN 含 issuer 域名 |
 | 内网入口 B | `https://auth-b.example.com` | 内部 CA、自签或前置代理，SAN 含 issuer 域名 |
-| 外网 | `https://auth-c.example.com` | 公网 CA 或前置代理，SAN 含 issuer 域名 |
+| 外网入口 | `https://auth-c.example.com` | 公网 CA 或前置代理，SAN 含 issuer 域名 |
 
-内网 OIDC 客户端使用所属内网 Portal 的 issuer，外网客户端使用 `https://auth-c.example.com`。三个 issuer 共用 Core 的一把 RSA 私钥，JWKS 相同；授权码、ID Token 和 access token 都绑定当前 Portal 的 issuer，不能跨 Portal 兑换或调用 UserInfo。
+OIDC 客户端使用自己所属 Portal 的 issuer。所有 issuer 共用 Core 的一把 RSA 私钥，JWKS 相同；授权码、ID Token 和 access token 都绑定当前 Portal 的 issuer，不能跨 Portal 兑换或调用 UserInfo。
 
-内网用户访问内网 Portal 时，浏览器必须信任内部 CA 或自签证书；外网客户端使用系统信任的公网 CA。不能关闭 TLS 校验。Portal 可以由前置反向代理终止 TLS，此时 Portal 使用 HTTP 监听；只配置一个 TLS 文件时启动失败。
+使用内部 CA 或自签证书时，浏览器必须信任对应 CA。不能关闭 TLS 校验。Portal 可以由前置反向代理终止 TLS，此时 Portal 使用 HTTP 监听；只配置一个 TLS 文件时启动失败。
 
 Compose 将宿主机 `8080` 端口发布到 Core 容器的 `8080` 端口。Core 不管理 TLS 证书，OIDC RSA 私钥也不是 TLS 证书，两类密钥应分别生成和保管。
 
@@ -163,21 +163,21 @@ Portal 变量：
 
 ## OIDC 网络接入
 
-当前拓扑下 Core 在 `OIDC_ISSUERS` 中配置三个 Portal issuer；实现本身支持一个或多个，只部署一个 Portal 时只配置一个。三个 Portal 各自使用自己的公开域名和证书，但都把 API/OIDC 转发到同一个 Core 端口；静态前端由各自 Portal 返回：
+Core 在 `OIDC_ISSUERS` 中登记实际部署的 Portal issuer，支持一个或多个。各 Portal 使用自己的公开域名和证书，但都把 API/OIDC 转发到同一个 Core；静态前端由各自 Portal 返回：
 
 完整网络拓扑见 [系统架构](../reference/system-architecture.md)。
 
 ```text
-内网入口 A：https://auth-a.example.com        -> 内网入口 A Portal -> https://core.example.com
-内网入口 B：https://auth-b.example.com     -> 内网入口 B Portal -> https://core.example.com
-外网：    https://auth-c.example.com -> 外网 Portal     -> https://core.example.com
+入口 A：https://auth-a.example.com -> Portal A -> https://core.example.com
+入口 B：https://auth-b.example.com -> Portal B -> https://core.example.com
+入口 C：https://auth-c.example.com -> Portal C -> https://core.example.com
 ```
 
-内网入口 A、内网入口 B、外网三个 Portal 都指向同一个 Core；外网只有一个 Portal，由外网 A和外网 B共用。Core 只有一个，不是每个 Portal 一个副本。四个 Syncer 直接访问 `https://core.example.com`，不经过 Portal 的 OIDC 路由。
+所有 Portal 都指向同一个 Core。Core 只有一个，不是每个 Portal 一个副本。每个 AD 域部署一个 Syncer，Syncer 直接访问 `https://core.example.com`，不经过 Portal 的 OIDC 路由。
 
 Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断；登录/管理开关由各 Portal 自己的环境变量控制，不写进 Core 的 `.env`。Core 不参与开关判断。Portal 可以自己终止 TLS，也可以由前置反向代理终止；Core 本身不管理 TLS 证书。
 
-每个 Portal 在转发 `/api/*`、`/oauth2/*`、`/.well-known/*` 时，用自己的 `PUBLIC_ISSUER` host 覆盖 `Host`，不信任客户端 Host 或 `X-Forwarded-Host`。当前 `adscope_sso` Cookie 没有 `Domain` 属性，三个 Portal 的登录态互相独立；本次不实现跨 Portal SSO。
+每个 Portal 在转发 `/api/*`、`/oauth2/*`、`/.well-known/*` 时，用自己的 `PUBLIC_ISSUER` host 覆盖 `Host`，不信任客户端 Host 或 `X-Forwarded-Host`。当前 `adscope_sso` Cookie 没有 `Domain` 属性，不同公开 origin 的登录态互相独立；本次不实现跨 Portal SSO。
 
 ### 登录与管理开关
 
@@ -190,8 +190,8 @@ Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断；
 
 - Portal 命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Core。
 - Portal 只对这两组路径做判断；其他 API/OIDC 路径转发给 Core，其余路径返回前端静态文件。
-- 内网入口 A、内网入口 B Portal 设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
-- 外网 Portal 设置 `ADMIN_ENABLED=false`。
+- 受信内网且需要管理面的 Portal 可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 面向不受信网络的 Portal 必须设置 `ADMIN_ENABLED=false`。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Syncer 同步。
 - Core 不参与开关判断。
@@ -204,15 +204,15 @@ Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应�
 ### 多 issuer 迁移顺序
 
 1. Core 升级到支持 `OIDC_ISSUERS` 的版本，启动时自动为旧库的 `oauth_authorization_codes` 补 `issuer` 列。
-2. Core 配置三个 Portal issuer，确认 `core.example.com` 的 discovery 和 JWKS 返回 `404`。
+2. Core 登记实际部署的 Portal issuer，确认 Core 后端地址的 discovery 和 JWKS 返回 `404`。
 3. Portal 逐个升级，配置 `PUBLIC_ISSUER`，按实际部署选择 HTTP 或 HTTPS 监听。
 4. 前置反向代理按域名整体转发到 Portal，不按 `/api`、`/oauth2` 拆路径。
-5. 依赖方把 issuer 从 `core.example.com` 改为所属 Portal 地址。
-6. 验证三个 Portal 的 discovery、登录、Token 和 UserInfo。
-7. 验证四个 Syncer 的同步 revision 正常推进，并确认它们仍直接访问 Core。
+5. 依赖方把 issuer 从 Core 后端地址改为所属 Portal 地址。
+6. 验证每个 Portal 的 discovery、登录、Token 和 UserInfo。
+7. 验证每个 Syncer 的同步 revision 正常推进，并确认它们仍直接访问 Core。
 8. 稳定后移除旧的 `OIDC_ISSUER` 兼容配置。
 
-区域 A、内网入口 B Portal 设置 `ADMIN_ENABLED=true`，外网 Portal 设置 `ADMIN_ENABLED=false`。三个 Portal 独立登录，不共享 Cookie，不实现跨 Portal SSO；三个 issuer 共用 Core 的一把 RSA 私钥，JWKS 内容相同。
+受信内网 Portal 可以设置 `ADMIN_ENABLED=true`，面向不受信网络的 Portal 设置 `ADMIN_ENABLED=false`。不同公开 origin 的 Portal 独立登录，不共享 Cookie，不实现跨 Portal SSO；所有 issuer 共用 Core 的一把 RSA 私钥，JWKS 内容相同。
 
 ## 发布产物
 
@@ -234,7 +234,7 @@ Syncer 至少需要设置域控制器 LDAP 地址：
 DOMAIN_CONTROLLER_LDAP_URL=ldap://dc01.example.com:389
 ```
 
-Syncer 主机必须加入 `example.com` 域，并以 `NetworkService` 服务身份运行。LDAP 地址只接受 `ldap://<FQDN>:389`；Syncer 使用主机计算机账号 `<DOMAIN>\<SYNCER-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
+Syncer 主机必须加入目标 AD 域，并以 `NetworkService` 服务身份运行。LDAP 地址只接受 `ldap://<FQDN>:389`；Syncer 使用主机计算机账号 `<DOMAIN>\<SYNCER-HOST>$` 通过 Kerberos GSS-API 访问域控，不支持 IP 地址、LDAP over TLS、StartTLS、Simple Authentication、NTLM 或保存 LDAP 密码。域管理员只向该计算机账号委派镜像根和隔离 OU 的创建、移动、属性写入、组成员写入、禁用和 Reset Password 必要权限。
 
 历史 AD 用户如果尚未写入工号属性，可以在迁移期临时设置 `MATCH_LEGACY_USERS_BY_USERNAME=1`。此时 Syncer 仍先按 `employee_id_attribute` 查找用户；找不到时，才按 `sAMAccountName=username` 查找唯一且没有工号属性的 AD 用户，并补写 Core 中的 `employee_id`。迁移完成后应关闭该开关。
 
@@ -260,8 +260,8 @@ Syncer 在运行目录下自动维护 `adscope-syncer-state.json`。文件无法
 - 前端静态文件由 Portal 镜像托管，Core 不提供前端，不单独开放 Nuxt 开发服务。
 - 外网入口必须在外网 Portal 或前置 WAF 提供登录限流；当前 Core 没有 MFA、登录锁定和 OIDC 审计。
 - OIDC 接入点不得持有签名私钥或本地签发 Token；Core 故障时不做兜底认证。
-- 内网入口 A、内网入口 B各有一个独立 Portal；外网共用一个 Portal，关闭时会影响外网 A和外网 B的登录入口。
-- 三个 Portal 的 issuer 域名和证书可以不同；每个证书覆盖自己的 issuer 域名。
+- 每个公开入口可以部署一个 Portal，同一公开 origin 下也可以部署多个副本；关闭入口会影响该入口下的登录。
+- 不同公开 origin 的 Portal issuer 和证书可以不同；每个证书覆盖自己的 issuer 域名。
 - 完成一次 SQLite 备份恢复演练和一次 OIDC 私钥轮换演练。
 - 依赖方本地会话设置明确上限；接受 Core 禁用不会立即撤销依赖方会话。
 - 仅向 Syncer 主机计算机账号委派镜像根和隔离 OU 范围内的必要权限，不使用 `superuser`、本地账户或其他内置本地服务身份。

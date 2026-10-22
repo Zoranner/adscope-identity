@@ -171,13 +171,13 @@ Authorization: Bearer <access_token>
 
 Core 只接受预登记客户端通过 Portal 使用 Authorization Code Flow 登录。OIDC `sub` 直接使用用户 `employee_id`，OIDC access token 只用于 UserInfo，不能用于 `/api/me/*`。
 
-当前只支持 Authorization Code + PKCE S256 和一个或多个 Portal issuer；当前部署使用三个固定 issuer。不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或跨 Portal SSO。Core 从 `OIDC_ISSUERS` 读取 issuer 白名单，按请求 Host 选择当前 issuer；Portal 用 `PUBLIC_ISSUER` 覆盖 Host。OIDC 客户端记录保持全局，不绑定 issuer，依赖方按所属网络选择 Portal。
+当前只支持 Authorization Code + PKCE S256 和一个或多个 Portal issuer。不支持 device authorization、refresh token、token revocation、token introspection、动态客户端注册、静默登录或跨 Portal SSO。Core 从 `OIDC_ISSUERS` 读取 issuer 白名单，按请求 Host 选择当前 issuer；Portal 用 `PUBLIC_ISSUER` 覆盖 Host。OIDC 客户端记录保持全局，不绑定 issuer，依赖方按自己的接入配置选择 Portal。
 
 ### Discovery
 
 `GET /.well-known/openid-configuration`
 
-响应由当前请求 Host 对应的 issuer 生成；Host 必须命中 `OIDC_ISSUERS` 白名单。缺少 Host、`core.example.com` 或其他未登记 Host 返回 `404`。
+响应由当前请求 Host 对应的 issuer 生成；Host 必须命中 `OIDC_ISSUERS` 白名单。缺少 Host、Core 后端地址或其他未登记 Host 返回 `404`。
 
 ```json
 {
@@ -204,7 +204,7 @@ Core 只接受预登记客户端通过 Portal 使用 Authorization Code Flow 登
 
 响应只发布签发令牌所用 RSA 公钥：
 
-三个 issuer 共用 Core 的一把 RSA 私钥，因此 JWKS 内容相同；通过任一已登记 Portal 获取。未知 Host 返回 `404`。
+所有 issuer 共用 Core 的一把 RSA 私钥，因此 JWKS 内容相同；通过任一已登记 Portal 获取。未知 Host 返回 `404`。
 
 ```json
 {
@@ -381,7 +381,7 @@ Authorization: Bearer <access_token>
 
 ### 依赖方校验
 
-依赖方应使用所属 Portal issuer 的 Discovery 和 JWKS，并至少校验：
+依赖方应使用自己配置的 Portal issuer 的 Discovery 和 JWKS，并至少校验：
 
 - RS256 签名、`kid`、`iss`、`aud`、`exp` 和 `iat`。
 - 授权请求生成的 `nonce` 与 ID Token 中的值一致。

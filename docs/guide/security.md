@@ -39,15 +39,15 @@ Core 当前是单实例 SQLite 服务，以下能力尚未实现：
 
 ## OIDC 网络入口
 
-Core 是唯一身份数据中心，但不是 OIDC issuer。内网入口 A、内网入口 B和外网各有一个 Portal，分别以 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com` 作为 issuer。Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不保存用户、Token 或签名私钥，也不签发本地 Token。
+Core 是唯一身份数据中心，但不是 OIDC issuer。Portal 按公开入口部署，可以只有一个，也可以有多个；每个公开 origin 使用自己的 issuer。Portal 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不保存用户、Token 或签名私钥，也不签发本地 Token。
 
-三个 Portal 共用 Core 的一把 RSA 私钥和同一份 JWKS，但登录 Cookie 都是 host-only，不共享登录态。Portal 转发到 Core 时用 `PUBLIC_ISSUER` 覆盖 Host，不信任客户端 Host 或 `X-Forwarded-Host`。Core 只接受 `OIDC_ISSUERS` 白名单内的 Host，直接访问 `core.example.com` 的 OIDC 路径返回 `404`。
+所有 Portal 共用 Core 的一把 RSA 私钥和同一份 JWKS，但登录 Cookie 都是 host-only，不共享登录态。Portal 转发到 Core 时用 `PUBLIC_ISSUER` 覆盖 Host，不信任客户端 Host 或 `X-Forwarded-Host`。Core 只接受 `OIDC_ISSUERS` 白名单内的 Host，直接访问 Core 后端地址的 OIDC 路径返回 `404`。
 
 Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。Core 本身不管理 TLS 证书。Portal 可以自己终止 TLS，也可以在受信网络或本机回环上使用 HTTP 监听，由前置反向代理终止 TLS；只配置一个 TLS 文件时启动失败。
 
-依赖方使用所属 Portal 的 issuer 做 discovery、authorize 和校验 `iss`。授权码和 access token 都绑定签发时的 issuer，跨 Portal 兑换返回 `invalid_grant`，跨 Portal 使用 access token 返回 `401 invalid_token`。
+依赖方使用自己配置的 Portal issuer 做 discovery、authorize 和校验 `iss`。授权码和 access token 都绑定签发时的 issuer，跨 Portal 兑换返回 `invalid_grant`，跨 Portal 使用 access token 返回 `401 invalid_token`。
 
-每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。Portal 命中禁用路由时直接返回 `403` 错误页，不转发给 Core；Core 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Syncer 同步。内网入口 A、内网入口 B Portal 设置 `ADMIN_ENABLED=true`，外网 Portal 设置 `ADMIN_ENABLED=false`。
+每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理。Portal 命中禁用路由时直接返回 `403` 错误页，不转发给 Core；Core 不参与开关判断。关闭登录不撤销已签发 Token，也不影响依赖方本地会话；关闭管理不影响用户登录和 Syncer 同步。受信内网 Portal 可以开启管理，面向不受信网络的 Portal 必须设置 `ADMIN_ENABLED=false`。
 
 ## 传输要求
 

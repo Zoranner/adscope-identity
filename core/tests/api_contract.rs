@@ -2067,7 +2067,10 @@ async fn app_state_from_env_accepts_oidc_issuers() {
 
     let state = app_state_from_env(repository).unwrap();
     assert_eq!(
-        state.oidc.config().issuer_for_host(Some("auth-a.example.com")),
+        state
+            .oidc
+            .config()
+            .issuer_for_host(Some("auth-a.example.com")),
         Some("https://auth-a.example.com")
     );
 
@@ -2081,7 +2084,10 @@ async fn app_state_from_env_rejects_both_oidc_settings() {
     clear_server_env();
     set_valid_server_env();
     unsafe {
-        std::env::set_var("OIDC_ISSUERS", "https://auth-a.example.com,https://auth-b.example.com");
+        std::env::set_var(
+            "OIDC_ISSUERS",
+            "https://auth-a.example.com,https://auth-b.example.com",
+        );
     }
 
     let error = match app_state_from_env(repository) {

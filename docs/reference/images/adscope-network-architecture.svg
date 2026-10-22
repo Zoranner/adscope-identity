@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-labelledby="title desc">
   <title id="title">Adscope 网络架构</title>
-  <desc id="desc">一个 Core，三个 Portal，四个 Syncer Windows 服务。Core 是唯一身份数据中心和 OIDC 后端，但不是 issuer；内网入口 A、内网入口 B和外网各有一个 Portal，分别以 https://auth-a.example.com、https://auth-b.example.com、https://auth-c.example.com 作为 issuer，共用 Core 的一把 RSA 私钥和同一份 JWKS。Portal 用 PUBLIC_ISSUER 覆盖转发 Host，Core 只接受 OIDC_ISSUERS 白名单；core.example.com 的 OIDC 路径返回 404。Portal 按网络划分，Syncer 按 AD 域划分并直接访问 Core；四个局域网对应四个 AD 域；每个 Portal 通过 LOGIN_ENABLED、ADMIN_ENABLED 环境变量控制登录和管理，外网 Portal 关闭管理。</desc>
+  <desc id="desc">一个 Core、多个 Portal 和按 AD 域部署的 Syncer Windows 服务。Core 是唯一身份数据中心和 OIDC 后端，但不是 issuer；示例中的 Portal 分别以 https://auth-a.example.com、https://auth-b.example.com、https://auth-c.example.com 作为 issuer，共用 Core 的一把 RSA 私钥和同一份 JWKS。Portal 用 PUBLIC_ISSUER 覆盖转发 Host，Core 只接受 OIDC_ISSUERS 白名单；Core 后端地址的 OIDC 路径返回 404。Portal 按公开入口划分，同一 origin 的多个副本可复用同一个 issuer；Syncer 按 AD 域划分并直接访问 Core；每个 Portal 通过 LOGIN_ENABLED、ADMIN_ENABLED 环境变量控制登录和管理，面向不受信网络的 Portal 关闭管理。</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -25,7 +25,7 @@
   <rect width="1800" height="1200" fill="#f8fafc"/>
 
   <text x="900" y="52" text-anchor="middle" class="title">Adscope 网络架构</text>
-  <text x="900" y="86" text-anchor="middle" class="subtitle">一个 Core · 三个 Portal · 四个 Syncer · 每个 Portal 是所属网络的 issuer</text>
+  <text x="900" y="86" text-anchor="middle" class="subtitle">一个 Core · 多个 Portal · 按 AD 域部署 Syncer · 每个 Portal 是所属入口的 issuer</text>
 
   <text x="40" y="100" class="section">用户接入面</text>
   <text x="40" y="820" class="section">AD 同步面</text>
@@ -33,15 +33,15 @@
   <!-- Clients -->
   <rect x="120" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
   <text x="300" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">内网入口 A 用户 / OIDC 客户端</text>
-  <text x="300" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 A Portal</text>
+  <text x="300" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问入口 A Portal</text>
 
   <rect x="720" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
   <text x="900" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">内网入口 B 用户 / OIDC 客户端</text>
-  <text x="900" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问内网入口 B Portal</text>
+  <text x="900" y="170" text-anchor="middle" class="box-sub" fill="#475569">访问入口 B Portal</text>
 
   <rect x="1320" y="110" width="360" height="80" rx="12" fill="#e2e8f0" filter="url(#shadow)"/>
-  <text x="1500" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">外网用户 / OIDC 客户端</text>
-  <text x="1500" y="170" text-anchor="middle" class="box-sub" fill="#475569">外网 A + 外网 B共用</text>
+  <text x="1500" y="144" text-anchor="middle" class="box-title-small" fill="#0f172a">外网入口用户 / OIDC 客户端</text>
+  <text x="1500" y="170" text-anchor="middle" class="box-sub" fill="#475569">公网 OIDC 客户端</text>
 
   <!-- Portals -->
   <rect x="120" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
@@ -57,7 +57,7 @@
   <text x="900" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 管理</text>
 
   <rect x="1320" y="250" width="360" height="110" rx="14" fill="#0f766e" filter="url(#shadow)"/>
-  <text x="1500" y="285" text-anchor="middle" class="box-title" fill="#ffffff">外网 Portal</text>
+  <text x="1500" y="285" text-anchor="middle" class="box-title" fill="#ffffff">外网入口 Portal</text>
   <text x="1500" y="310" text-anchor="middle" class="box-sub" fill="#ccfbf1">issuer：https://auth-c.example.com</text>
   <text x="1500" y="332" text-anchor="middle" class="box-sub" fill="#ccfbf1">静态前端 + 公网 CA/前置代理</text>
   <text x="1500" y="354" text-anchor="middle" class="box-sub" fill="#ccfbf1">登录 / 不管理</text>
@@ -150,6 +150,6 @@
   <text x="1126" y="1000" text-anchor="start" class="link">LDAP 389 + Kerberos</text>
   <text x="1566" y="1000" text-anchor="start" class="link">LDAP 389 + Kerberos</text>
 
-  <text x="40" y="1148" class="subtitle">说明：内网入口 A、内网入口 B、外网各有一个 Portal，分别以 auth-a.example.com、auth-b.example.com、auth-c.example.com 作为 issuer；Core 只接受 OIDC_ISSUERS 白名单，core.example.com 的 OIDC 路径返回 404。</text>
-  <text x="40" y="1172" class="subtitle">四个局域网对应四个 AD 域和四个 Syncer；Portal 托管前端但不保存用户/Token/签名私钥，三个 issuer 共用 Core 的一把 RSA 私钥；登录/管理开关由各 Portal 环境变量控制。</text>
+  <text x="40" y="1148" class="subtitle">说明：示例展示多个 Portal；每个 Portal 以自身公开 origin 作为 issuer，Core 只接受 OIDC_ISSUERS 白名单，Core 后端地址的 OIDC 路径返回 404。</text>
+  <text x="40" y="1172" class="subtitle">Syncer 按 AD 域部署并直接访问 Core；Portal 托管前端但不保存用户/Token/签名私钥，所有 issuer 共用 Core 的一把 RSA 私钥；登录/管理开关由各 Portal 环境变量控制。</text>
 </svg>

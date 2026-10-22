@@ -4,10 +4,10 @@
 
 Adscope 管理多个独立 Windows Server AD 域中的组织结构、用户、组和密码，并为预登记应用提供受限的 OIDC 统一登录。
 
-系统只有一个 Core、三个 Portal（内网入口 A、内网入口 B、外网）和四个 Syncer（四个局域网、四个 AD 域）：
+系统只有一个 Core。Portal 按公开入口部署，可以只有一个，也可以有多个；Syncer 按 AD 域部署，每个 AD 域一个。下面按多个入口和多个 AD 域说明职责：
 
 - Core 是账号、目录、凭据、OIDC 客户端和一次性授权码的唯一事实源，保存唯一 RSA 签名私钥，但不是 OIDC issuer。
-- Portal 是每个网络的认证入口和 OIDC issuer，负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不持有签名私钥。
+- Portal 是公开入口的认证入口和 OIDC issuer，负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断，不持有签名私钥。
 - Syncer 是域内执行器，只把 Core 的当前期望状态写入本地 AD 域控，并直接访问 Core。
 
 Web 是构建进 Portal 镜像的 Nuxt 静态应用，不单独保存业务状态。Core 只提供 API、OIDC 和数据面，不托管前端。
@@ -22,10 +22,10 @@ Web 是构建进 Portal 镜像的 Nuxt 静态应用，不单独保存业务状�
 
 图中的关键关系：
 
-- 内网入口 A、内网入口 B、外网三个 Portal 都指向同一个 Core，不是三个 Core。
-- 外网只有一个 Portal，由外网 A和外网 B共用。
+- 图展示多个入口的示例，实际 Portal 数量不限；所有 Portal 都指向同一个 Core。
+- 同一公开 origin 下可以运行多个 Portal 副本，共用同一个 `PUBLIC_ISSUER`。
 - Portal 负责 TLS、静态前端、API/OIDC 转发和登录/管理两组路径判断，不保存用户、Token 或签名私钥。
-- 管理面由内网 Portal 的 `ADMIN_ENABLED` 控制；外网 Portal 设置 `ADMIN_ENABLED=false`。Syncer 使用独立网络、端口或 ACL。
+- 管理面由各 Portal 的 `ADMIN_ENABLED` 控制；面向不受信网络的 Portal 设置 `ADMIN_ENABLED=false`。Syncer 使用独立网络、端口或 ACL。
 - Syncer 是安装在各 AD 域的 Windows 服务，不是容器，也不是 Portal。
 - 每个 Syncer 只服务一个 AD 域，直接访问 Core，并主动连接本地域控。
 - Core 不主动连接 AD 域，也不访问 Syncer 所在网络。
@@ -33,23 +33,23 @@ Web 是构建进 Portal 镜像的 Nuxt 静态应用，不单独保存业务状�
 
 ### 域名、证书与 issuer
 
-三个 Portal 的公开域名和证书相互独立，不要求同名，也不共享同一张证书：
+不同公开 origin 的 Portal 域名和证书相互独立，不要求同名，也不共享同一张证书。下面只是示例：
 
-| Portal | issuer | 证书 | 管理入口 |
+| 示例 | issuer | 证书 | 管理入口 |
 | --- | --- | --- | --- |
 | 内网入口 A | `https://auth-a.example.com` | 内部 CA、自签或前置代理，SAN 含 issuer 域名 | 开启 |
 | 内网入口 B | `https://auth-b.example.com` | 内部 CA、自签或前置代理，SAN 含 issuer 域名 | 开启 |
-| 外网 | `https://auth-c.example.com` | 公网 CA 或前置代理，SAN 含 issuer 域名 | 关闭 |
+| 外网入口 | `https://auth-c.example.com` | 公网 CA 或前置代理，SAN 含 issuer 域名 | 关闭 |
 
-每个 Portal 的公开域名就是所属网络的 OIDC issuer。Core 从 `OIDC_ISSUERS` 读取三个 issuer 的白名单，按 Portal 覆盖后的 Host 选择当前 issuer；`core.example.com` 不是 issuer，直接访问其 OIDC 路径返回 `404`。
+每个 Portal 的公开 origin 就是该入口的 OIDC issuer。Core 从 `OIDC_ISSUERS` 读取白名单，按 Portal 覆盖后的 Host 选择当前 issuer；Core 自己的后端地址不是 issuer，直接访问其 OIDC 路径返回 `404`。
 
-三个 Portal 共用 Core 的一把 RSA 私钥和同一份 JWKS，OIDC 客户端记录保持全局、不绑定 issuer；依赖方按所属网络选择 Portal。授权码和 access token 绑定签发时的 issuer，跨 Portal 不能兑换或调用 UserInfo。
+所有 Portal 共用 Core 的一把 RSA 私钥和同一份 JWKS，OIDC 客户端记录保持全局、不绑定 issuer；依赖方按自己的接入配置选择 Portal。授权码和 access token 绑定签发时的 issuer，跨 Portal 不能兑换或调用 UserInfo。
 
 Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。只配置一个 TLS 文件时启动失败；HTTP 监听只能暴露在本机回环或受信网络。
 
-内网用户访问内网 Portal 时，浏览器必须信任内部 CA 或自签证书，不能关闭 TLS 校验；外网客户端使用系统信任的公网 CA。三个 Portal 的 `adscope_sso` Cookie 都是 host-only，不共享登录态。
+使用内部 CA 或自签证书时，浏览器必须信任对应 CA，不能关闭 TLS 校验；公网入口使用系统信任的 CA。不同公开 origin 的 Portal Cookie 都是 host-only，不共享登录态。
 
-四个 Syncer 直接访问 `https://core.example.com` 的同步控制面，不经过 Portal 的 OIDC 路由，也不使用 issuer。
+每个 Syncer 直接访问 Core 后端地址 `https://core.example.com` 的同步控制面，不经过 Portal 的 OIDC 路由，也不使用 issuer。
 
 ### 登录与管理开关
 
@@ -62,8 +62,8 @@ Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HT
 
 - Portal 命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Core。
 - Portal 只对这两组路径做判断；其他 API/OIDC 路径转发给 Core，其余路径返回前端静态文件。
-- 内网入口 A、内网入口 B Portal 设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
-- 外网 Portal 设置 `ADMIN_ENABLED=false`。
+- 受信内网且需要管理面的 Portal 可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 面向不受信网络的 Portal 必须设置 `ADMIN_ENABLED=false`。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Syncer 同步。
 - Core 不参与开关判断。
@@ -167,7 +167,7 @@ Core 只支持 Authorization Code + PKCE S256：
 4. 依赖方调用 `/oauth2/token`，提交授权码和 PKCE verifier；Web 客户端同时使用 Basic client secret。
 5. Core 按当前 issuer 签发 5 分钟有效的 ID Token 和 access token。ID Token 的 `sub` 是 `employee_id`，`aud` 是客户端 ID；access token 的 audience 只指向当前 issuer 的 UserInfo。
 
-Discovery、JWKS 和所有端点都从 `OIDC_ISSUERS` 中选择当前 Host 对应的 issuer；`core.example.com` 和其他未登记 Host 的 OIDC 路径返回 `404`。授权码和 access token 都绑定 issuer，不能跨 Portal 使用。依赖方接入细节见 [OIDC 统一登录接入](oidc-integration.md)。
+Discovery、JWKS 和所有端点都从 `OIDC_ISSUERS` 中选择当前 Host 对应的 issuer；Core 后端地址和其他未登记 Host 的 OIDC 路径返回 `404`。授权码和 access token 都绑定 issuer，不能跨 Portal 使用。依赖方接入细节见 [OIDC 统一登录接入](oidc-integration.md)。
 
 ## 数据与一致性
 
@@ -193,8 +193,8 @@ Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定
 - Core 是唯一事实源，不做多主写入。这样同步和人员身份只有一个判断位置。
 - Syncer 主动拉取，Core 不访问域内网络。这样网络边界清晰，Syncer 可独立部署和重试。
 - 目录和凭据分通道，使用 revision 最终一致。这样密码同步失败不会回退目录进度。
-- 前端由 Portal 托管，Core 只做 API/OIDC/数据面。这样每个网络入口独立，Core 镜像更小；代价是三个 Portal 镜像都包含同一份静态前端。
-- OIDC 签名运行在 Core 进程内，不引入独立 IdP 服务；三个 Portal 只作为 issuer 入口。这样账号、密码、客户端配置和签名密钥只有一个来源。
+- 前端由 Portal 托管，Core 只做 API/OIDC/数据面。这样每个公开入口独立，Core 镜像更小；代价是每个 Portal 镜像都包含同一份静态前端。
+- OIDC 签名运行在 Core 进程内，不引入独立 IdP 服务；Portal 只作为 issuer 入口。这样账号、密码、客户端配置和签名密钥只有一个来源。
 - 会话和 Token 无状态，不建会话表。这样实现简单，但代价是不能远程撤销单个浏览器会话或已签发 Token。
 - 当前只支持 Authorization Code + PKCE。这样协议面小、验证路径短；device grant、refresh token 和撤销端点需要单独设计。
 - 当前使用一把 RSA 签名密钥，不维护历史 JWKS。这样部署简单，但密钥轮换需要维护窗口。
@@ -224,7 +224,7 @@ Device grant、MFA、登录限流、审计、密钥轮换和 HA 都是独立的�
 - 前端和入口开关进入 `portal/`，不要塞回 Core 或 Syncer。
 - 会话和撤销能力进入 Core 会话模型，不能由 Portal 模拟。
 - 高可用需要先确定数据库和签名密钥的共享方式，不能直接给 SQLite 加副本。
-- 新增网络时增加新的 Portal issuer，并同步更新 Core 的 `OIDC_ISSUERS`；不把新域名加入 `core.example.com`。
+- 新增公开入口时增加新的 Portal issuer，并同步更新 Core 的 `OIDC_ISSUERS`；不把 Core 后端地址加入 issuer 白名单。
 
 ## 不在范围
 

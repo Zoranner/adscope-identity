@@ -10,19 +10,19 @@ Core 是受限的 OIDC Provider，不是通用身份平台。当前只支持：
 - Web confidential client 和 Desktop public client。
 - RS256 ID Token 和 access token，有效期均为 5 分钟。
 
-Core 支持一个或多个 Portal issuer；当前部署使用三个固定 issuer。不支持动态客户端注册、device authorization、refresh token、token introspection、token revocation、front-channel/back-channel logout、静默登录、跨 Portal SSO、MFA 和 `groups`/`roles` 声明。Discovery 只声明实际支持的能力，依赖方不应根据未声明的端点做兼容猜测。
+Core 支持一个或多个 Portal issuer，数量由实际部署决定。不支持动态客户端注册、device authorization、refresh token、token introspection、token revocation、front-channel/back-channel logout、静默登录、跨 Portal SSO、MFA 和 `groups`/`roles` 声明。Discovery 只声明实际支持的能力，依赖方不应根据未声明的端点做兼容猜测。
 
 ## Issuer 与端点
 
-Core 只作为后端，不作为 issuer。三个 Portal 分别是所属网络的 OIDC issuer：
+Core 只作为后端，不作为 issuer。每个 Portal 是自身公开入口的 OIDC issuer：
 
 ```text
-内网入口 A：https://auth-a.example.com
-内网入口 B：https://auth-b.example.com
-外网：    https://auth-c.example.com
+入口 A：https://auth-a.example.com
+入口 B：https://auth-b.example.com
+入口 C：https://auth-c.example.com
 ```
 
-Core 的 `OIDC_ISSUERS` 是这三个 issuer 的白名单。每个 Portal 用 `PUBLIC_ISSUER` 覆盖转发到 Core 的 Host，Core 按 Host 选择当前 issuer；`core.example.com` 不在白名单，直接访问其 OIDC 路径返回 `404`。issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragment。
+Core 的 `OIDC_ISSUERS` 登记这些 issuer。每个 Portal 用 `PUBLIC_ISSUER` 覆盖转发到 Core 的 Host，Core 按 Host 选择当前 issuer；Core 自己的后端地址不在白名单，直接访问其 OIDC 路径返回 `404`。issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragment。上面只是示例，实际可以只部署一个 Portal，也可以部署更多。
 
 | 端点 | 路径 |
 | --- | --- |
@@ -34,11 +34,11 @@ Core 的 `OIDC_ISSUERS` 是这三个 issuer 的白名单。每个 Portal 用 `PU
 
 issuer 应使用长期稳定的 DNS 名称。修改 issuer 会改变 Token 的 `iss`，依赖方据此计算的人员键也会随之变化。
 
-三个 Portal 的 issuer 和证书可以完全不同：内网使用内部 CA 或自签证书，外网使用公网 CA 证书。依赖方使用所属网络的 Portal issuer；客户端记录在 Core 中保持全局，不绑定 issuer，由依赖方自己选择 Portal。Portal 入口和证书见 [系统架构](system-architecture.md)。
+不同公开 origin 的 Portal issuer 和证书可以完全不同：内网入口可以使用内部 CA 或自签证书，公网入口使用公网 CA 证书。依赖方使用自己配置的 Portal issuer；客户端记录在 Core 中保持全局，不绑定 issuer。Portal 入口和证书见 [系统架构](system-architecture.md)。
 
-内网用户访问内网 Portal 时，浏览器必须信任内部 CA 或自签证书；外网客户端使用系统信任的公网 CA。不能关闭 TLS 校验。Portal 可以自己终止 TLS，也可以由前置反向代理终止，此时 Portal 使用 HTTP 监听。
+使用内部 CA 或自签证书时，浏览器必须信任对应 CA；公网入口使用系统信任的 CA。不能关闭 TLS 校验。Portal 可以自己终止 TLS，也可以由前置反向代理终止，此时 Portal 使用 HTTP 监听。
 
-授权码流程由用户浏览器打开所属 Portal 的登录页。三个 Portal 的 Cookie 都是 host-only，独立登录、独立退出；跨 Portal 兑换授权码返回 `invalid_grant`，跨 Portal 使用 access token 返回 `401 invalid_token`。
+授权码流程由用户浏览器打开对应 Portal 的登录页。不同公开 origin 的 Cookie 都是 host-only，独立登录、独立退出；跨 Portal 兑换授权码返回 `invalid_grant`，跨 Portal 使用 access token 返回 `401 invalid_token`。
 
 ## 客户端登记
 
@@ -126,7 +126,7 @@ ID Token 只用于登录时确认人员。Core 的 access token 只用于调用 
 
 ## 签名密钥
 
-OIDC 使用一把 RSA 私钥签名，JWKS 发布对应公钥。当前私钥是挂载文件，不是环境变量；`OIDC_ISSUERS` 是 issuer 白名单，不是签名密钥，三个 issuer 共用这一把私钥。
+OIDC 使用一把 RSA 私钥签名，JWKS 发布对应公钥。当前私钥是挂载文件，不是环境变量；`OIDC_ISSUERS` 是 issuer 白名单，不是签名密钥，所有 issuer 共用这一把私钥。
 
 轮换就是替换 PEM 文件并重建 Core：
 
@@ -140,30 +140,30 @@ docker compose up -d --force-recreate core
 
 ## Portal 接入
 
-当前只有一个 Core。内网入口 A、内网入口 B各有一个 Portal；外网只有一个 Portal，由外网 A和外网 B共用。四个 Syncer 直接访问 Core，不经过 Portal：
+当前只有一个 Core。Portal 可以部署一个或多个，Syncer 按 AD 域部署。所有 Syncer 直接访问 Core，不经过 Portal：
 
 完整网络拓扑见 [系统架构](system-architecture.md)。
 
 ```text
-内网入口 A客户端
+入口 A 客户端
   -> https://auth-a.example.com
-  -> 内网入口 A Portal
+  -> Portal A
   -> https://core.example.com
 
-内网入口 B客户端
+入口 B 客户端
   -> https://auth-b.example.com
-  -> 内网入口 B Portal
+  -> Portal B
   -> https://core.example.com
 
-外网客户端
+入口 C 客户端
   -> https://auth-c.example.com
-  -> 外网 Portal
+  -> Portal C
   -> https://core.example.com
 ```
 
 `adscope-portal` 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断。登录/管理开关由各 Portal 自己的环境变量控制，不依赖 Core 区分来源。Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
 
-三个 Portal 不是三个 Core，也不各自持有用户目录或签名密钥。它们托管各自的前端，用 `PUBLIC_ISSUER` 覆盖转发 Host，并把 API/OIDC 转发到同一个 Core。
+多个 Portal 不是多个 Core，也不各自持有用户目录或签名密钥。它们托管各自的前端，用 `PUBLIC_ISSUER` 覆盖转发 Host，并把 API/OIDC 转发到同一个 Core。同一公开 origin 下的多个副本复用同一个 `PUBLIC_ISSUER`。
 
 ### 登录与管理开关
 
@@ -176,8 +176,8 @@ docker compose up -d --force-recreate core
 
 - Portal 命中禁用路由时直接返回 `403`：浏览器路径返回 HTML 错误页，API 路径返回 JSON 错误，不转发给 Core。
 - Portal 只对这两组路径做判断，其他路径照常转发给 Core。
-- 内网入口 A、内网入口 B Portal 设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
-- 外网 Portal 设置 `ADMIN_ENABLED=false`。
+- 受信内网且需要管理面的 Portal 可以设置 `LOGIN_ENABLED=true`、`ADMIN_ENABLED=true`。
+- 面向不受信网络的 Portal 必须设置 `ADMIN_ENABLED=false`。
 - `LOGIN_ENABLED=false` 只停止新的登录，不撤销已签发 Token 或依赖方本地会话。
 - `ADMIN_ENABLED=false` 只停止管理面访问，不影响用户登录和 Syncer 同步。
 - Core 不参与开关判断。
@@ -189,7 +189,7 @@ Portal 边界：
 - Portal 不修改 `iss`、`sub`、`aud`、`nonce` 或签名，不持有 OIDC 签名私钥，不签发本地 Token。
 - 不要把 OIDC 签名私钥放在 Portal 上；Portal 的 issuer 身份来自其公开域名和固定 Host，不来自本地签名密钥。
 
-三个 Portal 的 SSO Cookie 都没有 `Domain` 属性，分别独立登录和退出；本次不实现跨 Portal SSO、共享 Cookie 或统一登出。
+不同公开 origin 的 SSO Cookie 都没有 `Domain` 属性，分别独立登录和退出；本次不实现跨 Portal SSO、共享 Cookie 或统一登出。
 
 Core 不终止 TLS。Portal 自己终止 TLS 时持有自己的 issuer 域名证书；由前置反向代理终止时，Portal 只在受信网络或本机回环上使用 HTTP。Core 故障时，Portal 返回 502/503，不能在 Portal 本地签发 Token。
 
@@ -209,7 +209,7 @@ Core 不终止 TLS。Portal 自己终止 TLS 时持有自己的 issuer 域名证
 
 ## 依赖方接入要点
 
-- 使用所属 Portal 的 issuer 获取 Discovery；客户端记录保持全局，不把 client 绑定到某个 issuer。
+- 使用自己配置的 Portal issuer 获取 Discovery；客户端记录保持全局，不把 client 绑定到某个 issuer。
 - 使用 Authorization Code + PKCE S256，不实现 device grant 或 refresh 兼容分支。
 - 生成并校验 `state` 和 `nonce`，每次授权都接受确认页。
 - 回调地址与登记值完全一致；Desktop 使用 loopback IP，不使用 `localhost`。

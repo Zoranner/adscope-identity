@@ -4,7 +4,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让三个 Portal 分别作为 OIDC issuer，由 Core 按请求 Host 统一签发和校验，同时保持客户端记录全局、Syncer 直连 Core。
+**Goal:** 让每个已部署 Portal 分别作为 OIDC issuer，由 Core 按请求 Host 统一签发和校验，同时保持客户端记录全局、Syncer 直连 Core。
 
 **Architecture:** Core 保存 `OIDC_ISSUERS` 白名单和唯一 RSA 密钥，OIDC 端点从当前 Host 解析 issuer；Portal 用 `PUBLIC_ISSUER` 覆盖转发 Host，并支持前置代理终止 TLS 的 HTTP 监听模式。授权码记录绑定 issuer，Token 和 UserInfo 都只接受当前 issuer。
 
@@ -14,21 +14,18 @@
 
 ## Global Constraints
 
-- Core 地址固定为 `https://core.example.com`，但 Core 不再作为 OIDC issuer。
-- 三个 Portal issuer 固定为：
-  - 内网入口 A：`https://auth-a.example.com`
-  - 内网入口 B：`https://auth-b.example.com`
-  - 外网：`https://auth-c.example.com`
+- Core 地址示例为 `https://core.example.com`，但 Core 不再作为 OIDC issuer。
+- 示例 Portal issuer 为 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com`；实际数量不限。
 - Core 的目标配置是 `OIDC_ISSUERS=https://auth-a.example.com,https://auth-b.example.com,https://auth-c.example.com`。
 - Host 统一转小写、去掉域名末尾点、去掉默认 `:443`；非默认端口保留。
-- `core.example.com` 不在 issuer 白名单；直接访问 discovery、JWKS、authorize、token、userinfo 必须返回 `404`。
-- 三个 issuer 共用 Core 的一把 RSA 私钥和同一份 JWKS。
+- Core 后端地址不在 issuer 白名单；直接访问 discovery、JWKS、authorize、token、userinfo 必须返回 `404`。
+- 所有 issuer 共用 Core 的一把 RSA 私钥和同一份 JWKS。
 - 授权码和 access token 必须绑定 issuer，跨 Portal 使用分别返回 `invalid_grant` 和 `401 invalid_token`。
-- 三个 Portal 独立 Cookie，不实现跨 Portal SSO。
+- 不同公开 origin 的 Portal 独立 Cookie，不实现跨 Portal SSO；同一公开 origin 的多个副本复用同一个 `PUBLIC_ISSUER`。
 - OIDC 客户端记录保持全局，不增加 issuer 字段，不绑定客户端与 issuer。
 - 不重命名 crate、二进制、镜像、Docker 服务或 MSI 服务名；术语只改文档。
 - `gateway/web` 本次预计不需要修改；`gateway/static` 不作为本地开发输入，也不因本计划重新生成。
-- 区域 A、内网入口 B Portal 设置 `ADMIN_ENABLED=true`；外网 Portal 设置 `ADMIN_ENABLED=false`。
+- 受信内网 Portal 可以设置 `ADMIN_ENABLED=true`；面向不受信网络的 Portal 设置 `ADMIN_ENABLED=false`。
 - 本机没有 Docker，E 盘空间紧张；不执行 release 镜像构建，不把镜像构建或线上部署写成已验证。
 - 已发布 `0.2.0` 镜像的 UID `10001` 与当前源码 `1000` 的差异不在本计划修复范围。
 - 提交、推送、打 tag、发布分别授权；本计划中的提交步骤只有在用户明确授权后执行。
@@ -63,7 +60,7 @@
   -> 授权码和 Token 绑定当前 issuer
 ```
 
-Syncer 仍直接访问 `https://core.example.com` 的 `/api/connector/*`，不经过 issuer 解析，也不受 OIDC Host 白名单影响。
+Syncer 仍直接访问 `https://core.example.com` 的 `/api/syncer/*`，不经过 issuer 解析，也不受 OIDC Host 白名单影响。
 
 ## 授权码 issuer 持久化与旧库迁移
 
@@ -326,9 +323,9 @@ git commit -m "为授权码绑定 issuer"
 fn multiple_issuers_are_normalized_and_selected_by_host() {
     let config = OidcConfig::from_issuers(
         &[
-            "https://auth-a.example.com.:443",
+            "https://AUTH-A.EXAMPLE.COM.:443",
             "https://auth-b.example.com",
-            "https://auth-c.example.com:8443",
+            "https://auth-c.example.com:18086",
         ],
         PRIVATE_KEY.to_vec(),
         false,
@@ -336,7 +333,7 @@ fn multiple_issuers_are_normalized_and_selected_by_host() {
     .unwrap();
 
     assert_eq!(
-        config.issuer_for_host(Some("auth-a.example.com.:443")),
+        config.issuer_for_host(Some("AUTH-A.EXAMPLE.COM.:443")),
         Some("https://auth-a.example.com")
     );
     assert_eq!(
@@ -344,8 +341,8 @@ fn multiple_issuers_are_normalized_and_selected_by_host() {
         Some("https://auth-b.example.com")
     );
     assert_eq!(
-        config.issuer_for_host(Some("auth-c.example.com:8443")),
-        Some("https://auth-c.example.com:8443")
+        config.issuer_for_host(Some("auth-c.example.com:18086")),
+        Some("https://auth-c.example.com:18086")
     );
     assert_eq!(config.issuer_for_host(Some("core.example.com")), None);
     assert_eq!(config.issuer_for_host(None), None);
@@ -368,7 +365,10 @@ fn issuer_lists_reject_invalid_and_duplicate_origins() {
 
     assert!(
         OidcConfig::from_issuers(
-            &["https://auth-a.example.com", "https://auth-a.example.com.:443"],
+            &[
+                "https://auth-a.example.com",
+                "https://AUTH-A.EXAMPLE.COM.:443",
+            ],
             PRIVATE_KEY.to_vec(),
             false,
         )
@@ -870,7 +870,7 @@ async fn multi_issuer_discovery_uses_normalized_request_host() {
     let normalized = app
         .oneshot(with_host(
             empty_request(Method::GET, "/.well-known/openid-configuration"),
-            "auth-a.example.com.:443",
+            "AUTH-A.EXAMPLE.COM.:443",
         ))
         .await
         .unwrap();
@@ -1372,7 +1372,7 @@ rg -n "OidcConfig::new|issue_id_token|issue_access_token|verify_id_token|verify_
 OIDC_ISSUERS=https://auth-a.example.com,https://auth-b.example.com,https://auth-c.example.com
 ```
 
-- 新增 `app_state_from_env_accepts_oidc_issuers`，断言 `issuer_for_host(Some("auth-a.example.com"))` 返回区域 A issuer。
+- 新增 `app_state_from_env_accepts_oidc_issuers`，断言 `issuer_for_host(Some("auth-a.example.com"))` 返回入口 A 的 issuer。
 - 新增 `app_state_from_env_rejects_both_oidc_settings`，同时设置两个变量，断言启动失败且错误包含两个变量名。
 - 现有 `app_state_from_env_rejects_invalid_oidc_issuer` 和 `app_state_from_env_requires_oidc_issuer` 改为覆盖 `OIDC_ISSUERS` 的非法格式和缺失情况。
 - 现有单 issuer 测试保留，并改名为 legacy 场景或明确注释其验证的是过渡模式。
@@ -1421,13 +1421,13 @@ git commit -m "支持 Core 按 Portal issuer 提供 OIDC"
 #[test]
 fn public_issuer_is_normalized_and_rejects_invalid_origins() {
     assert_eq!(
-        PublicIssuer::parse("https://auth-a.example.com.:443")
+        PublicIssuer::parse("https://AUTH-A.EXAMPLE.COM.:443")
             .unwrap()
             .origin(),
         "https://auth-a.example.com"
     );
     assert_eq!(
-        PublicIssuer::parse("https://auth-a.example.com.:443")
+        PublicIssuer::parse("https://AUTH-A.EXAMPLE.COM.:443")
             .unwrap()
             .host(),
         "auth-a.example.com"
@@ -1467,7 +1467,7 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn clear_gateway_env() {
     unsafe {
         for name in [
-            "CENTER_URL",
+            "CORE_URL",
             "WEB_ROOT",
             "PUBLIC_ISSUER",
             "TLS_CERT_FILE",
@@ -1482,7 +1482,7 @@ fn clear_gateway_env() {
 
 fn set_gateway_env(web_root: &std::path::Path, public_issuer: Option<&str>) {
     unsafe {
-        std::env::set_var("CENTER_URL", "https://core.example.com");
+        std::env::set_var("CORE_URL", "https://core.example.com");
         std::env::set_var("WEB_ROOT", web_root);
         match public_issuer {
             Some(value) => std::env::set_var("PUBLIC_ISSUER", value),
@@ -1631,7 +1631,7 @@ public_issuer_host: String,
 
 - [ ] **Step 4: 写 Host 覆盖的失败测试**
 
-在 `gateway/src/lib.rs` 增加一个本地 mock Center：
+在 `gateway/src/lib.rs` 增加一个本地 mock Core：
 
 ```rust
 async fn mock_center() -> (Url, tokio::task::JoinHandle<()>) {
@@ -1653,11 +1653,11 @@ async fn mock_center() -> (Url, tokio::task::JoinHandle<()>) {
 
 #[tokio::test]
 async fn forwarded_requests_override_client_host_with_public_issuer() {
-    let (center_url, handle) = mock_center().await;
+    let (core_url, handle) = mock_core().await;
     let web_root = test_web_root();
     let config = Config {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
-        center_url,
+        core_url,
         public_issuer: PublicIssuer::parse("https://auth-a.example.com").unwrap(),
         login_enabled: true,
         admin_enabled: true,
@@ -1749,7 +1749,7 @@ cargo test -p adscope-gateway
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Expected: Gateway 单元测试通过，Host 覆盖断言得到 `auth-a.example.com`，TLS 组合测试覆盖 HTTP、HTTPS 和单文件失败三种情况。
+Expected: Portal 单元测试通过，Host 覆盖断言得到 `auth-a.example.com`，TLS 组合测试覆盖 HTTP、HTTPS 和单文件失败三种情况。
 
 - [ ] **Step 8: 提交 Portal 变更（仅在用户授权提交后）**
 
@@ -1783,7 +1783,7 @@ git commit -m "让 Portal 声明公开 issuer 并支持 HTTP 监听"
 `deploy/center/.env.example` 改为：
 
 ```text
-# Core 接受的 Portal issuer 白名单。不要加入 core.example.com。
+# Core 接受的 Portal issuer 白名单。不要加入 Core 后端地址。
 OIDC_ISSUERS=https://auth-a.example.com,https://auth-b.example.com,https://auth-c.example.com
 # 旧部署过渡期才使用 OIDC_ISSUER；它不能与 OIDC_ISSUERS 同时设置。
 OIDC_LOOPBACK_HTTP=false
@@ -1804,18 +1804,18 @@ PUBLIC_ISSUER=https://auth-a.example.com
 
 - [ ] **Step 2: 重写单 issuer 相关说明**
 
-所有文档统一改为三个 Portal 各自 issuer，Core 只做后端：
+所有文档统一改为每个 Portal 各自 issuer，Core 只做后端：
 
 - `README.md` 的“统一登录”和部署说明改为 `OIDC_ISSUERS`，不再说依赖方使用 canonical issuer。
-- `gateway/README.md` 的三网关表格改为本文固定的三个域名和外网 `ADMIN_ENABLED=false`。
+- `gateway/README.md` 的表格改为按公开入口配置 issuer，并说明数量不限、同一 origin 可复用同一值。
 - `docs/guide/deployment.md` 的 Center 变量、OIDC 私钥、网络接入和部署顺序全文对齐多 issuer。
 - `docs/guide/security.md` 删除“Center 只使用一个 canonical issuer”和“issuer 不随入口域名变化”。
 - `docs/reference/oidc-integration.md` 删除“多个 issuer 不支持”，写明每个 Portal 是自己的 issuer、客户端记录全局、client 由依赖方选择 Portal。
-- `docs/reference/security-boundary.md` 写明 Host 白名单、`core.example.com` OIDC 404、Portal 覆盖 Host、跨 issuer 拒绝。
+- `docs/reference/security-boundary.md` 写明 Host 白名单、Core 后端地址 OIDC 404、Portal 覆盖 Host、跨 issuer 拒绝。
 - `docs/reference/system-architecture.md` 写明 Core / Portal / Syncer 拓扑，Syncer 直连 Core，Portal 按网络划分、Syncer 按 AD 域划分。
 - `docs/reference/api-contract.md` 写明 discovery 和 endpoints 随请求 Host 变化、无 Host/未知 Host 返回 404、access token `aud` 为当前 issuer 的 UserInfo。
 - `docs/reference/data-model.md` 在 `oauth_authorization_codes` 表中增加 `issuer`，并说明旧记录 `issuer=''`、兑换失败、120 秒自然清空。
-- `docs/reference/images/adscope-network-architecture.svg` 的 `desc`、副标题、三个 Portal 域名、Center 说明和底部注释同步改为三个 Portal 各自 issuer；不要修改四域和四 Syncer 的拓扑。
+- `docs/reference/images/adscope-network-architecture.svg` 的 `desc`、副标题、示例 Portal 域名、Core 说明和底部注释同步改为每个 Portal 各自 issuer；示例拓扑不改变职责关系。
 - 架构图直接使用 SVG 原图，不再生成 PNG；相关旧 PNG 引用和发布步骤同步移除。
 
 - [ ] **Step 3: 写入部署和迁移顺序**
@@ -1824,21 +1824,21 @@ PUBLIC_ISSUER=https://auth-a.example.com
 
 ```text
 1. Core 升级到支持 OIDC_ISSUERS 的版本，启动时执行授权码表补列
-2. Core 配置三个 Portal issuer，确认 core.example.com 的 OIDC 路径返回 404
+2. Core 配置实际部署的 Portal issuer，确认 Core 后端地址的 OIDC 路径返回 404
 3. Portal 逐个升级，配置 PUBLIC_ISSUER，按实际部署选择 HTTP 或 HTTPS 监听
 4. 前置反向代理按域名整体转发到 Portal，不按 /api、/oauth2 拆路径
-5. 依赖方把 issuer 从 core.example.com 改为所属 Portal 地址
-6. 验证三个 Portal 的 discovery、登录、Token 和 UserInfo
-7. 验证四个 Syncer 的同步状态
+5. 依赖方把 issuer 从 Core 后端地址改为所属 Portal 地址
+6. 验证每个 Portal 的 discovery、登录、Token 和 UserInfo
+7. 验证每个 Syncer 的同步状态
 8. 稳定后移除旧的 OIDC_ISSUER 兼容配置
 ```
 
 同时写明：
 
-- 外网 Portal `ADMIN_ENABLED=false`。
-- 区域 A、内网入口 B Portal `ADMIN_ENABLED=true`。
-- 三个 Portal 独立登录，不共享 Cookie，不做跨 Portal SSO。
-- 三个 issuer 共用 Core 的一把 RSA 私钥，JWKS 相同。
+- 面向不受信网络的 Portal `ADMIN_ENABLED=false`。
+- 受信内网 Portal `ADMIN_ENABLED=true`。
+- 不同公开 origin 的 Portal 独立登录，不共享 Cookie，不做跨 Portal SSO。
+- 所有 issuer 共用 Core 的一把 RSA 私钥，JWKS 相同。
 - Core 只允许 Portal、Syncer 和受信反向代理访问。
 - 内网 HTTP 监听只能在受信网络或本机回环使用。
 
@@ -1963,10 +1963,10 @@ Expected: 两次都是 `404`。
    - 同时配置证书和私钥时以 HTTPS 启动。
    - 只配置一个 TLS 文件时启动失败。
    - 转发到 Core 的 Host 是 `PUBLIC_ISSUER` 的 host，与客户端 Host 无关。
-6. 验证三个 Portal 各自登录、各自退出、Discovery、Token、UserInfo，不共享 Cookie。
+6. 验证不同公开 origin 的 Portal 各自登录、各自退出、Discovery、Token、UserInfo，不共享 Cookie。
 7. 使用跨 Portal 的授权码和 access token 验证：兑换返回 `invalid_grant`，UserInfo 返回 `401 invalid_token`。
-8. 验证外网 Portal 的 `/admin` 返回 `403`，区域 A和内网入口 B Portal 的管理入口正常。
-9. 验证四个 Syncer 的同步 revision 正常推进，并确认它们仍直接访问 Core。
+8. 验证外网 Portal 的 `/admin` 返回 `403`，受信内网 Portal 的管理入口正常。
+9. 验证每个 Syncer 的同步 revision 正常推进，并确认它们仍直接访问 Core。
 
 - [ ] **Step 5: 记录验证缺口**
 
@@ -1977,11 +1977,11 @@ Expected: 两次都是 `404`。
 - 未执行的线上部署、真实 DNS/TLS、反向代理和 Syncer 验收。
 - 已发布 `0.2.0` 镜像 UID 与当前源码 UID 的差异不属于本次改动。
 
-不得把“测试通过”表述为“三个 Portal 已完成线上验收”，也不得把计划中的 curl 命令写成已执行结果。
+不得把“测试通过”表述为“所有 Portal 已完成线上验收”，也不得把计划中的 curl 命令写成已执行结果。
 
 ## 计划自检
 
-- [x] Spec 的 issuer 白名单、Host 归一化、`core.example.com` 404、授权码隔离、access token audience 和 UserInfo 隔离都有对应测试。
+- [x] Spec 的 issuer 白名单、Host 归一化、Core 后端地址 404、授权码隔离、access token audience 和 UserInfo 隔离都有对应测试。
 - [x] Portal 的 `PUBLIC_ISSUER`、Host 覆盖、HTTP/HTTPS 监听和单 TLS 文件失败都有对应测试。
 - [x] 数据库新表和旧库补列都有测试，旧授权码没有 issuer 时兑换失败。
 - [x] 没有把跨 Portal SSO、独立签名密钥、客户端 issuer 绑定或代码重命名纳入任务。

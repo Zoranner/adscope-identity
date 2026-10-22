@@ -462,13 +462,13 @@ mod tests {
     #[test]
     fn public_issuer_is_normalized_and_rejects_invalid_origins() {
         assert_eq!(
-            PublicIssuer::parse("https://auth-a.example.com.:443")
+            PublicIssuer::parse("https://AUTH-A.EXAMPLE.COM.:443")
                 .unwrap()
                 .origin(),
             "https://auth-a.example.com"
         );
         assert_eq!(
-            PublicIssuer::parse("https://auth-a.example.com.:443")
+            PublicIssuer::parse("https://AUTH-A.EXAMPLE.COM.:443")
                 .unwrap()
                 .host(),
             "auth-a.example.com"
@@ -545,7 +545,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_portal_env();
         let web_root = test_web_root();
-        set_portal_env(&web_root, Some("https://auth-a.example.com.:443"));
+        set_portal_env(&web_root, Some("https://AUTH-A.EXAMPLE.COM.:443"));
 
         let config = Config::from_env().unwrap();
         assert_eq!(config.public_issuer.origin(), "https://auth-a.example.com");

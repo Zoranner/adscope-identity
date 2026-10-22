@@ -1,14 +1,14 @@
 # Portal 部署模板
 
-`deploy/portal` 是单个 Portal 的部署模板，不限制部署数量。当前确认的拓扑是内网入口 A、内网入口 B和外网各一个 Portal；如果只部署一个 Portal，只保留一份目录和 `.env`，Core 的 `OIDC_ISSUERS` 也配置这一个 issuer 即可。
+`deploy/portal` 是单个 Portal 的部署模板，可以只部署一个，也可以复制多份部署多个。Portal 数量由公开入口数量决定，不要求固定为三个；同一公开 origin 下可以运行多个副本，它们复用同一个 `PUBLIC_ISSUER`。
 
-三个 Portal 可以共用同一个镜像、同一个内部端口和同一套基础配置。只有公开域名不同时，`PUBLIC_ISSUER` 才必须不同；当前拓扑下再按网络设置管理入口和 TLS：
+所有 Portal 共用同一个镜像、同一个内部端口和同一套基础配置。只有公开 origin 不同时，`PUBLIC_ISSUER` 才必须不同；管理入口和 TLS 按该入口的信任边界配置：
 
-| Portal | `PUBLIC_ISSUER` | `ADMIN_ENABLED` | TLS |
+| 示例 | `PUBLIC_ISSUER` | `ADMIN_ENABLED` | TLS |
 | --- | --- | --- | --- |
 | 内网入口 A | `https://auth-a.example.com` | `true` | 内部 CA、自签或前置代理 |
 | 内网入口 B | `https://auth-b.example.com` | `true` | 内部 CA、自签或前置代理 |
-| 外网 | `https://auth-c.example.com` | `false` | 公网 CA 或前置代理 |
+| 外网入口 | `https://auth-c.example.com` | `false` | 公网 CA 或前置代理 |
 
 ## 启动
 
@@ -59,8 +59,8 @@ Portal 自己终止 TLS 时，证书仍由容器内的 `18086` 监听加载。�
 - Portal 没有自己的用户目录、Token 存储或 OIDC 签名私钥。
 - 不同公开域名下的 Portal 独立登录，不共享 Cookie，不做跨 Portal SSO。
 - Portal 转发到 Core 时用 `PUBLIC_ISSUER` 覆盖 Host，不信任客户端 Host。
-- 外网 Portal 必须设置 `ADMIN_ENABLED=false`；内网 Portal 才开放 `/admin` 和 `/api/admin/*`。
+- 面向不受信网络的 Portal 必须设置 `ADMIN_ENABLED=false`；只有受信内网入口才开放 `/admin` 和 `/api/admin/*`。
 - 同一个公开域名下的多个 Portal 副本可以复用同一个 `PUBLIC_ISSUER`；只有公开域名不同，才需要不同的值。
-- Core 的 `OIDC_ISSUERS` 至少包含一个 issuer；当前三 Portal 拓扑配置三个，单 Portal 部署只配置一个。
+- Core 的 `OIDC_ISSUERS` 至少包含一个 issuer；部署几个 Portal，就登记几个不同的 issuer。
 
 镜像构建、完整环境变量和本地运行说明见 [portal/README.md](../../portal/README.md)。

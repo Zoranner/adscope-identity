@@ -66,7 +66,7 @@ Core 为预登记 Web 和桌面应用提供受限的 OIDC Provider。当前只�
 
 OIDC `sub` 直接使用用户 `employee_id`，同一用户通过不同网络或不同客户端登录时得到相同的人员标识。依赖方通过所属 Portal 的 issuer 获取 Discovery 和 JWKS，校验 `iss`、`aud`、`nonce`、有效期和签名；access token 只用于 UserInfo，不能代替业务 API 的 Bearer token。
 
-系统只有一个 Core；内网入口 A、内网入口 B各有一个 Portal，外网一个 Portal 由外网 A和外网 B共用；四个局域网、四个 AD 域各部署一个 Syncer。三个 Portal 分别以 `https://auth-a.example.com`、`https://auth-b.example.com` 和 `https://auth-c.example.com` 作为 issuer，域名和证书可以不同。Portal 负责 TLS 或 HTTP 监听、静态前端、API/OIDC 转发和两组路径开关，不保存用户、Token 或签名私钥，也不签发自己的 OIDC Token。每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理，禁用时直接返回错误页；关闭登录不撤销已签发 Token。入口和依赖方的详细契约见 [OIDC 统一登录接入](../reference/oidc-integration.md)。
+系统只有一个 Core。Portal 按公开入口部署，可以只有一个，也可以有多个；同一公开 origin 下可以运行多个副本并复用同一个 issuer。每个 AD 域部署一个 Syncer。Portal 以自身公开 origin 作为 issuer，域名和证书按入口配置。Portal 负责 TLS 或 HTTP 监听、静态前端、API/OIDC 转发和两组路径开关，不保存用户、Token 或签名私钥，也不签发自己的 OIDC Token。每个 Portal 通过 `LOGIN_ENABLED` 和 `ADMIN_ENABLED` 两个环境变量控制登录和管理，禁用时直接返回错误页；关闭登录不撤销已签发 Token。入口和依赖方的详细契约见 [OIDC 统一登录接入](../reference/oidc-integration.md)。
 
 Core 当前支持多个 Portal issuer，但按请求 Host 选择当前 issuer，不提供跨 issuer 的联合登录。当前不支持 device authorization、refresh token、token 撤销、动态客户端注册、静默登录和 MFA。依赖方的本地会话、设备凭据和撤销由依赖方自行维护。
 
