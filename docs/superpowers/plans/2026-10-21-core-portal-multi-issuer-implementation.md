@@ -1772,7 +1772,7 @@ git commit -m "让 Portal 声明公开 issuer 并支持 HTTP 监听"
 - Modify: `docs/reference/api-contract.md`
 - Modify: `docs/reference/data-model.md`
 - Modify: `docs/reference/images/adscope-network-architecture.svg`
-- Regenerate: `docs/reference/images/adscope-network-architecture.png`
+- 不生成 PNG：架构图直接使用 SVG 原图
 
 **Interfaces:**
 - Consumes: 已实现的 Core 多 issuer、Portal `PUBLIC_ISSUER` 和 HTTP/HTTPS 监听。
@@ -1816,7 +1816,7 @@ PUBLIC_ISSUER=https://auth-a.example.com
 - `docs/reference/api-contract.md` 写明 discovery 和 endpoints 随请求 Host 变化、无 Host/未知 Host 返回 404、access token `aud` 为当前 issuer 的 UserInfo。
 - `docs/reference/data-model.md` 在 `oauth_authorization_codes` 表中增加 `issuer`，并说明旧记录 `issuer=''`、兑换失败、120 秒自然清空。
 - `docs/reference/images/adscope-network-architecture.svg` 的 `desc`、副标题、三个 Portal 域名、Center 说明和底部注释同步改为三个 Portal 各自 issuer；不要修改四域和四 Syncer 的拓扑。
-- `docs/reference/images/adscope-network-architecture.png` 用 SVG 重新渲染，不能手改二进制。当前机器没有 `magick`、`inkscape` 或 `rsvg-convert`；执行该任务时需要可用渲染器，否则保留旧 PNG 并把它列为验证缺口，不能声称架构图已更新。
+- 架构图直接使用 SVG 原图，不再生成 PNG；相关旧 PNG 引用和发布步骤同步移除。
 
 - [ ] **Step 3: 写入部署和迁移顺序**
 
@@ -1863,7 +1863,7 @@ Expected: 当前部署示例只使用 `OIDC_ISSUERS` 和 `PUBLIC_ISSUER`；`OIDC
 - [ ] **Step 5: 提交文档变更（仅在用户授权提交后）**
 
 ```text
-git add README.md gateway/README.md deploy/center/.env.example docs/guide/deployment.md docs/guide/security.md docs/reference/oidc-integration.md docs/reference/security-boundary.md docs/reference/system-architecture.md docs/reference/api-contract.md docs/reference/data-model.md docs/reference/images/adscope-network-architecture.svg docs/reference/images/adscope-network-architecture.png
+git add README.md gateway/README.md deploy/center/.env.example docs/guide/deployment.md docs/guide/security.md docs/reference/oidc-integration.md docs/reference/security-boundary.md docs/reference/system-architecture.md docs/reference/api-contract.md docs/reference/data-model.md docs/reference/images/adscope-network-architecture.svg
 git commit -m "更新多 issuer 部署说明"
 ```
 

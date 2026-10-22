@@ -18,9 +18,7 @@ Web 是构建进 Portal 镜像的 Nuxt 静态应用，不单独保存业务状�
 
 图 1：Adscope 网络架构
 
-![图 1：Adscope 网络架构](images/adscope-network-architecture.png)
-
-SVG 源文件：[adscope-network-architecture.svg](images/adscope-network-architecture.svg)。
+![图 1：Adscope 网络架构](images/adscope-network-architecture.svg)
 
 图中的关键关系：
 
