@@ -61,6 +61,9 @@ pub fn write_install_config(
 }
 
 pub fn protect_runtime_config(runtime_dir: impl AsRef<Path>) -> anyhow::Result<()> {
+    #[cfg(not(windows))]
+    let _ = runtime_dir;
+
     #[cfg(windows)]
     {
         let runtime_dir = runtime_dir.as_ref();
