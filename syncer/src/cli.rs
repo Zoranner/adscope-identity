@@ -62,7 +62,7 @@ impl SyncerCommand {
                 "--core-url" => {
                     core_url = Some(required_argument(&mut arguments, "--core-url")?);
                 }
-                "--directory-domain-id" => {
+                "--directory-domain-id" | "--domain" => {
                     directory_domain_id =
                         Some(required_argument(&mut arguments, "--directory-domain-id")?);
                 }
@@ -70,13 +70,13 @@ impl SyncerCommand {
                     syncer_access_key =
                         Some(required_argument(&mut arguments, "--syncer-access-key")?);
                 }
-                "--domain-controller-ldap-url" => {
+                "--domain-controller-ldap-url" | "--ldap" => {
                     domain_controller_ldap_url = Some(required_argument(
                         &mut arguments,
                         "--domain-controller-ldap-url",
                     )?);
                 }
-                "--match-legacy-users-by-username" => {
+                "--match-legacy-users-by-username" | "--legacy-users" => {
                     let value =
                         required_argument(&mut arguments, "--match-legacy-users-by-username")?;
                     match_legacy_users_by_username = match value.as_str() {

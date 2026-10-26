@@ -1,10 +1,13 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix
+  xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
     Name="Adscope Syncer"
     Manufacturer="Example"
     Version="$(var.ProductVersion)"
     UpgradeCode="7B73A5A3-48D4-481C-B4F8-8F87C4F65B14"
     Language="2052"
+    Codepage="936"
     Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="已安装更高版本的 Adscope Syncer。" />
     <MediaTemplate EmbedCab="yes" />
@@ -14,10 +17,11 @@
     <Property Id="SYNCER_ACCESS_KEY" Secure="yes" Hidden="yes" />
     <Property Id="DOMAIN_CONTROLLER_LDAP_URL" Secure="yes" />
     <Property Id="MATCH_LEGACY_USERS_BY_USERNAME" Value="0" Secure="yes" />
-
     <Launch
-      Condition="CORE_URL AND DIRECTORY_DOMAIN_ID AND SYNCER_ACCESS_KEY AND DOMAIN_CONTROLLER_LDAP_URL"
-      Message="请使用 msiexec 并提供 CORE_URL、DIRECTORY_DOMAIN_ID、SYNCER_ACCESS_KEY 和 DOMAIN_CONTROLLER_LDAP_URL 参数。" />
+      Condition="Installed OR UILevel = 5 OR (CORE_URL AND DIRECTORY_DOMAIN_ID AND SYNCER_ACCESS_KEY AND DOMAIN_CONTROLLER_LDAP_URL)"
+      Message="静默安装需要提供 CORE_URL、DIRECTORY_DOMAIN_ID、SYNCER_ACCESS_KEY 和 DOMAIN_CONTROLLER_LDAP_URL；交互安装请使用完整界面填写配置。" />
+
+    <ui:WixUI Id="AdscopeSyncerUI" InstallDirectory="SyncerInstallDirectory" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="SyncerInstallDirectory" Name="Adscope Syncer">
@@ -57,10 +61,98 @@
       <ComponentRef Id="SyncerRuntimeDirectoryComponent" />
     </Feature>
 
+    <UI Id="AdscopeSyncerUI_X64">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei" Size="9" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei" Size="10" Bold="yes" />
+
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="CancelDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="ExitDialog" />
+      <DialogRef Id="WelcomeDlg" />
+      <DialogRef Id="InstallDirDlg" />
+      <DialogRef Id="VerifyReadyDlg" />
+      <DialogRef Id="MaintenanceWelcomeDlg" />
+      <DialogRef Id="MaintenanceTypeDlg" />
+
+      <Dialog Id="SyncerConfigDlg" Width="370" Height="270" Title="Adscope Syncer 配置">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="Adscope Syncer 配置" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="28" Transparent="yes" NoPrefix="yes" Text="填写 Core 地址、域标识、Syncer key 和域控制器 LDAP 地址。四项均为必填。" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="373" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="373" Height="0" />
+
+        <Control Id="CoreUrlLabel" Type="Text" X="20" Y="58" Width="320" Height="15" NoPrefix="yes" Text="Core 地址（必须为 https://）" />
+        <Control Id="CoreUrl" Type="Edit" X="20" Y="74" Width="320" Height="18" Property="CORE_URL" Text="[CORE_URL]" />
+
+        <Control Id="DomainIdLabel" Type="Text" X="20" Y="98" Width="320" Height="15" NoPrefix="yes" Text="域标识" />
+        <Control Id="DomainId" Type="Edit" X="20" Y="114" Width="320" Height="18" Property="DIRECTORY_DOMAIN_ID" Text="[DIRECTORY_DOMAIN_ID]" />
+
+        <Control Id="SyncerKeyLabel" Type="Text" X="20" Y="138" Width="320" Height="15" NoPrefix="yes" Text="Syncer key" />
+        <Control Id="SyncerKey" Type="Edit" X="20" Y="154" Width="320" Height="18" Property="SYNCER_ACCESS_KEY" Password="yes" Text="[SYNCER_ACCESS_KEY]" />
+
+        <Control Id="LdapUrlLabel" Type="Text" X="20" Y="178" Width="320" Height="15" NoPrefix="yes" Text="域控制器 LDAP 地址（必须为 ldap://，例如 ldap://dc01.example.com:389）" />
+        <Control Id="LdapUrl" Type="Edit" X="20" Y="194" Width="320" Height="18" Property="DOMAIN_CONTROLLER_LDAP_URL" Text="[DOMAIN_CONTROLLER_LDAP_URL]" />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步">
+          <Publish Event="NewDialog" Value="WelcomeDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步">
+          <Publish Event="SpawnDialog" Value="SyncerConfigErrorDlg" Order="1" Condition="NOT CORE_URL OR NOT DIRECTORY_DOMAIN_ID OR NOT SYNCER_ACCESS_KEY OR NOT DOMAIN_CONTROLLER_LDAP_URL OR CORE_URL >&lt; &quot;https://&quot; OR DOMAIN_CONTROLLER_LDAP_URL >&lt; &quot;ldap://&quot;" />
+          <Publish Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="CORE_URL AND DIRECTORY_DOMAIN_ID AND SYNCER_ACCESS_KEY AND DOMAIN_CONTROLLER_LDAP_URL AND CORE_URL >&lt; &quot;https://&quot; AND DOMAIN_CONTROLLER_LDAP_URL >&lt; &quot;ldap://&quot;" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SyncerConfigErrorDlg" Width="300" Height="120" Title="配置不完整">
+        <Control Id="ErrorText" Type="Text" X="20" Y="25" Width="260" Height="45" Transparent="yes" NoPrefix="yes" Text="请填写四项配置，并确认 Core 地址包含 https://、域控制器地址包含 ldap://。" />
+        <Control Id="OK" Type="PushButton" X="122" Y="85" Width="56" Height="17" Default="yes" Text="确定">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="SyncerConfigDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="SyncerConfigDlg" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="3" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+
     <CustomAction
       Id="SetSyncerConfigCommand"
       Property="WriteSyncerConfig"
-      Value="--configure --runtime-dir &quot;[SyncerRuntimeDirectory]&quot; --core-url &quot;[CORE_URL]&quot; --directory-domain-id &quot;[DIRECTORY_DOMAIN_ID]&quot; --syncer-access-key &quot;[SYNCER_ACCESS_KEY]&quot; --domain-controller-ldap-url &quot;[DOMAIN_CONTROLLER_LDAP_URL]&quot; --match-legacy-users-by-username &quot;[MATCH_LEGACY_USERS_BY_USERNAME]&quot;" />
+      Value="--configure --runtime-dir &quot;[SyncerRuntimeDirectory]&quot; --core-url &quot;[CORE_URL]&quot; --domain &quot;[DIRECTORY_DOMAIN_ID]&quot; --syncer-access-key &quot;[SYNCER_ACCESS_KEY]&quot; --ldap &quot;[DOMAIN_CONTROLLER_LDAP_URL]&quot; --legacy-users &quot;[MATCH_LEGACY_USERS_BY_USERNAME]&quot;" />
     <CustomAction
       Id="WriteSyncerConfig"
       FileRef="SyncerExecutable"

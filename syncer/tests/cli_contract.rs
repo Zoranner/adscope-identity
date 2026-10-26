@@ -58,6 +58,39 @@ fn cli_parses_console_service_and_version_commands() {
 }
 
 #[test]
+fn cli_accepts_installer_short_flags() {
+    assert_eq!(
+        SyncerCommand::parse([
+            "adscope-syncer",
+            "--configure",
+            "--runtime-dir",
+            r"C:\ADSCOPE",
+            "--core-url",
+            "https://core.example.com",
+            "--domain",
+            "domain-a",
+            "--syncer-access-key",
+            "syncer-a-key",
+            "--ldap",
+            "ldap://dc01.example.com:389",
+            "--legacy-users",
+            "1",
+        ])
+        .unwrap(),
+        SyncerCommand::Configure {
+            runtime_dir: PathBuf::from(r"C:\ADSCOPE"),
+            config: SyncerInstallConfig {
+                core_url: "https://core.example.com".to_string(),
+                directory_domain_id: "domain-a".to_string(),
+                syncer_access_key: "syncer-a-key".to_string(),
+                domain_controller_ldap_url: "ldap://dc01.example.com:389".to_string(),
+                match_legacy_users_by_username: true,
+            },
+        }
+    );
+}
+
+#[test]
 fn configure_command_writes_complete_runtime_environment_file() {
     let runtime_dir = std::env::temp_dir().join(format!(
         "adscope-syncer-config-{}-{}",
