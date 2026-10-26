@@ -1,14 +1,13 @@
 services:
   portal:
-    image: ghcr.io/example/adscope-portal:0.2.0
+    image: ghcr.io/zoranner/adscope-portal:0.3.0
     restart: unless-stopped
+    ports:
+      - 18086:18086
     env_file:
       - .env
-    # Portal 固定监听容器内 18086；前置代理负责对外入口。
-    ports:
-      - "127.0.0.1:18086:18086"
     volumes:
-      - ./certs:/run/certs:ro
+      - ./app/certs:/run/certs:ro
 networks:
   default:
     external: true

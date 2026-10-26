@@ -16,7 +16,7 @@
 
 ```text
 cp .env.example .env
-mkdir -p certs
+mkdir -p app/certs
 ```
 
 编辑 `.env`，至少设置：
@@ -34,15 +34,15 @@ ADMIN_ENABLED=true
 docker compose up -d
 ```
 
-`CORE_URL` 是 Portal 转发 API/OIDC 时访问的 Core 地址，不是当前 Portal 的公开地址。`PUBLIC_ISSUER` 必须是本 Portal 的 HTTPS origin，并且必须出现在 Core 的 `OIDC_ISSUERS` 中。每个 Portal 的容器内监听端口固定为 `18086`，Compose 只把它绑定到宿主机回环地址。
+`CORE_URL` 是 Portal 转发 API/OIDC 时访问的 Core 地址，不是当前 Portal 的公开地址。`PUBLIC_ISSUER` 必须是本 Portal 的 HTTPS origin，并且必须出现在 Core 的 `OIDC_ISSUERS` 中。每个 Portal 的容器内监听端口固定为 `18086`，Compose 将宿主机 `18086` 发布到容器 `18086`；该端口必须限制在受信网络，不能直接暴露到用户网络。
 
 ## TLS 模式
 
-前置反向代理终止 TLS 时，不设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`，Portal 使用 HTTP 监听 `18086`。Compose 固定将宿主机 `127.0.0.1:18086` 映射到容器 `18086`，代理应在同一主机或受信网络中访问该地址。代理按域名整体转发 `/`、`/api/*`、`/oauth2/*` 和 `/.well-known/*`，不要单独拆分 OIDC 路径。
+前置反向代理终止 TLS 时，不设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`，Portal 使用 HTTP 监听 `18086`。Compose 将宿主机 `18086` 映射到容器 `18086`；代理应在同一主机或受信网络中访问该地址，并通过防火墙或安全组限制来源。代理按域名整体转发 `/`、`/api/*`、`/oauth2/*` 和 `/.well-known/*`，不要单独拆分 OIDC 路径。
 
 Portal 自己终止 TLS 时：
 
-1. 将证书和私钥放入 `deploy/portal/certs/`。
+1. 将证书和私钥放入 `deploy/portal/app/certs/`。
 2. 在 `.env` 中同时设置：
 
 ```text
@@ -50,7 +50,7 @@ TLS_CERT_FILE=/run/certs/tls.crt
 TLS_KEY_FILE=/run/certs/tls.key
 ```
 
-Portal 自己终止 TLS 时，证书仍由容器内的 `18086` 监听加载。若要保持 issuer 不带端口，仍应让前置代理提供公开 HTTPS 入口并转发到 `127.0.0.1:18086`；直接让客户端访问 `18086` 会把端口写进 issuer，需要同步修改所有 OIDC 客户端，不符合当前固定 issuer 的配置。
+Portal 自己终止 TLS 时，证书仍由容器内的 `18086` 监听加载。若要保持 issuer 不带端口，仍应让前置代理提供公开 HTTPS 入口并转发到 Portal 的 `18086`；直接让客户端访问 `18086` 会把端口写进 issuer，需要同步修改所有 OIDC 客户端，不符合当前固定 issuer 的配置。
 
 只设置一个 TLS 文件时 Portal 会拒绝启动。证书文件必须允许容器用户 UID `1000` 读取。模板使用的 `18086` 高于 1024，不依赖 root 或额外 capability。
 

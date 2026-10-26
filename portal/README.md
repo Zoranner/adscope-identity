@@ -24,7 +24,7 @@ cd ../..
 然后在仓库根目录执行：
 
 ```text
-docker build -f portal/Dockerfile -t ghcr.io/example/adscope-portal:0.2.0 .
+docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.3.0 .
 ```
 
 镜像内包含 `portal/static` 的静态构建产物和 Portal 二进制。Core 镜像不包含前端。
@@ -50,7 +50,7 @@ docker build -f portal/Dockerfile -t ghcr.io/example/adscope-portal:0.2.0 .
 
 `TLS_CERT_FILE` 和 `TLS_KEY_FILE` 都不配置时，Portal 监听 HTTP，TLS 由前置反向代理终止；只配置其中一个时启动失败。内网 HTTP 监听只能暴露在本机回环或受信网络。
 
-Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口，并转发到 Portal 的 `127.0.0.1:18086`；不要把 `18086` 写进 issuer。`18086` 高于 1024，镜像以 UID `1000` 运行时可以直接绑定，不依赖 root 或额外 capability。
+Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口，并转发到 Portal 的 `18086`；不要把 `18086` 写进 issuer。`18086` 高于 1024，镜像以 UID `1000` 运行时可以直接绑定，不依赖 root 或额外 capability。部署模板会发布宿主机 `18086`，必须通过防火墙或安全组限制来源，不能直接暴露给普通用户网络。
 
 ## 运行
 
@@ -66,7 +66,7 @@ docker run -d --name adscope-portal-a \
   -e PUBLIC_ISSUER=https://auth-a.example.com \
   -e LOGIN_ENABLED=true \
   -e ADMIN_ENABLED=true \
-  ghcr.io/example/adscope-portal:0.2.0
+  ghcr.io/zoranner/adscope-portal:0.3.0
 ```
 
 如果 Portal 自己终止 TLS，再同时挂载并设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。所有 Portal 使用同一个镜像，按公开入口修改 `PUBLIC_ISSUER`、监听方式和入口开关。下面只是示例，实际可以部署一个或多个 Portal：
