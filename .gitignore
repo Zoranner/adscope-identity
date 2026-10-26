@@ -1,5 +1,4 @@
 target/
-crates/*/Cargo.lock
 node_modules/
 .nuxt/
 .output/

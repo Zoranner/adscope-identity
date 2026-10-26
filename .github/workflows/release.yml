@@ -37,8 +37,8 @@ jobs:
           set -euo pipefail
           git diff --check
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
-          cargo test --workspace --all-targets --all-features
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --workspace --all-targets --all-features
           cargo build --release --locked --workspace
 
       - name: Verify excluded crates
@@ -47,8 +47,8 @@ jobs:
           set -euo pipefail
           for manifest in crates/store/Cargo.toml crates/protocol/Cargo.toml; do
             cargo fmt --manifest-path "$manifest" --all -- --check
-            cargo clippy --manifest-path "$manifest" --all-targets --all-features -- -D warnings
-            cargo test --manifest-path "$manifest" --all-targets --all-features
+            cargo clippy --manifest-path "$manifest" --locked --all-targets --all-features -- -D warnings
+            cargo test --manifest-path "$manifest" --locked --all-targets --all-features
           done
 
   validate:
