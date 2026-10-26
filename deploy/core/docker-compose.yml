@@ -1,11 +1,11 @@
 services:
   core:
-    image: ghcr.io/example/adscope-core:0.2.0
+    image: ghcr.io/zoranner/adscope-core:0.3.0
     restart: unless-stopped
-    env_file:
-      - .env
     ports:
       - 8080:8080
+    env_file:
+      - .env
     volumes:
       - ./app/secrets:/run/secrets:ro
       - ./data:/app/data
