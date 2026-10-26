@@ -14,8 +14,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify release sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.1
+          components: rustfmt, clippy
+
+      - name: Verify workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-targets --all-features
+          cargo build --release --locked --workspace
+
+      - name: Verify excluded crates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for manifest in crates/store/Cargo.toml crates/protocol/Cargo.toml; do
+            cargo fmt --manifest-path "$manifest" --all -- --check
+            cargo clippy --manifest-path "$manifest" --all-targets --all-features -- -D warnings
+            cargo test --manifest-path "$manifest" --all-targets --all-features
+          done
+
   validate:
     name: Validate release tag
+    needs: verify
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
@@ -64,8 +96,9 @@ jobs:
 
           dotnet tool install --global wix --version 5.0.2
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          wix extension add -g WixToolset.UI.wixext/5.0.2
           New-Item -ItemType Directory -Path release -Force | Out-Null
-          wix build syncer\installer\AdscopeSyncer.wxs -arch x64 `
+          wix build syncer\installer\AdscopeSyncer.wxs -arch x64 -ext WixToolset.UI.wixext -culture zh-cn `
             -d "SyncerBinary=$((Resolve-Path target\release\adscope-syncer.exe).Path)" `
             -d "ProductVersion=$env:VERSION" `
             -o "release\adscope-syncer-v$env:VERSION-windows-x64.msi"
@@ -86,7 +119,7 @@ jobs:
       - name: Build and export Core image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          IMAGE: ghcr.io/example/adscope-core
+          IMAGE: ghcr.io/zoranner/adscope-core
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -118,7 +151,7 @@ jobs:
       - name: Build and export Portal image
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          IMAGE: ghcr.io/example/adscope-portal
+          IMAGE: ghcr.io/zoranner/adscope-portal
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -164,10 +197,9 @@ jobs:
           name: portal-release
           path: release
 
-      - name: Generate release manifest and checksums
+      - name: Verify release artifacts
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          REVISION: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -177,33 +209,6 @@ jobs:
           for artifact in "$core_archive" "$portal_archive" "$syncer_installer"; do
             test -f "$artifact" || { echo "Missing release artifact: $artifact" >&2; exit 1; }
           done
-
-          core_checksum="$(sha256sum "$core_archive" | awk '{print $1}')"
-          portal_checksum="$(sha256sum "$portal_archive" | awk '{print $1}')"
-          syncer_checksum="$(sha256sum "$syncer_installer" | awk '{print $1}')"
-          jq -n \
-            --arg version "$VERSION" \
-            --arg revision "$REVISION" \
-            --arg core_checksum "$core_checksum" \
-            --arg portal_checksum "$portal_checksum" \
-            --arg syncer_checksum "$syncer_checksum" \
-            --arg core_name "$(basename "$core_archive")" \
-            --arg portal_name "$(basename "$portal_archive")" \
-            --arg syncer_name "$(basename "$syncer_installer")" \
-            '{
-              version: $version,
-              revision: $revision,
-              target: "windows-x86_64,linux-amd64",
-              artifacts: [
-                { name: $core_name, sha256: $core_checksum },
-                { name: $portal_name, sha256: $portal_checksum },
-                { name: $syncer_name, sha256: $syncer_checksum }
-              ]
-            }' > release/manifest.json
-          printf '%s  %s\n%s  %s\n%s  %s\n' \
-            "$core_checksum" "$(basename "$core_archive")" \
-            "$portal_checksum" "$(basename "$portal_archive")" \
-            "$syncer_checksum" "$(basename "$syncer_installer")" > release/SHA256SUMS
 
       - name: Create or update GitHub Release
         env:
