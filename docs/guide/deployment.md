@@ -5,8 +5,8 @@
 Core、Portal 和 Syncer 是三个独立部署单元，部署方式不同：
 
 - Core 使用 [deploy/core/docker-compose.yml](../../deploy/core/docker-compose.yml) 作为 Docker 服务。复制 [deploy/core/.env.example](../../deploy/core/.env.example) 为 `deploy/core/.env`，替换所有占位值后通过 Compose 启动。
-- Portal 使用 `ghcr.io/example/adscope-portal:<version>` 镜像，每个 Portal 一个容器，环境变量和 TLS 证书分别配置。每个 Portal 复制 [deploy/portal/.env.example](../../deploy/portal/.env.example) 为 `.env`，按 [deploy/portal/README.md](../../deploy/portal/README.md) 在各自部署主机启动；镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。
-- Syncer 作为 MSI 安装包运行。安装时通过 MSI 参数写入运行配置并注册 Windows 服务。
+- Portal 使用 `ghcr.io/zoranner/adscope-portal:<version>` 镜像，每个 Portal 一个容器，环境变量和 TLS 证书分别配置。每个 Portal 复制 [deploy/portal/.env.example](../../deploy/portal/.env.example) 为 `.env`，按 [deploy/portal/README.md](../../deploy/portal/README.md) 在各自部署主机启动；镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。
+- Syncer 作为 MSI 安装包运行。双击安装时在配置向导中填写 Core 地址、域标识、Syncer key 和域控制器 LDAP 地址；也可以使用 MSI 参数静默安装。安装完成后注册并启动 Windows 服务。
 
 同一 Docker 主机上的 Core 和 Portal 如需通过服务名互相访问，可以加入预先创建的外部 Docker 网络 `adscope`：
 
@@ -17,7 +17,7 @@ docker network create adscope
 跨主机部署时不需要加入该网络，Portal 直接在 `CORE_URL` 中填写 Core 的公开地址 `https://core.example.com`。
 
 Core 和 Portal 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/example/adscope-core:0.2.0` 和 `ghcr.io/example/adscope-portal:0.2.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/zoranner/adscope-core:0.3.0` 和 `ghcr.io/zoranner/adscope-portal:0.3.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -33,7 +33,7 @@ docker compose up -d core
 
 Portal 升级使用同一版本标签，按实际部署数量重建对应容器即可；环境变量和证书挂载不变。
 
-Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.env.example)。Portal 的部署模板见 [deploy/portal](../../deploy/portal)，镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。Syncer 配置由 MSI 安装参数或配置命令写入，不分发示例文件。
+Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.env.example)。Portal 的部署模板见 [deploy/portal](../../deploy/portal)，镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。Syncer 配置由 MSI 配置向导、安装参数或配置命令写入，不分发示例文件。
 
 系统环境变量优先级高于进程读取的配置文件。生产环境可以由容器平台、Windows 服务环境或 Secret 管理系统注入普通密钥变量；OIDC RSA 私钥仍通过受限文件挂载。生产密钥不得写入仓库。
 
@@ -137,7 +137,7 @@ bun run build
 mkdir -p ../static
 cp -R .output/public/. ../static/
 cd ../..
-docker build -f portal/Dockerfile -t ghcr.io/example/adscope-portal:0.2.0 .
+docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.3.0 .
 ```
 
 静态前端产物先复制到 `portal/static`，镜像构建时直接复制到 `/app/web`。
@@ -157,7 +157,7 @@ Portal 变量：
 | `TLS_CERT_FILE` | 证书文件路径；与 `TLS_KEY_FILE` 同时设置时启用 HTTPS |
 | `TLS_KEY_FILE` | 私钥文件路径；与 `TLS_CERT_FILE` 同时设置时启用 HTTPS |
 
-`LISTEN_ADDR` 是容器内部固定监听端口 `18086`；公开 HTTPS 入口由前置代理转发到该端口，不要把内部监听端口直接写进 issuer。
+`LISTEN_ADDR` 是容器内部固定监听端口 `18086`；公开 HTTPS 入口由前置代理转发到该端口。部署模板会把宿主机 `18086` 发布到容器，必须通过防火墙或安全组限制在受信网络，不要把内部监听端口直接写进 issuer。
 
 两项 TLS 变量都不设置时 Portal 监听 HTTP，交给前置反向代理终止 TLS；只设置一个时启动失败。各 Portal 使用同一个镜像；按实际数量部署，只有公开域名不同时 `PUBLIC_ISSUER` 才必须不同。当前三种 Portal 的参数见 [deploy/portal/README.md](../../deploy/portal/README.md)。
 
@@ -216,7 +216,7 @@ Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应�
 
 ## 发布产物
 
-推送 `v*` 标签时，发布工作流校验 `core/Cargo.toml`、`portal/Cargo.toml` 和 `syncer/Cargo.toml` 版本，构建 Windows MSI、Linux Core 镜像和 Portal 镜像，推送 GHCR，并在 GitHub Release 上传 Core/Portal 镜像归档、Syncer MSI、`manifest.json` 和 `SHA256SUMS`。Core Compose 使用固定版本 GHCR 镜像，Portal 使用同一版本镜像，Syncer 使用 MSI 安装并注册 Windows 服务。
+推送 `v*` 标签时，发布工作流校验 `core/Cargo.toml`、`portal/Cargo.toml` 和 `syncer/Cargo.toml` 版本，构建 Windows MSI、Linux Core 镜像和 Portal 镜像，推送 GHCR，并在 GitHub Release 上传 Core/Portal 镜像归档和 Syncer MSI。Core Compose 使用固定版本 GHCR 镜像，Portal 使用同一版本镜像，Syncer 使用 MSI 安装并注册 Windows 服务。
 
 ## 域配置初始化
 

@@ -186,7 +186,7 @@ SQLite schema 由 Core 启动时的幂等建表和补列逻辑维护，不是完
 
 Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定版本标签和 `./data:/app/data` 持久化 SQLite。Portal 以独立 Docker 镜像发布，包含 `adscope-portal` 和 Nuxt 前端；每个 Portal 容器可以挂载自己的 TLS 证书，也可以由前置代理终止 TLS。Syncer 以 Windows MSI 发布，使用 `NetworkService` 运行，通过 `ldap://<FQDN>:389` 和 Kerberos GSS-API 写入 AD。
 
-推送 `v*` 标签时，发布工作流校验 Core、Portal 和 Syncer 版本，构建 Windows MSI、Linux Core 镜像和 Portal 镜像，推送 GHCR 镜像，并在 GitHub Release 上传 Core/Portal 镜像归档、Syncer MSI、`manifest.json` 和 `SHA256SUMS`。
+推送 `v*` 标签时，发布工作流校验 Core、Portal 和 Syncer 版本，构建 Windows MSI、Linux Core 镜像和 Portal 镜像，推送 GHCR 镜像，并在 GitHub Release 上传 Core/Portal 镜像归档和 Syncer MSI。
 
 ## 设计取舍
 

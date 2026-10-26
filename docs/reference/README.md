@@ -52,7 +52,7 @@ bun run build
 
 Portal 镜像托管 `portal/static` 的静态构建产物；修改前端后需要重新构建并提交 `portal/static`，发布流水线不现场构建前端。本地联调时把 `WEB_ROOT` 指向 `portal/web/.output/public`，配置 `CORE_URL`、`PUBLIC_ISSUER` 和监听方式后运行 `cargo run -p adscope-portal`；完整变量见 [Portal 说明](../../portal/README.md)。普通用户入口为 `/login`，管理入口为 `/admin`，都由 Portal 提供。
 
-Syncer 通过 MSI 安装并注册 Windows 服务。安装示例：
+Syncer 通过 MSI 安装并注册 Windows 服务。双击 MSI 可在配置向导中填写 Core 地址、域标识、Syncer key 和域控制器 LDAP 地址。静默安装示例：
 
 ```text
 msiexec /i adscope-syncer-v<version>-windows-x64.msi CORE_URL=https://core.example.com DIRECTORY_DOMAIN_ID=domain-a SYNCER_ACCESS_KEY=<syncer-key> DOMAIN_CONTROLLER_LDAP_URL=ldap://dc01.example.com:389

@@ -4,10 +4,12 @@
 
 Syncer 主机必须加入目标 AD 域。配置 `DOMAIN_CONTROLLER_LDAP_URL=ldap://<FQDN>:389` 后，由主机计算机账号通过 Kerberos GSS-API 取得 LDAP 服务票据；不要配置或保存 LDAP bind DN、LDAP 密码、LDAP over TLS 或 StartTLS。域管理员仅向 `<DOMAIN>\<SYNCER-HOST>$` 委派镜像根和隔离 OU 的必要权限。
 
-安装时需提供 Core 地址、域标识、Syncer key 和域控制器 LDAP 地址。MSI 将配置写入 `%ProgramData%\Adscope Syncer\.env`，程序安装在 `%ProgramFiles%\Adscope Syncer`，服务会直接启动：
+双击 MSI 会启动安装向导。配置页可以填写 Core 地址、域标识、Syncer key 和域控制器 LDAP 地址；Syncer key 使用密码输入框。四项都填写且格式校验通过后才能继续。
+
+也可以使用命令行静默安装。MSI 将配置写入 `%ProgramData%\Adscope Syncer\.env`，程序安装在 `%ProgramFiles%\Adscope Syncer`，服务会直接启动：
 
 ```powershell
-msiexec /i .\adscope-syncer-v0.2.0-windows-x64.msi `
+msiexec /i .\adscope-syncer-v0.3.0-windows-x64.msi `
   CORE_URL=https://core.example.com `
   DIRECTORY_DOMAIN_ID=domain-a `
   SYNCER_ACCESS_KEY=<syncer-key> `
