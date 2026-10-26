@@ -3,7 +3,7 @@
   xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
     Name="Adscope Syncer"
-    Manufacturer="Example"
+    Manufacturer="Zoranner"
     Version="$(var.ProductVersion)"
     UpgradeCode="7B73A5A3-48D4-481C-B4F8-8F87C4F65B14"
     Language="2052"
