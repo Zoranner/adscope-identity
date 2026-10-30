@@ -1,4 +1,4 @@
-use adscope_core::{AppState, CoreConfig, DEFAULT_DATABASE_URL, build_router, load_env_file};
+use adscope_core::{AppState, CoreConfig, build_router, load_env_file};
 use adscope_store::Repository;
 use tokio::net::TcpListener;
 
@@ -6,8 +6,7 @@ use tokio::net::TcpListener;
 async fn main() -> anyhow::Result<()> {
     load_env_file(".env")?;
     let config = CoreConfig::from_env()?;
-    std::fs::create_dir_all("data")?;
-    let repository = Repository::connect(DEFAULT_DATABASE_URL).await?;
+    let repository = Repository::connect(&config.database_url).await?;
     repository.initialize_schema().await?;
     let state = AppState::from_env(repository)?;
     let listener = TcpListener::bind(&config.bind_addr).await?;

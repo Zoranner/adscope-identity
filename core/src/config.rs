@@ -1,22 +1,33 @@
-pub const DEFAULT_DATABASE_URL: &str = "sqlite://./data/adscope.db?mode=rwc";
+const DATABASE_URL_ENV: &str = "DATABASE_URL";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreConfig {
     pub bind_addr: String,
+    pub database_url: String,
 }
 
 impl CoreConfig {
-    pub fn from_bind_addr(bind_addr: Option<String>) -> Self {
-        Self {
-            bind_addr: bind_addr.unwrap_or_else(|| "127.0.0.1:8080".to_string()),
-        }
-    }
-
     pub fn from_env() -> anyhow::Result<Self> {
         reject_retired_environment_variables()?;
         Ok(Self {
             bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string()),
+            database_url: parse_database_url(std::env::var(DATABASE_URL_ENV).ok().as_deref())?,
         })
     }
+}
+
+fn parse_database_url(value: Option<&str>) -> anyhow::Result<String> {
+    let value = value.map(str::trim).unwrap_or_default();
+    if value.is_empty() {
+        anyhow::bail!(
+            "{DATABASE_URL_ENV} is required; set it to a PostgreSQL connection URL such as \
+             postgres://adscope:<password>@postgres:5432/adscope"
+        );
+    }
+    if !(value.starts_with("postgres://") || value.starts_with("postgresql://")) {
+        anyhow::bail!("{DATABASE_URL_ENV} must use the postgres:// or postgresql:// scheme");
+    }
+    Ok(value.to_string())
 }
 
 pub(crate) fn reject_retired_environment_variables() -> anyhow::Result<()> {
@@ -64,10 +75,20 @@ pub(crate) fn reject_retired_environment_variables() -> anyhow::Result<()> {
 }
 #[cfg(test)]
 mod tests {
-    use super::DEFAULT_DATABASE_URL;
+    use super::parse_database_url;
 
     #[test]
-    fn default_database_is_kept_in_the_runtime_data_directory() {
-        assert_eq!(DEFAULT_DATABASE_URL, "sqlite://./data/adscope.db?mode=rwc");
+    fn database_url_must_be_a_postgres_url() {
+        assert_eq!(
+            parse_database_url(Some(" postgres://adscope:secret@postgres:5432/adscope ")).unwrap(),
+            "postgres://adscope:secret@postgres:5432/adscope"
+        );
+        assert_eq!(
+            parse_database_url(Some("postgresql://adscope:secret@postgres:5432/adscope")).unwrap(),
+            "postgresql://adscope:secret@postgres:5432/adscope"
+        );
+        assert!(parse_database_url(Some("sqlite://./data/adscope.db?mode=rwc")).is_err());
+        assert!(parse_database_url(Some("   ")).is_err());
+        assert!(parse_database_url(None).is_err());
     }
 }
