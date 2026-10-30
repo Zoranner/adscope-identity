@@ -9,7 +9,7 @@ Syncer 主机必须加入目标 AD 域。配置 `DOMAIN_CONTROLLER_LDAP_URL=ldap
 也可以使用命令行静默安装。MSI 将配置写入 `%ProgramData%\Adscope Syncer\.env`，程序安装在 `%ProgramFiles%\Adscope Syncer`，服务会直接启动：
 
 ```powershell
-msiexec /i .\adscope-syncer-v0.3.0-windows-x64.msi `
+msiexec /i .\adscope-syncer-v0.4.0-windows-x64.msi `
   CORE_URL=https://core.example.com `
   DIRECTORY_DOMAIN_ID=domain-a `
   SYNCER_ACCESS_KEY=<syncer-key> `
