@@ -63,4 +63,4 @@ Portal 自己终止 TLS 时，证书仍由容器内的 `18086` 监听加载。�
 - 同一个公开域名下的多个 Portal 副本可以复用同一个 `PUBLIC_ISSUER`；只有公开域名不同，才需要不同的值。
 - Core 的 `OIDC_ISSUERS` 至少包含一个 issuer；部署几个 Portal，就登记几个不同的 issuer。
 
-镜像构建、完整环境变量和本地运行说明见 [portal/README.md](../../portal/README.md)。
+完整环境变量说明见 [portal/README.md](../../portal/README.md)，镜像构建和本地运行说明见 [运行与部署说明](../../docs/guide/deployment.md)。
