@@ -5,7 +5,7 @@
 Core、Portal 和 Syncer 是三个独立部署单元，部署方式不同：
 
 - Core 使用 [deploy/core/docker-compose.yml](../../deploy/core/docker-compose.yml) 作为 Docker 服务。复制 [deploy/core/.env.example](../../deploy/core/.env.example) 为 `deploy/core/.env`，替换所有占位值后通过 Compose 启动。
-- Portal 使用 `ghcr.io/zoranner/adscope-portal:<version>` 镜像，每个 Portal 一个容器，环境变量和 TLS 证书分别配置。每个 Portal 复制 [deploy/portal/.env.example](../../deploy/portal/.env.example) 为 `.env`，按 [deploy/portal/README.md](../../deploy/portal/README.md) 在各自部署主机启动；镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。
+- Portal 使用 `ghcr.io/zoranner/adscope-portal:<version>` 镜像，每个 Portal 一个容器，环境变量和 TLS 证书分别配置。每个 Portal 复制 [deploy/portal/.env.example](../../deploy/portal/.env.example) 为 `.env`，按 [deploy/portal/README.md](../../deploy/portal/README.md) 在各自部署主机启动；完整变量说明见 [portal/README.md](../../portal/README.md)，镜像构建见本文 Portal 容器一节。
 - Syncer 作为 MSI 安装包运行。双击安装时在配置向导中填写 Core 地址、域标识、Syncer key 和域控制器 LDAP 地址；也可以使用 MSI 参数静默安装。安装完成后注册并启动 Windows 服务。
 
 同一 Docker 主机上的 Core 和 Portal 如需通过服务名互相访问，可以加入预先创建的外部 Docker 网络 `adscope`：
@@ -17,7 +17,7 @@ docker network create adscope
 跨主机部署时不需要加入该网络，Portal 直接在 `CORE_URL` 中填写 Core 的公开地址 `https://core.example.com`。
 
 Core 和 Portal 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/zoranner/adscope-core:0.3.0` 和 `ghcr.io/zoranner/adscope-portal:0.3.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/zoranner/adscope-core:0.4.0` 和 `ghcr.io/zoranner/adscope-portal:0.4.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -33,7 +33,7 @@ docker compose up -d core
 
 Portal 升级使用同一版本标签，按实际部署数量重建对应容器即可；环境变量和证书挂载不变。
 
-Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.env.example)。Portal 的部署模板见 [deploy/portal](../../deploy/portal)，镜像构建和完整变量说明见 [portal/README.md](../../portal/README.md)。Syncer 配置由 MSI 配置向导、安装参数或配置命令写入，不分发示例文件。
+Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.env.example)。Portal 的部署模板见 [deploy/portal](../../deploy/portal)，完整变量说明见 [portal/README.md](../../portal/README.md)。Syncer 配置由 MSI 配置向导、安装参数或配置命令写入，不分发示例文件。
 
 系统环境变量优先级高于进程读取的配置文件。生产环境可以由容器平台、Windows 服务环境或 Secret 管理系统注入普通密钥变量；OIDC RSA 私钥仍通过受限文件挂载。生产密钥不得写入仓库。
 
@@ -43,9 +43,9 @@ Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.e
 
 Core 是 API 和同步控制面。Core 必须配置 `PASSWORD_ENCRYPTION_KEY`、`PASSWORD_HASH_PROVIDER`、`SESSION_KEY`、`MANAGEMENT_TOKEN` 和 `OIDC_ISSUERS`。生产部署还应显式设置 `OIDC_LOOPBACK_HTTP=false`。旧部署过渡期可以只设置 `OIDC_ISSUER`，但它不能与 `OIDC_ISSUERS` 同时存在。
 
-SQLite 固定使用进程工作目录下的 `data/adscope.db`，首次启动自动创建文件，无需配置数据库地址。本地从项目根目录启动时使用 `data/adscope.db`。Docker 工作目录为 `/app`，通过 `./data:/app/data` 挂载后，数据库位于宿主机部署目录的 `data/adscope.db`。
+Core 只接受 PostgreSQL，启动时从 `DATABASE_URL` 读取连接串，scheme 必须是 `postgres://` 或 `postgresql://`，缺省或写成其他数据库会直接启动失败。连接串里的库名、账号和密码由部署方提供，Core 启动时幂等建表。`deploy/core/docker-compose.yml` 内置 `postgres:16` 服务，容器内主机名是 Compose 服务名 `postgres`，数据目录是宿主机部署目录的 `data/postgres`；`DATABASE_URL` 写在部署目录的 `.env` 里，密码与 `POSTGRES_PASSWORD` 保持一致。SQLite 只保留在自动化测试里，不作为部署数据库。
 
-Core 按单实例部署。不要让多个 Core 副本共享同一个 SQLite 文件。升级前应停止写入并备份 `data/adscope.db`；恢复时必须同时使用原数据库和原 `PASSWORD_ENCRYPTION_KEY`，否则已有密码密文无法解封。
+Core 按单实例部署，多个 Core 副本共享同一个 PostgreSQL 库的并发写入尚未验证。升级前应停止写入并备份数据库；恢复时必须同时使用原数据库和原 `PASSWORD_ENCRYPTION_KEY`，否则已有密码密文无法解封。
 
 `PASSWORD_ENCRYPTION_KEY` 是主服务内置密码加密使用的高熵密钥。该密钥通过受限 `.env`、系统环境变量、Windows DPAPI 或同等级本机 Secret 保护，不和数据库备份放在同一位置。
 
@@ -57,8 +57,8 @@ Core 按单实例部署。不要让多个 Core 副本共享同一个 SQLite 文�
 
 - Core 进程退出后由 Compose 的 `restart: unless-stopped` 拉起，数据库和密钥不变。
 - Core 不可用期间，已经建立的依赖方本地会话可以继续；新登录和 UserInfo 会受影响。
-- 升级或恢复前停止写入，备份 `data/adscope.db` 和 `PASSWORD_ENCRYPTION_KEY`，两者分开保存。
-- 建议每日备份一次数据库，至少保留最近 7 份；备份前暂停写入，或使用 SQLite 在线备份。
+- 升级或恢复前停止写入，备份 PostgreSQL 数据库和 `PASSWORD_ENCRYPTION_KEY`，两者分开保存。
+- 建议每日备份一次数据库，至少保留最近 7 份；备份前暂停写入，或用 `pg_dump` 做一致性备份。
 - 恢复时必须使用原数据库和原 `PASSWORD_ENCRYPTION_KEY`；缺少原密钥会导致已有密码密文无法解封。
 - 数据库或磁盘损坏时恢复到最近备份，并接受备份点之后的数据丢失。
 - 当前不做自动故障切换；需要更高可用时再单独设计数据库和签名密钥的共享方式。
@@ -82,7 +82,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
       - ./app/secrets:/run/secrets:ro
     ports:
       - "8080:8080"
@@ -137,7 +136,7 @@ bun run build
 mkdir -p ../static
 cp -R .output/public/. ../static/
 cd ../..
-docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.3.0 .
+docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.4.0 .
 ```
 
 静态前端产物先复制到 `portal/static`，镜像构建时直接复制到 `/app/web`。
@@ -262,7 +261,7 @@ Syncer 在运行目录下自动维护 `adscope-syncer-state.json`。文件无法
 - OIDC 接入点不得持有签名私钥或本地签发 Token；Core 故障时不做兜底认证。
 - 每个公开入口可以部署一个 Portal，同一公开 origin 下也可以部署多个副本；关闭入口会影响该入口下的登录。
 - 不同公开 origin 的 Portal issuer 和证书可以不同；每个证书覆盖自己的 issuer 域名。
-- 完成一次 SQLite 备份恢复演练和一次 OIDC 私钥轮换演练。
+- 完成一次 PostgreSQL 备份恢复演练和一次 OIDC 私钥轮换演练。
 - 依赖方本地会话设置明确上限；接受 Core 禁用不会立即撤销依赖方会话。
 - 仅向 Syncer 主机计算机账号委派镜像根和隔离 OU 范围内的必要权限，不使用 `superuser`、本地账户或其他内置本地服务身份。
 - 受管用户禁止域内普通 Change Password，并通过 GPO 隐藏 `Ctrl+Alt+Del` 改密入口。

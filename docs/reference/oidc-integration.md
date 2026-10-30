@@ -202,10 +202,10 @@ Core 不终止 TLS。Portal 自己终止 TLS 时持有自己的 issuer 域名证
 - OIDC 审计事件和按管理员身份的操作审计。
 - Token 撤销、introspection 和 refresh token。
 - 新旧 JWKS 密钥重叠。
-- Core 多副本、数据库主备、PostgreSQL 或共享数据库。
+- Core 多副本、数据库主备或共享数据库高可用。
 - HSM/KMS 签名。
 
-外网入口暴露登录页前，应在外网 Portal 或前置 WAF 增加登录限流，并明确是否接受仅密码认证的风险。Core 当前是单实例 SQLite，不能通过增加副本获得高可用。
+外网入口暴露登录页前，应在外网 Portal 或前置 WAF 增加登录限流，并明确是否接受仅密码认证的风险。Core 当前是单实例部署，不能通过增加副本获得高可用。
 
 ## 依赖方接入要点
 

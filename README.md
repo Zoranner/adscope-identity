@@ -16,7 +16,7 @@
 
 ## 部署方式
 
-Core 以 Docker 服务运行，只提供 API/OIDC，SQLite 数据保存在部署目录的 `data/` 中。前端和管理页面由 `adscope-portal` 容器托管；Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
+Core 以 Docker 服务运行，只提供 API/OIDC，数据保存在 PostgreSQL 中（Compose 内置 `postgres:16`，数据目录是部署目录的 `data/postgres`）。前端和管理页面由 `adscope-portal` 容器托管；Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
 
 Core、Portal 和 Syncer 的部署模板分别在 `deploy/core`、`deploy/portal` 和 `deploy/syncer`。
 

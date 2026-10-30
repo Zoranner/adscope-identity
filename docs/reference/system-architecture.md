@@ -82,12 +82,12 @@ Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HT
 
 | 单元 | 主要职责 | 明确不承担 |
 | --- | --- | --- |
-| Core（`adscope-core`） | HTTP API、用户登录、管理会话、OIDC Provider、密码保护、同步控制面、SQLite | 域控写入、TLS 证书管理、前端托管、多主复制 |
+| Core（`adscope-core`） | HTTP API、用户登录、管理会话、OIDC Provider、密码保护、同步控制面、PostgreSQL | 域控写入、TLS 证书管理、前端托管、多主复制 |
 | Syncer（`adscope-syncer`，Windows 服务） | 配置、本地 state、HTTP 拉取、LDAP 执行、运行日志 | 业务事实源、用户目录、OIDC 签发 |
 | Web | Nuxt 静态前端，构建进 Portal 镜像 | 独立业务状态、独立 API |
 | Portal（`adscope-portal`） | TLS 终止或 HTTP 监听、静态前端、API/OIDC 转发、Host 覆盖、入口开关 | OIDC 签名、身份目录、Token 存储 |
 
-Core 当前按单实例部署。SQLite 文件位于进程工作目录的 `data/adscope.db`，不支持多个 Core 副本共享同一文件并发写入。
+Core 当前按单实例部署，数据库是独立的 PostgreSQL 实例，连接串由 `DATABASE_URL` 提供。多个 Core 副本共享同一数据库的并发写入尚未验证。
 
 ## 代码边界
 
@@ -180,11 +180,11 @@ Core 保存以下当前事实：
 
 浏览器 SSO、管理会话、ID Token 和 access token 都是无状态签名数据。数据库不保存会话、Token、历史同意、授权历史或审计事件。
 
-SQLite schema 由 Core 启动时的幂等建表和补列逻辑维护，不是完整迁移框架。升级前应停止写入并备份数据库；恢复时必须同时使用原数据库和原 `PASSWORD_ENCRYPTION_KEY`，否则已有密码密文无法解封。
+数据库 schema 由 Core 启动时的幂等建表逻辑维护，不是完整迁移框架。升级前应停止写入并备份数据库；恢复时必须同时使用原数据库和原 `PASSWORD_ENCRYPTION_KEY`，否则已有密码密文无法解封。
 
 ## 发布与运行
 
-Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定版本标签和 `./data:/app/data` 持久化 SQLite。Portal 以独立 Docker 镜像发布，包含 `adscope-portal` 和 Nuxt 前端；每个 Portal 容器可以挂载自己的 TLS 证书，也可以由前置代理终止 TLS。Syncer 以 Windows MSI 发布，使用 `NetworkService` 运行，通过 `ldap://<FQDN>:389` 和 Kerberos GSS-API 写入 AD。
+Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定版本标签，并内置 `postgres:16` 服务把数据库持久化到宿主机 `data/postgres`。Portal 以独立 Docker 镜像发布，包含 `adscope-portal` 和 Nuxt 前端；每个 Portal 容器可以挂载自己的 TLS 证书，也可以由前置代理终止 TLS。Syncer 以 Windows MSI 发布，使用 `NetworkService` 运行，通过 `ldap://<FQDN>:389` 和 Kerberos GSS-API 写入 AD。
 
 推送 `v*` 标签时，发布工作流校验 Core、Portal 和 Syncer 版本，构建 Windows MSI、Linux Core 镜像和 Portal 镜像，推送 GHCR 镜像，并在 GitHub Release 上传 Core/Portal 镜像归档和 Syncer MSI。
 
@@ -198,9 +198,9 @@ Core 以 Docker 镜像发布到 GHCR，只包含 API/OIDC，Compose 使用固定
 - 会话和 Token 无状态，不建会话表。这样实现简单，但代价是不能远程撤销单个浏览器会话或已签发 Token。
 - 当前只支持 Authorization Code + PKCE。这样协议面小、验证路径短；device grant、refresh token 和撤销端点需要单独设计。
 - 当前使用一把 RSA 签名密钥，不维护历史 JWKS。这样部署简单，但密钥轮换需要维护窗口。
-- 当前使用 SQLite 单实例，不引入 PostgreSQL 或共享数据库。这样部署轻，但没有多副本高可用。
+- 当前使用单实例 Core 加独立 PostgreSQL 库，不做多副本高可用。
 - 管理面使用部署级凭证，不建管理员账号体系。这样不增加权限模型，但也没有按管理员的操作审计。
-- 当前接受单实例 Core 和人工恢复，优先保证上线和可维护性。高可用是后续独立项目，不通过给 SQLite 增加副本实现。
+- 当前接受单实例 Core 和人工恢复，优先保证上线和可维护性。高可用是后续独立项目，不通过给 Core 增加副本实现。
 
 ## 当前不提供的能力
 
@@ -223,7 +223,7 @@ Device grant、MFA、登录限流、审计、密钥轮换和 HA 都是独立的�
 - 认证协议扩展进入 `core/src/oidc` 和 OAuth 持久化模型。
 - 前端和入口开关进入 `portal/`，不要塞回 Core 或 Syncer。
 - 会话和撤销能力进入 Core 会话模型，不能由 Portal 模拟。
-- 高可用需要先确定数据库和签名密钥的共享方式，不能直接给 SQLite 加副本。
+- 高可用需要先确定 Core 多副本、数据库和签名密钥的共享方式，不能直接给 Core 加副本。
 - 新增公开入口时增加新的 Portal issuer，并同步更新 Core 的 `OIDC_ISSUERS`；不把 Core 后端地址加入 issuer 白名单。
 
 ## 不在范围

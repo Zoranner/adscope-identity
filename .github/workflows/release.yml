@@ -17,6 +17,20 @@ jobs:
   verify:
     name: Verify release sources
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: adscope
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v5
 
@@ -50,6 +64,14 @@ jobs:
             cargo clippy --manifest-path "$manifest" --locked --all-targets --all-features -- -D warnings
             cargo test --manifest-path "$manifest" --locked --all-targets --all-features
           done
+
+      - name: Verify PostgreSQL store
+        env:
+          ADSCOPE_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/adscope
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path crates/store/Cargo.toml --locked --test postgres_contract -- --ignored
 
   validate:
     name: Validate release tag

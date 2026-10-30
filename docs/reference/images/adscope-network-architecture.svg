@@ -65,7 +65,7 @@
   <!-- Core -->
   <rect x="650" y="470" width="500" height="180" rx="16" fill="#1d4ed8" filter="url(#shadow)"/>
   <text x="900" y="514" text-anchor="middle" class="box-title" fill="#ffffff">Core（唯一实例）</text>
-  <text x="900" y="552" text-anchor="middle" class="box-sub" fill="#dbeafe">adscope-core · Axum API / SQLite</text>
+  <text x="900" y="552" text-anchor="middle" class="box-sub" fill="#dbeafe">adscope-core · Axum API / PostgreSQL</text>
   <text x="900" y="580" text-anchor="middle" class="box-sub" fill="#dbeafe">OIDC 签名后端 / 管理面 / 同步控制面</text>
   <rect x="700" y="600" width="400" height="30" rx="15" fill="#1e40af"/>
   <text x="900" y="621" text-anchor="middle" class="box-sub" fill="#dbeafe">issuer 白名单 + 共用 RSA 密钥 / JWKS</text>
