@@ -4,6 +4,7 @@ mod models;
 mod oauth;
 mod repository;
 mod revision;
+mod sql;
 
 pub use models::{
     AuthorizationCodeExchange, AuthorizationCodeRecord, CredentialCiphertextBatch,

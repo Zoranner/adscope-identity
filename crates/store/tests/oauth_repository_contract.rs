@@ -193,53 +193,6 @@ async fn authorization_code_issuer_round_trips() {
 }
 
 #[tokio::test]
-async fn old_authorization_code_table_gains_empty_issuer_column() {
-    let (database_url, database_path) = sqlite_file_database_url("issuer-migration");
-    let db = Database::connect(&database_url).await.unwrap();
-    db.execute_unprepared(
-        r#"
-CREATE TABLE oauth_authorization_codes (
-    code_hash TEXT PRIMARY KEY NOT NULL,
-    client_id TEXT NOT NULL,
-    employee_id TEXT NOT NULL,
-    redirect_uri TEXT NOT NULL,
-    scopes TEXT NOT NULL,
-    nonce TEXT NOT NULL,
-    code_challenge TEXT NOT NULL,
-    auth_time BIGINT NOT NULL,
-    expires_at BIGINT NOT NULL
-)
-"#,
-    )
-    .await
-    .unwrap();
-    db.execute_unprepared(
-        r#"
-INSERT INTO oauth_authorization_codes (
-    code_hash, client_id, employee_id, redirect_uri, scopes,
-    nonce, code_challenge, auth_time, expires_at
-) VALUES ('old-code', 'client', '1001', 'https://client.example.com/callback',
-          '["openid"]', 'nonce', 'challenge', 1000, 2000)
-"#,
-    )
-    .await
-    .unwrap();
-    db.close().await.unwrap();
-
-    let repository = Repository::connect(&database_url).await.unwrap();
-    repository.initialize_schema().await.unwrap();
-
-    let old_code = repository
-        .consume_authorization_code("old-code", 1_999)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(old_code.issuer, "");
-
-    std::fs::remove_file(database_path).ok();
-}
-
-#[tokio::test]
 async fn authorization_code_exchange_returns_bound_client_and_user_snapshot() {
     let repository = sqlite_repository().await;
     let mut client = oauth_client("client", OAuthClientType::Web);

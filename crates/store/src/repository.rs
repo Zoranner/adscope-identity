@@ -21,6 +21,7 @@ use crate::{
         confirm_revision_update_sql, i64_to_u64_revision, load_metadata,
         try_allocate_credential_revision, try_allocate_directory_revision, u64_to_i64_revision,
     },
+    sql::bind_placeholders,
 };
 
 const EMPLOYEE_ID_WIDTH: usize = 6;
@@ -44,61 +45,6 @@ impl Repository {
 
     pub async fn ping(&self) -> anyhow::Result<()> {
         self.db.execute_unprepared("SELECT 1").await?;
-        Ok(())
-    }
-
-    /// 旧库补上姓名拆分列：姓写 AD 的 sn，名写 givenName。
-    async fn ensure_user_name_columns(&self) -> anyhow::Result<()> {
-        let columns = self
-            .db
-            .query_all_raw(Statement::from_string(
-                self.db.get_database_backend(),
-                "PRAGMA table_info(users)",
-            ))
-            .await?
-            .into_iter()
-            .map(|row| row.try_get::<String>("", "name"))
-            .collect::<Result<Vec<_>, _>>()?;
-        let has_column = |name: &str| columns.iter().any(|column| column == name);
-
-        if !has_column("surname") {
-            self.db
-                .execute_unprepared("ALTER TABLE users ADD COLUMN surname TEXT NOT NULL DEFAULT ''")
-                .await?;
-            // 历史数据只有一个显示名，先按「姓 = 显示名」回填，避免 AD 写入空 sn。
-            self.db
-                .execute_unprepared("UPDATE users SET surname = display_name")
-                .await?;
-        }
-        if !has_column("given_name") {
-            self.db
-                .execute_unprepared(
-                    "ALTER TABLE users ADD COLUMN given_name TEXT NOT NULL DEFAULT ''",
-                )
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn ensure_authorization_code_issuer_column(&self) -> anyhow::Result<()> {
-        let columns = self
-            .db
-            .query_all_raw(Statement::from_string(
-                self.db.get_database_backend(),
-                "PRAGMA table_info(oauth_authorization_codes)",
-            ))
-            .await?
-            .into_iter()
-            .map(|row| row.try_get::<String>("", "name"))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        if !columns.iter().any(|column| column == "issuer") {
-            self.db
-                .execute_unprepared(
-                    "ALTER TABLE oauth_authorization_codes ADD COLUMN issuer TEXT NOT NULL DEFAULT ''",
-                )
-                .await?;
-        }
         Ok(())
     }
 
@@ -162,7 +108,6 @@ CREATE TABLE IF NOT EXISTS deleted_users (
 "#,
             )
             .await?;
-        self.ensure_user_name_columns().await?;
         self.ensure_employee_id_sequence().await?;
         self.db
             .execute_unprepared(
@@ -241,7 +186,6 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
 "#,
             )
             .await?;
-        self.ensure_authorization_code_issuer_column().await?;
         self.ensure_metadata().await?;
         Ok(())
     }
@@ -658,7 +602,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         let row = self
             .db
             .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
+                self.db.get_database_backend(),
                 "SELECT next_value FROM employee_id_sequence WHERE singleton = 1".to_string(),
             ))
             .await?;
@@ -909,7 +853,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
     }
 
     pub async fn delete_user(&self, employee_id: &str) -> anyhow::Result<Option<u64>> {
-        use entities::{group, user, user_credential};
+        use entities::{group, oauth_authorization_code, user, user_credential};
 
         for _ in 0..MAX_REVISION_ALLOCATION_ATTEMPTS {
             let transaction = self.db.begin().await?;
@@ -929,12 +873,9 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
             user_credential::Entity::delete_by_id(employee_id)
                 .exec(&transaction)
                 .await?;
-            transaction
-                .execute_raw(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "DELETE FROM oauth_authorization_codes WHERE employee_id = ?",
-                    [employee_id.into()],
-                ))
+            oauth_authorization_code::Entity::delete_many()
+                .filter(oauth_authorization_code::Column::EmployeeId.eq(employee_id))
+                .exec(&transaction)
                 .await?;
             user::Entity::delete_by_id(employee_id)
                 .exec(&transaction)
@@ -963,9 +904,13 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
 
             transaction
                 .execute_raw(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO deleted_users (employee_id, changed_revision) VALUES (?, ?) \
-                     ON CONFLICT(employee_id) DO UPDATE SET changed_revision = excluded.changed_revision",
+                    transaction.get_database_backend(),
+                    bind_placeholders(
+                        transaction.get_database_backend(),
+                        "INSERT INTO deleted_users (employee_id, changed_revision) VALUES (?, ?) \
+                         ON CONFLICT (employee_id) DO UPDATE \
+                         SET changed_revision = excluded.changed_revision",
+                    ),
                     [employee_id.into(), revision.into()],
                 ))
                 .await?;
@@ -1025,8 +970,11 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         revisions.extend(
             self.db
                 .query_all_raw(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "SELECT changed_revision FROM deleted_users WHERE changed_revision > ?",
+                    self.db.get_database_backend(),
+                    bind_placeholders(
+                        self.db.get_database_backend(),
+                        "SELECT changed_revision FROM deleted_users WHERE changed_revision > ?",
+                    ),
                     [threshold.into()],
                 ))
                 .await?
@@ -1081,10 +1029,13 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
         let deleted_users = self
             .db
             .query_all_raw(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "SELECT employee_id, changed_revision FROM deleted_users \
-                 WHERE changed_revision > ? AND changed_revision <= ? \
-                 ORDER BY changed_revision, employee_id",
+                self.db.get_database_backend(),
+                bind_placeholders(
+                    self.db.get_database_backend(),
+                    "SELECT employee_id, changed_revision FROM deleted_users \
+                     WHERE changed_revision > ? AND changed_revision <= ? \
+                     ORDER BY changed_revision, employee_id",
+                ),
                 [threshold.into(), batch_revision.into()],
             ))
             .await?
@@ -1405,10 +1356,11 @@ CREATE TABLE IF NOT EXISTS employee_id_sequence (
 "#,
             )
             .await?;
+        let backend = self.db.get_database_backend();
         let existing = self
             .db
             .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
+                backend,
                 "SELECT next_value FROM employee_id_sequence WHERE singleton = 1".to_string(),
             ))
             .await?;
@@ -1416,16 +1368,21 @@ CREATE TABLE IF NOT EXISTS employee_id_sequence (
             return Ok(());
         }
 
+        let numeric_employee_id = match backend {
+            DbBackend::Postgres => "employee_id ~ '^[0-9]{1,18}$'",
+            _ => "employee_id <> '' AND employee_id NOT GLOB '*[^0-9]*'",
+        };
         let max_row = self
             .db
             .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                r#"
-SELECT COALESCE(MAX(CAST(employee_id AS INTEGER)), 0) AS max_employee_id
+                backend,
+                format!(
+                    r#"
+SELECT COALESCE(MAX(CASE WHEN {numeric_employee_id} THEN CAST(employee_id AS BIGINT) ELSE 0 END), 0)
+    AS max_employee_id
 FROM users
-WHERE employee_id <> '' AND employee_id NOT GLOB '*[^0-9]*'
 "#
-                .to_string(),
+                ),
             ))
             .await?;
         let max_employee_id: i64 = match max_row {
@@ -1435,8 +1392,12 @@ WHERE employee_id <> '' AND employee_id NOT GLOB '*[^0-9]*'
         let next_value = max_employee_id.saturating_add(1).max(EMPLOYEE_ID_FIRST);
         self.db
             .execute_raw(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT OR IGNORE INTO employee_id_sequence (singleton, next_value) VALUES (1, ?)",
+                backend,
+                bind_placeholders(
+                    backend,
+                    "INSERT INTO employee_id_sequence (singleton, next_value) VALUES (1, ?) \
+                     ON CONFLICT (singleton) DO NOTHING",
+                ),
                 [next_value.into()],
             ))
             .await?;
@@ -1492,9 +1453,10 @@ async fn allocate_employee_id(
     use entities::user;
 
     loop {
+        let backend = transaction.get_database_backend();
         let row = transaction
             .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
+                backend,
                 "UPDATE employee_id_sequence SET next_value = next_value + 1 WHERE singleton = 1 RETURNING next_value"
                     .to_string(),
             ))
@@ -1520,8 +1482,11 @@ async fn clear_deleted_user(
 ) -> anyhow::Result<()> {
     transaction
         .execute_raw(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "DELETE FROM deleted_users WHERE employee_id = ?",
+            transaction.get_database_backend(),
+            bind_placeholders(
+                transaction.get_database_backend(),
+                "DELETE FROM deleted_users WHERE employee_id = ?",
+            ),
             [employee_id.into()],
         ))
         .await?;
