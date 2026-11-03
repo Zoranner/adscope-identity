@@ -37,6 +37,12 @@ const PORTAL_B_ISSUER: &str = "https://auth-b.example.com";
 const PORTAL_B_HOST: &str = "auth-b.example.com";
 const PORTAL_C_ISSUER: &str = "https://auth-c.example.com";
 const PORTAL_C_HOST: &str = "auth-c.example.com";
+const PORTAL_A_ACCESS_KEY: &str =
+    "1111111111111111111111111111111111111111111111111111111111111111";
+const PORTAL_B_ACCESS_KEY: &str =
+    "2222222222222222222222222222222222222222222222222222222222222222";
+const PORTAL_C_ACCESS_KEY: &str =
+    "3333333333333333333333333333333333333333333333333333333333333333";
 const OIDC_CLIENT_ID: &str = "client_oidc_contract";
 const OIDC_REDIRECT_URI: &str = "https://client.example.test/callback?source=adscope";
 const OIDC_STATE: &str = "state-original";
@@ -1157,6 +1163,108 @@ async fn unknown_and_missing_hosts_return_404_for_oidc_routes() {
         .await
         .unwrap();
     assert_eq!(missing_host.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn portal_access_key_selects_issuer_and_disables_metadata_caching() {
+    let TestApp { app, .. } = portal_access_key_test_app().await;
+
+    for (key, issuer) in [
+        (PORTAL_A_ACCESS_KEY, PORTAL_A_ISSUER),
+        (PORTAL_B_ACCESS_KEY, PORTAL_B_ISSUER),
+        (PORTAL_C_ACCESS_KEY, PORTAL_C_ISSUER),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/.well-known/openid-configuration")
+                    .header("host", "idc.kimo.ink")
+                    .header("x-adscope-portal-key", key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "no-store",
+            "共用 Core 地址时 metadata 不能进共享缓存"
+        );
+        let body = json_body(response).await;
+        assert_eq!(body["issuer"], issuer);
+        assert_eq!(
+            body["authorization_endpoint"],
+            format!("{issuer}/oauth2/authorize")
+        );
+    }
+
+    let jwks = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/oauth2/jwks")
+                .header("x-adscope-portal-key", PORTAL_A_ACCESS_KEY)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(jwks.status(), StatusCode::OK);
+    assert_eq!(jwks.headers().get("cache-control").unwrap(), "no-store");
+}
+
+#[tokio::test]
+async fn portal_access_key_mode_rejects_missing_wrong_and_duplicate_keys() {
+    let TestApp { app, .. } = portal_access_key_test_app().await;
+
+    let missing_key = app
+        .clone()
+        .oneshot(with_host(
+            empty_request(Method::GET, "/.well-known/openid-configuration"),
+            PORTAL_A_HOST,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        missing_key.status(),
+        StatusCode::NOT_FOUND,
+        "配置了 key 后不再用 Host 兜底"
+    );
+
+    let wrong_key = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/.well-known/openid-configuration")
+                .header(
+                    "x-adscope-portal-key",
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_key.status(), StatusCode::NOT_FOUND);
+
+    let duplicate_key = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/.well-known/openid-configuration")
+                .header("x-adscope-portal-key", PORTAL_A_ACCESS_KEY)
+                .header("x-adscope-portal-key", PORTAL_A_ACCESS_KEY)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(duplicate_key.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -2835,6 +2943,28 @@ async fn multi_issuer_test_app() -> TestApp {
         repository.clone(),
         TEST_ENCRYPTION_KEY,
         &[PORTAL_A_ISSUER, PORTAL_B_ISSUER, PORTAL_C_ISSUER],
+        TEST_OIDC_PRIVATE_KEY,
+    );
+    let oidc = state.oidc.clone();
+    TestApp {
+        app: build_router(state),
+        repository,
+        oidc,
+    }
+}
+
+async fn portal_access_key_test_app() -> TestApp {
+    let repository = Repository::connect("sqlite::memory:").await.unwrap();
+    repository.initialize_schema().await.unwrap();
+    let state = AppState::new_for_tests_with_portal_access_keys(
+        repository.clone(),
+        TEST_ENCRYPTION_KEY,
+        &[PORTAL_A_ISSUER, PORTAL_B_ISSUER, PORTAL_C_ISSUER],
+        &[
+            (PORTAL_A_ISSUER, PORTAL_A_ACCESS_KEY),
+            (PORTAL_B_ISSUER, PORTAL_B_ACCESS_KEY),
+            (PORTAL_C_ISSUER, PORTAL_C_ACCESS_KEY),
+        ],
         TEST_OIDC_PRIVATE_KEY,
     );
     let oidc = state.oidc.clone();

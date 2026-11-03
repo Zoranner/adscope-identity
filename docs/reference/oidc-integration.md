@@ -22,7 +22,7 @@ Core 只作为后端，不作为 issuer。每个 Portal 是自身公开入口的
 入口 C：https://auth-c.example.com
 ```
 
-Core 的 `OIDC_ISSUERS` 登记这些 issuer。每个 Portal 用 `PUBLIC_ISSUER` 覆盖转发到 Core 的 Host，Core 按 Host 选择当前 issuer；Core 自己的后端地址不在白名单，直接访问其 OIDC 路径返回 `404`。issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragment。上面只是示例，实际可以只部署一个 Portal，也可以部署更多。
+Core 的 `OIDC_ISSUERS` 登记这些 issuer。默认情况下每个 Portal 用 `PUBLIC_ISSUER` 覆盖转发到 Core 的 Host，Core 按 Host 选择当前 issuer；如果 Core 配置了 `PORTAL_ACCESS_KEYS`，则每个 Portal 用 `PORTAL_ACCESS_KEY` 断言自己的 issuer，Host 不再参与判断，此时 `CORE_URL` 可以是 Core 的公网地址。Core 自己的后端地址不在白名单，直接访问其 OIDC 路径返回 `404`。issuer 必须是 HTTPS origin，不能包含 userinfo、路径、query 或 fragment。上面只是示例，实际可以只部署一个 Portal，也可以部署更多。
 
 | 端点 | 路径 |
 | --- | --- |
@@ -187,7 +187,7 @@ Portal 边界：
 
 - Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应，必须禁止记录或缓存这些内容。
 - Portal 不修改 `iss`、`sub`、`aud`、`nonce` 或签名，不持有 OIDC 签名私钥，不签发本地 Token。
-- 不要把 OIDC 签名私钥放在 Portal 上；Portal 的 issuer 身份来自其公开域名和固定 Host，不来自本地签名密钥。
+- 不要把 OIDC 签名私钥放在 Portal 上；Portal 的 issuer 身份来自公开域名和入口凭据（Host 或 `PORTAL_ACCESS_KEY`），不来自本地签名密钥。
 
 不同公开 origin 的 SSO Cookie 都没有 `Domain` 属性，分别独立登录和退出；本次不实现跨 Portal SSO、共享 Cookie 或统一登出。
 

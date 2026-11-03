@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::State,
-    http::{HeaderName, Request, StatusCode, header, header::CACHE_CONTROL},
+    http::{HeaderName, HeaderValue, Request, StatusCode, header, header::CACHE_CONTROL},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
@@ -15,6 +15,9 @@ use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
 const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:18086";
+const PORTAL_ACCESS_KEY_ENV: &str = "PORTAL_ACCESS_KEY";
+const PORTAL_ACCESS_KEY_HEADER: &str = "x-adscope-portal-key";
+const MIN_PORTAL_ACCESS_KEY_LEN: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicIssuer {
@@ -106,6 +109,7 @@ pub struct AppState {
     client: Client,
     core_url: Url,
     public_issuer_host: String,
+    portal_access_key: Option<HeaderValue>,
     login_enabled: bool,
     admin_enabled: bool,
     web_root: PathBuf,
@@ -116,6 +120,7 @@ pub struct Config {
     pub listen_addr: SocketAddr,
     pub core_url: Url,
     pub public_issuer: PublicIssuer,
+    pub portal_access_key: Option<String>,
     pub login_enabled: bool,
     pub admin_enabled: bool,
     pub tls: ListenerTls,
@@ -142,6 +147,10 @@ impl Config {
         let public_issuer = std::env::var("PUBLIC_ISSUER")
             .context("PUBLIC_ISSUER is required")
             .and_then(|value| PublicIssuer::parse(&value))?;
+        let portal_access_key = match optional_env(PORTAL_ACCESS_KEY_ENV)? {
+            Some(value) => Some(parse_portal_access_key(&value)?),
+            None => None,
+        };
         let tls = listener_tls(
             optional_env("TLS_CERT_FILE")?,
             optional_env("TLS_KEY_FILE")?,
@@ -156,6 +165,7 @@ impl Config {
             listen_addr,
             core_url,
             public_issuer,
+            portal_access_key,
             login_enabled: parse_bool_env("LOGIN_ENABLED", true)?,
             admin_enabled: parse_bool_env("ADMIN_ENABLED", true)?,
             tls,
@@ -172,11 +182,20 @@ impl AppState {
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
             .context("failed to build upstream HTTP client")?;
+        let portal_access_key = config
+            .portal_access_key
+            .as_deref()
+            .map(|value| {
+                HeaderValue::from_str(value)
+                    .context("PORTAL_ACCESS_KEY must be a valid header value")
+            })
+            .transpose()?;
 
         Ok(Self {
             client,
             core_url: config.core_url.clone(),
             public_issuer_host: config.public_issuer.host().to_string(),
+            portal_access_key,
             login_enabled: config.login_enabled,
             admin_enabled: config.admin_enabled,
             web_root: config.web_root.clone(),
@@ -192,6 +211,7 @@ impl AppState {
                 .expect("test HTTP client must build"),
             core_url: Url::parse("http://127.0.0.1:1").expect("test URL must parse"),
             public_issuer_host: "auth.example.test".to_string(),
+            portal_access_key: None,
             login_enabled,
             admin_enabled,
             web_root,
@@ -295,12 +315,19 @@ async fn forward(state: AppState, request: Request<Body>) -> anyhow::Result<Resp
 
     let mut upstream = state.client.request(method, upstream_url);
     for (name, value) in request.headers() {
-        if name.as_str() == "host" || is_hop_by_hop(name) {
+        // 客户端自带的入口凭据必须丢弃，只使用本实例配置的值。
+        if name.as_str() == "host"
+            || name.as_str() == PORTAL_ACCESS_KEY_HEADER
+            || is_hop_by_hop(name)
+        {
             continue;
         }
         upstream = upstream.header(name, value);
     }
     upstream = upstream.header(header::HOST, &state.public_issuer_host);
+    if let Some(portal_access_key) = &state.portal_access_key {
+        upstream = upstream.header(PORTAL_ACCESS_KEY_HEADER, portal_access_key);
+    }
 
     let body = request.into_body();
     let response = upstream
@@ -423,6 +450,23 @@ fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(error) => Err(error.into()),
     }
+}
+
+fn parse_portal_access_key(value: &str) -> anyhow::Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("{PORTAL_ACCESS_KEY_ENV} must not be empty when set");
+    }
+    if value.chars().count() < MIN_PORTAL_ACCESS_KEY_LEN {
+        bail!("{PORTAL_ACCESS_KEY_ENV} must be at least {MIN_PORTAL_ACCESS_KEY_LEN} characters");
+    }
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_graphic() && character != ',')
+    {
+        bail!("{PORTAL_ACCESS_KEY_ENV} must be printable ASCII without commas");
+    }
+    Ok(value.to_string())
 }
 
 fn parse_bool_value(value: &str) -> Option<bool> {
@@ -734,6 +778,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             core_url,
             public_issuer: PublicIssuer::parse("https://auth-a.example.com").unwrap(),
+            portal_access_key: None,
             login_enabled: true,
             admin_enabled: true,
             tls: ListenerTls::Http,
@@ -758,6 +803,79 @@ mod tests {
 
         handle.abort();
         std::fs::remove_dir_all(web_root).ok();
+    }
+
+    async fn mock_core_echoing_portal_key() -> (Url, tokio::task::JoinHandle<()>) {
+        let app = Router::new().fallback(|headers: HeaderMap| async move {
+            let portal_keys = headers
+                .get_all("x-adscope-portal-key")
+                .iter()
+                .filter_map(|value| value.to_str().ok().map(str::to_string))
+                .collect::<Vec<_>>();
+            Json(json!({ "portal_keys": portal_keys }))
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (Url::parse(&format!("http://{address}")).unwrap(), handle)
+    }
+
+    #[tokio::test]
+    async fn forwards_configured_portal_access_key_and_drops_client_value() {
+        const PORTAL_KEY: &str = "4444444444444444444444444444444444444444444444444444444444444444";
+        let (core_url, handle) = mock_core_echoing_portal_key().await;
+
+        let keyed = portal_test_config(core_url.clone(), Some(PORTAL_KEY.to_string()));
+        let response = router(AppState::new(&keyed).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/.well-known/openid-configuration")
+                    .header("x-adscope-portal-key", "attacker-supplied")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["portal_keys"], json!([PORTAL_KEY]));
+
+        let unkeyed = portal_test_config(core_url, None);
+        let response = router(AppState::new(&unkeyed).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/.well-known/openid-configuration")
+                    .header("x-adscope-portal-key", "attacker-supplied")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["portal_keys"], json!([]));
+
+        handle.abort();
+        std::fs::remove_dir_all(&keyed.web_root).ok();
+        std::fs::remove_dir_all(&unkeyed.web_root).ok();
+    }
+
+    fn portal_test_config(core_url: Url, portal_access_key: Option<String>) -> Config {
+        let web_root = test_web_root();
+        Config {
+            listen_addr: "127.0.0.1:0".parse().unwrap(),
+            core_url,
+            public_issuer: PublicIssuer::parse("https://auth-a.example.com").unwrap(),
+            portal_access_key,
+            login_enabled: true,
+            admin_enabled: true,
+            tls: ListenerTls::Http,
+            web_root,
+        }
     }
 
     fn test_web_root() -> PathBuf {

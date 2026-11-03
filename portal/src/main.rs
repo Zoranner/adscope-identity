@@ -21,6 +21,7 @@ async fn main() -> anyhow::Result<()> {
         %listen_addr,
         core_url = %config.core_url,
         public_issuer = config.public_issuer.origin(),
+        portal_access_key_configured = config.portal_access_key.is_some(),
         login_enabled = config.login_enabled,
         admin_enabled = config.admin_enabled,
         "starting Adscope Portal"

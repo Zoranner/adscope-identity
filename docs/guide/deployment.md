@@ -14,10 +14,10 @@ Core、Portal 和 Syncer 是三个独立部署单元，部署方式不同：
 docker network create adscope
 ```
 
-跨主机部署时不需要加入该网络，Portal 直接在 `CORE_URL` 中填写 Core 的公开地址 `https://core.example.com`。
+跨主机部署时不需要加入该网络。不配置 `PORTAL_ACCESS_KEY` 时，Portal 的 `CORE_URL` 必须是 Core 的内网直连地址（例如 `http://10.0.0.5:8080`）；不要填经过 CDN 或反向代理的公网域名，否则 Portal 转发时改写的 Host 会被边缘节点路由回 Portal，形成回环。配置 `PORTAL_ACCESS_KEY` 后，入口凭据会替代 Host 判断 issuer，`CORE_URL` 可以直接填 Core 的公网 HTTPS 地址。
 
 Core 和 Portal 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/zoranner/adscope-core:0.4.0` 和 `ghcr.io/zoranner/adscope-portal:0.4.0`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/zoranner/adscope-core:0.4.1` 和 `ghcr.io/zoranner/adscope-portal:0.4.1`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -96,10 +96,13 @@ networks:
 
 ```text
 OIDC_ISSUERS=https://auth-a.example.com,https://auth-b.example.com,https://auth-c.example.com
+PORTAL_ACCESS_KEYS=https://auth-a.example.com=<key-a>,https://auth-b.example.com=<key-b>,https://auth-c.example.com=<key-c>
 OIDC_LOOPBACK_HTTP=false
 ```
 
 `OIDC_ISSUERS` 是 Core 接受的 Portal issuer 白名单。每一项必须是 HTTPS origin，不能包含 userinfo、路径、查询参数或片段；Host 统一小写、去掉末尾点和默认 `:443`，非默认端口保留。不要加入 Core 自己的后端地址，也不要在这里填写 Portal 的内网监听地址。
+
+`PORTAL_ACCESS_KEYS` 是每个入口访问 Core 的凭据，格式为 `issuer=key`，必须覆盖 `OIDC_ISSUERS` 里的每个 issuer，issuer 和 key 都不能重复，key 至少 32 个字符（`openssl rand -hex 32`）。设置后 Core 进入严格模式：只按请求头 `x-adscope-portal-key` 反查 issuer，不再用 Host 判断；缺 key、key 不匹配或重复请求头一律 404。该模式下 discovery 和 JWKS 返回 `no-store`，因为多个入口共用同一个 Core 地址。未设置时保持原有的 Host 判断，Portal 的 `CORE_URL` 必须直连。Portal 侧用 `PORTAL_ACCESS_KEY` 配置本入口的 key；轮换时先在三台 Portal 和 Core 同时改成新值再重建。
 
 部署几个公开入口，就登记几个不同的 issuer。示例使用三个入口，也可以只部署一个 Portal：
 
@@ -136,7 +139,7 @@ bun run build
 mkdir -p ../static
 cp -R .output/public/. ../static/
 cd ../..
-docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.4.0 .
+docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.4.1 .
 ```
 
 静态前端产物先复制到 `portal/static`，镜像构建时直接复制到 `/app/web`。
@@ -147,7 +150,7 @@ Portal 变量：
 
 | 变量 | 说明 |
 | --- | --- |
-| `CORE_URL` | Core 根地址，例如 `http://core:8080` |
+| `CORE_URL` | Core 的直连根地址，例如同一 Docker 网络内的 `http://adscope-core:8080` 或内网 IP；不能填经过 CDN 的公网域名 |
 | `PUBLIC_ISSUER` | 本 Portal 的公开 HTTPS origin |
 | `LISTEN_ADDR` | 固定为 `0.0.0.0:18086` |
 | `WEB_ROOT` | 镜像内固定为 `/app/web` |
@@ -254,7 +257,7 @@ Syncer 在运行目录下自动维护 `adscope-syncer-state.json`。文件无法
 
 - 主服务放在 TLS 后面，凭据响应禁止明文 HTTP。
 - 生产环境配置本机高熵密码加密密钥。
-- `PASSWORD_ENCRYPTION_KEY`、`SESSION_KEY`、`MANAGEMENT_TOKEN` 和 Syncer key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
+- `PASSWORD_ENCRYPTION_KEY`、`SESSION_KEY`、`MANAGEMENT_TOKEN`、`PORTAL_ACCESS_KEYS`/`PORTAL_ACCESS_KEY` 和 Syncer key 通过受限 `.env`、系统环境变量、Windows DPAPI 或等价机制注入；OIDC 私钥通过只读文件挂载。
 - 管理面通过内网 Portal 访问，外网 Portal 关闭管理；管理凭证仍需独立保护，不能把 `/api/admin/*` 暴露给普通用户 token。
 - 前端静态文件由 Portal 镜像托管，Core 不提供前端，不单独开放 Nuxt 开发服务。
 - 外网入口必须在外网 Portal 或前置 WAF 提供登录限流；当前 Core 没有 MFA、登录锁定和 OIDC 审计。

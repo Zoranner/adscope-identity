@@ -36,6 +36,7 @@ use crate::{
 };
 
 const PUBLIC_METADATA_CACHE_CONTROL: &str = "public, max-age=300";
+const PORTAL_ACCESS_KEY_HEADER: &str = "x-adscope-portal-key";
 const SSO_COOKIE_NAME: &str = "adscope_sso";
 const CSRF_TTL_SECONDS: u64 = 300;
 const AUTHORIZATION_CODE_CLEANUP_LIMIT: u64 = 100;
@@ -63,14 +64,34 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/oauth2/authorize/context", get(authorization_context))
 }
 
-fn request_issuer<'a>(state: &'a AppState, headers: &HeaderMap) -> Option<&'a str> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IssuerSource {
+    PortalKey,
+    Host,
+}
+
+fn request_issuer<'a>(state: &'a AppState, headers: &HeaderMap) -> Option<(&'a str, IssuerSource)> {
+    let config = state.oidc.config();
+    if config.requires_portal_key() {
+        let mut values = headers.get_all(PORTAL_ACCESS_KEY_HEADER).iter();
+        let key = match (values.next(), values.next()) {
+            (Some(value), None) => value.to_str().ok()?,
+            _ => return None,
+        };
+        return config
+            .issuer_for_portal_key(key)
+            .map(|issuer| (issuer, IssuerSource::PortalKey));
+    }
+
     let mut values = headers.get_all(header::HOST).iter();
     let host = match (values.next(), values.next()) {
         (None, None) => None,
         (Some(value), None) => Some(value.to_str().ok()?),
         _ => return None,
     };
-    state.oidc.config().issuer_for_host(host)
+    config
+        .issuer_for_host(host)
+        .map(|issuer| (issuer, IssuerSource::Host))
 }
 
 fn issuer_not_found() -> Response {
@@ -175,7 +196,7 @@ async fn confirm_authorization(
     headers: HeaderMap,
     form: Result<Form<AuthorizationDecisionForm>, FormRejection>,
 ) -> Response {
-    let Some(issuer) = request_issuer(&state, &headers) else {
+    let Some((issuer, _)) = request_issuer(&state, &headers) else {
         return issuer_not_found();
     };
     let Form(form) = match form {
@@ -352,31 +373,34 @@ async fn openid_configuration(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<(HeaderMap, Json<OpenIdConfiguration>), OidcRouteError> {
-    let issuer = request_issuer(&state, &headers).ok_or(OidcRouteError::NotFound)?;
-    Ok(public_metadata_json(OpenIdConfiguration {
-        issuer: issuer.to_string(),
-        authorization_endpoint: format!("{issuer}/oauth2/authorize"),
-        token_endpoint: format!("{issuer}/oauth2/token"),
-        userinfo_endpoint: format!("{issuer}/oauth2/userinfo"),
-        jwks_uri: format!("{issuer}/oauth2/jwks"),
-        response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code"],
-        subject_types_supported: ["public"],
-        id_token_signing_alg_values_supported: ["RS256"],
-        scopes_supported: ["openid", "profile", "email", "phone"],
-        token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-        code_challenge_methods_supported: ["S256"],
-    }))
+    let (issuer, source) = request_issuer(&state, &headers).ok_or(OidcRouteError::NotFound)?;
+    Ok(public_metadata_json(
+        OpenIdConfiguration {
+            issuer: issuer.to_string(),
+            authorization_endpoint: format!("{issuer}/oauth2/authorize"),
+            token_endpoint: format!("{issuer}/oauth2/token"),
+            userinfo_endpoint: format!("{issuer}/oauth2/userinfo"),
+            jwks_uri: format!("{issuer}/oauth2/jwks"),
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code"],
+            subject_types_supported: ["public"],
+            id_token_signing_alg_values_supported: ["RS256"],
+            scopes_supported: ["openid", "profile", "email", "phone"],
+            token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+            code_challenge_methods_supported: ["S256"],
+        },
+        source,
+    ))
 }
 
 async fn jwks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, OidcRouteError> {
-    if request_issuer(&state, &headers).is_none() {
+    let Some((_, source)) = request_issuer(&state, &headers) else {
         return Err(OidcRouteError::NotFound);
-    }
-    Ok(public_metadata_json(state.oidc.jwks().clone()))
+    };
+    Ok(public_metadata_json(state.oidc.jwks().clone(), source))
 }
 
 async fn token(
@@ -384,7 +408,7 @@ async fn token(
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Response {
-    let Some(issuer) = request_issuer(&state, &headers) else {
+    let Some((issuer, _)) = request_issuer(&state, &headers) else {
         return issuer_not_found();
     };
     match exchange_token(&state, issuer, &headers, body).await {
@@ -587,7 +611,7 @@ async fn userinfo(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<(HeaderMap, Json<UserInfoResponse>), OidcRouteError> {
-    let issuer = request_issuer(&state, &headers).ok_or(OidcRouteError::NotFound)?;
+    let (issuer, _) = request_issuer(&state, &headers).ok_or(OidcRouteError::NotFound)?;
     let token = bearer_token(&headers).ok_or(OidcRouteError::InvalidToken)?;
     let claims = state
         .oidc
@@ -1106,11 +1130,16 @@ impl ResponseStatusExt for Response {
     }
 }
 
-fn public_metadata_json<T>(value: T) -> (HeaderMap, Json<T>) {
+fn public_metadata_json<T>(value: T, source: IssuerSource) -> (HeaderMap, Json<T>) {
     let mut headers = HeaderMap::new();
+    let cache_control = match source {
+        // 多个入口共用同一个 Core 地址时，metadata 的 URL 相同，不能进共享缓存。
+        IssuerSource::PortalKey => "no-store",
+        IssuerSource::Host => PUBLIC_METADATA_CACHE_CONTROL,
+    };
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static(PUBLIC_METADATA_CACHE_CONTROL),
+        HeaderValue::from_static(cache_control),
     );
     (headers, Json(value))
 }

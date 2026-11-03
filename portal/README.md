@@ -35,7 +35,7 @@ docker run -d --name adscope-portal-a \
   -e PUBLIC_ISSUER=https://auth-a.example.com \
   -e LOGIN_ENABLED=true \
   -e ADMIN_ENABLED=true \
-  ghcr.io/zoranner/adscope-portal:0.4.0
+  ghcr.io/zoranner/adscope-portal:0.4.1
 ```
 
 如果 Portal 自己终止 TLS，再同时挂载并设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。所有 Portal 使用同一个镜像，按公开入口调整 `PUBLIC_ISSUER`、监听方式和入口开关：
@@ -52,7 +52,8 @@ Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口并�
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `CORE_URL` | 是 | Core 根地址，例如 `http://core:8080` |
+| `CORE_URL` | 是 | Core 根地址。未配置 `PORTAL_ACCESS_KEY` 时必须是直连地址（同一 Docker 网络内的 `http://adscope-core:8080` 或内网 IP）；配置后可填 Core 的公网 HTTPS 地址 |
+| `PORTAL_ACCESS_KEY` | 否 | 本入口访问 Core 的凭据，取值等于 Core `PORTAL_ACCESS_KEYS` 中本入口 issuer 对应的 key；至少 32 个字符 |
 | `PUBLIC_ISSUER` | 是 | 本 Portal 的公开 HTTPS origin，例如 `https://auth-a.example.com` |
 | `LISTEN_ADDR` | 否 | 固定为 `0.0.0.0:18086`；这是容器内非特权端口，不是公开 issuer 端口 |
 | `WEB_ROOT` | 否 | 默认 `/app/web`；本地调试可指向 `portal/web/.output/public` |
@@ -64,6 +65,8 @@ Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口并�
 `LOGIN_ENABLED=false` 拦截 `/login`、`/authorize`、`/oauth2/authorize`、`/api/auth/login`、`/api/oauth2/authorize/context`；`ADMIN_ENABLED=false` 拦截 `/admin`、`/admin/*`、`/api/admin`、`/api/admin/*`。浏览器路径返回 HTML 403，API 路径返回 JSON 403，其他路径照常处理。
 
 `PUBLIC_ISSUER` 必须是归一化后的 HTTPS origin，不能包含 userinfo、路径、查询参数或片段。Portal 用它覆盖转发到 Core 的 `Host`，不读取客户端 `Host` 或 `X-Forwarded-Host` 作为 issuer。
+
+Portal 转发时会用 `PUBLIC_ISSUER` 覆盖 `Host`。没有 `PORTAL_ACCESS_KEY` 时，`CORE_URL` 必须是 Core 的直连地址：经过 CDN 或按 Host 分流的公网域名会把请求路由回 Portal，形成回环并返回 1000 类错误。配置了 `PORTAL_ACCESS_KEY` 后，Core 用这个 key 判断 issuer，`CORE_URL` 可以填 Core 的公网 HTTPS 地址。
 
 `TLS_CERT_FILE` 和 `TLS_KEY_FILE` 都不配置时，Portal 监听 HTTP，TLS 由前置反向代理终止；只配置其中一个时启动失败。内网 HTTP 监听只能暴露在本机回环或受信网络。
 

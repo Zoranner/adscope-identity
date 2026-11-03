@@ -41,7 +41,7 @@ Web 是构建进 Portal 镜像的 Nuxt 静态应用，不单独保存业务状�
 | 内网入口 B | `https://auth-b.example.com` | 内部 CA、自签或前置代理，SAN 含 issuer 域名 | 开启 |
 | 外网入口 | `https://auth-c.example.com` | 公网 CA 或前置代理，SAN 含 issuer 域名 | 关闭 |
 
-每个 Portal 的公开 origin 就是该入口的 OIDC issuer。Core 从 `OIDC_ISSUERS` 读取白名单，按 Portal 覆盖后的 Host 选择当前 issuer；Core 自己的后端地址不是 issuer，直接访问其 OIDC 路径返回 `404`。
+每个 Portal 的公开 origin 就是该入口的 OIDC issuer。Core 从 `OIDC_ISSUERS` 读取白名单：未配置 `PORTAL_ACCESS_KEYS` 时按 Portal 覆盖后的 Host 选择当前 issuer；配置后改按请求头 `x-adscope-portal-key` 反查，Host 不参与判断。Core 自己的后端地址不是 issuer，直接访问其 OIDC 路径返回 `404`。
 
 所有 Portal 共用 Core 的一把 RSA 私钥和同一份 JWKS，OIDC 客户端记录保持全局、不绑定 issuer；依赖方按自己的接入配置选择 Portal。授权码和 access token 绑定签发时的 issuer，跨 Portal 不能兑换或调用 UserInfo。
 

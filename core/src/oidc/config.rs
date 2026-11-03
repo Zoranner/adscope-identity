@@ -8,9 +8,13 @@ use std::{
 use anyhow::{Context, bail, ensure};
 use url::Url;
 
+use crate::auth::constant_time_eq;
+
 const ISSUERS_ENV: &str = "OIDC_ISSUERS";
 const LEGACY_ISSUER_ENV: &str = "OIDC_ISSUER";
 const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "OIDC_LOOPBACK_HTTP";
+const PORTAL_ACCESS_KEYS_ENV: &str = "PORTAL_ACCESS_KEYS";
+const MIN_PORTAL_ACCESS_KEY_LEN: usize = 32;
 const AUTHORIZATION_CODE_TTL_SECONDS: u64 = 120;
 const TOKEN_TTL_SECONDS: u64 = 300;
 const CONTAINER_PRIVATE_KEY_PATH: &str = "/run/secrets/oidc-private-key.pem";
@@ -20,6 +24,12 @@ const LOCAL_PRIVATE_KEY_PATH: &str = "secrets/oidc-private-key.pem";
 struct OidcIssuer {
     issuer: String,
     host: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PortalAccessKey {
+    issuer: String,
+    key: String,
 }
 
 impl OidcIssuer {
@@ -119,6 +129,60 @@ fn parse_issuer_list(value: &str) -> anyhow::Result<Vec<OidcIssuer>> {
     Ok(issuers)
 }
 
+fn parse_portal_access_keys(
+    value: &str,
+    issuers: &[OidcIssuer],
+) -> anyhow::Result<Vec<PortalAccessKey>> {
+    let mut access_keys = Vec::new();
+    for entry in value.split(',').map(str::trim) {
+        ensure!(
+            !entry.is_empty(),
+            "{PORTAL_ACCESS_KEYS_ENV} must not contain empty entries"
+        );
+        let (issuer, key) = entry.split_once('=').with_context(|| {
+            format!("{PORTAL_ACCESS_KEYS_ENV} entries must use issuer=key: {entry}")
+        })?;
+        let issuer = OidcIssuer::parse(issuer.trim())?;
+        ensure!(
+            issuers
+                .iter()
+                .any(|configured| configured.issuer == issuer.issuer),
+            "{PORTAL_ACCESS_KEYS_ENV} issuer is not listed in {ISSUERS_ENV}: {}",
+            issuer.issuer
+        );
+        ensure!(
+            access_keys
+                .iter()
+                .all(|existing: &PortalAccessKey| existing.issuer != issuer.issuer),
+            "{PORTAL_ACCESS_KEYS_ENV} must not repeat an issuer: {}",
+            issuer.issuer
+        );
+        let key = key.trim();
+        ensure!(
+            key.chars().count() >= MIN_PORTAL_ACCESS_KEY_LEN,
+            "{PORTAL_ACCESS_KEYS_ENV} key must be at least {MIN_PORTAL_ACCESS_KEY_LEN} characters"
+        );
+        ensure!(
+            key.chars()
+                .all(|character| character.is_ascii_graphic() && character != ','),
+            "{PORTAL_ACCESS_KEYS_ENV} key must be printable ASCII without commas"
+        );
+        ensure!(
+            access_keys.iter().all(|existing| existing.key != key),
+            "{PORTAL_ACCESS_KEYS_ENV} must not repeat a key"
+        );
+        access_keys.push(PortalAccessKey {
+            issuer: issuer.issuer,
+            key: key.to_string(),
+        });
+    }
+    ensure!(
+        !access_keys.is_empty(),
+        "{PORTAL_ACCESS_KEYS_ENV} must contain at least one entry"
+    );
+    Ok(access_keys)
+}
+
 fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
     match env::var(name) {
         Ok(value) => Ok(Some(value)),
@@ -130,6 +194,7 @@ fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
 #[derive(Clone)]
 pub struct OidcConfig {
     issuers: Vec<OidcIssuer>,
+    portal_access_keys: Vec<PortalAccessKey>,
     legacy_single_issuer: bool,
     private_key_pem: Vec<u8>,
     allow_insecure_web_loopback_redirects: bool,
@@ -145,6 +210,7 @@ impl OidcConfig {
     ) -> anyhow::Result<Self> {
         Self::build(
             vec![OidcIssuer::parse(issuer)?],
+            Vec::new(),
             private_key_pem,
             allow_insecure_web_loopback_redirects,
             true,
@@ -164,21 +230,59 @@ impl OidcConfig {
         ensure_unique_hosts(&issuers)?;
         Self::build(
             issuers,
+            Vec::new(),
             private_key_pem,
             allow_insecure_web_loopback_redirects,
             false,
         )
     }
 
+    #[doc(hidden)]
+    pub fn from_issuers_with_portal_access_keys(
+        issuers: &[&str],
+        portal_access_keys: &[(&str, &str)],
+        private_key_pem: Vec<u8>,
+    ) -> anyhow::Result<Self> {
+        ensure!(!issuers.is_empty(), "at least one OIDC issuer is required");
+        let issuers = issuers
+            .iter()
+            .map(|issuer| OidcIssuer::parse(issuer))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        ensure_unique_hosts(&issuers)?;
+        let portal_access_keys = portal_access_keys
+            .iter()
+            .map(|(issuer, key)| {
+                Ok(PortalAccessKey {
+                    issuer: OidcIssuer::parse(issuer)?.issuer,
+                    key: (*key).to_string(),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Self::build(issuers, portal_access_keys, private_key_pem, false, false)
+    }
+
     fn build(
         issuers: Vec<OidcIssuer>,
+        portal_access_keys: Vec<PortalAccessKey>,
         private_key_pem: Vec<u8>,
         allow_insecure_web_loopback_redirects: bool,
         legacy_single_issuer: bool,
     ) -> anyhow::Result<Self> {
         ensure!(!issuers.is_empty(), "at least one OIDC issuer is required");
+        if !portal_access_keys.is_empty() {
+            for issuer in &issuers {
+                ensure!(
+                    portal_access_keys
+                        .iter()
+                        .any(|entry| entry.issuer == issuer.issuer),
+                    "{PORTAL_ACCESS_KEYS_ENV} must include a key for every issuer in {ISSUERS_ENV}: {}",
+                    issuer.issuer
+                );
+            }
+        }
         Ok(Self {
             issuers,
+            portal_access_keys,
             legacy_single_issuer,
             private_key_pem,
             allow_insecure_web_loopback_redirects,
@@ -204,6 +308,13 @@ impl OidcConfig {
             (None, Some(value)) => (vec![OidcIssuer::parse(&value)?], true),
             (None, None) => bail!("{ISSUERS_ENV} or {LEGACY_ISSUER_ENV} is required"),
         };
+        let portal_access_keys = match optional_env(PORTAL_ACCESS_KEYS_ENV)? {
+            Some(value) if value.trim().is_empty() => {
+                bail!("{PORTAL_ACCESS_KEYS_ENV} must not be empty when set")
+            }
+            Some(value) => parse_portal_access_keys(&value, &issuers)?,
+            None => Vec::new(),
+        };
         let private_key_pem = std::fs::read(private_key_path).with_context(|| {
             format!(
                 "failed to read OIDC private key at {}",
@@ -221,6 +332,7 @@ impl OidcConfig {
 
         Self::build(
             issuers,
+            portal_access_keys,
             private_key_pem,
             allow_insecure_web_loopback_redirects,
             legacy_single_issuer,
@@ -247,6 +359,20 @@ impl OidcConfig {
             .map(OidcIssuer::as_str)
     }
 
+    pub fn requires_portal_key(&self) -> bool {
+        !self.portal_access_keys.is_empty()
+    }
+
+    pub fn issuer_for_portal_key(&self, key: &str) -> Option<&str> {
+        let mut matched = None;
+        for entry in &self.portal_access_keys {
+            if constant_time_eq(entry.key.as_bytes(), key.as_bytes()) {
+                matched = Some(entry.issuer.as_str());
+            }
+        }
+        matched
+    }
+
     pub fn allow_insecure_web_loopback_redirects(&self) -> bool {
         self.allow_insecure_web_loopback_redirects
     }
@@ -269,6 +395,75 @@ mod tests {
     use super::*;
 
     const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/oidc-private-key.pem");
+    const ACCESS_KEY_A: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const ACCESS_KEY_B: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+
+    #[test]
+    fn portal_access_keys_bind_each_issuer_to_one_key() {
+        let config = OidcConfig::from_issuers_with_portal_access_keys(
+            &["https://auth-a.example.com", "https://auth-b.example.com"],
+            &[
+                ("https://auth-a.example.com", ACCESS_KEY_A),
+                ("https://auth-b.example.com", ACCESS_KEY_B),
+            ],
+            PRIVATE_KEY.to_vec(),
+        )
+        .unwrap();
+
+        assert!(config.requires_portal_key());
+        assert_eq!(
+            config.issuer_for_portal_key(ACCESS_KEY_A),
+            Some("https://auth-a.example.com")
+        );
+        assert_eq!(
+            config.issuer_for_portal_key(ACCESS_KEY_B),
+            Some("https://auth-b.example.com")
+        );
+        assert_eq!(config.issuer_for_portal_key("unknown"), None);
+    }
+
+    #[test]
+    fn portal_access_keys_must_cover_every_issuer() {
+        assert!(
+            OidcConfig::from_issuers_with_portal_access_keys(
+                &["https://auth-a.example.com", "https://auth-b.example.com"],
+                &[("https://auth-a.example.com", ACCESS_KEY_A)],
+                PRIVATE_KEY.to_vec(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn portal_access_keys_reject_unlisted_duplicate_and_short_entries() {
+        let issuers = parse_issuer_list("https://auth-a.example.com").unwrap();
+        assert!(
+            parse_portal_access_keys(
+                &format!("https://auth-b.example.com={ACCESS_KEY_A}"),
+                &issuers
+            )
+            .is_err()
+        );
+        assert!(
+            parse_portal_access_keys(
+                &format!(
+                    "https://auth-a.example.com={ACCESS_KEY_A},https://auth-a.example.com={ACCESS_KEY_B}"
+                ),
+                &issuers
+            )
+            .is_err()
+        );
+        assert!(
+            parse_portal_access_keys(
+                &format!("https://auth-a.example.com={ACCESS_KEY_A},https://auth-b.example.com={ACCESS_KEY_A}"),
+                &issuers
+            )
+            .is_err()
+        );
+        assert!(
+            parse_portal_access_keys("https://auth-a.example.com=short-key", &issuers).is_err()
+        );
+    }
 
     #[test]
     fn issuer_must_be_an_https_origin() {
