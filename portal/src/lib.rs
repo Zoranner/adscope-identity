@@ -324,9 +324,13 @@ async fn forward(state: AppState, request: Request<Body>) -> anyhow::Result<Resp
         }
         upstream = upstream.header(name, value);
     }
-    upstream = upstream.header(header::HOST, &state.public_issuer_host);
     if let Some(portal_access_key) = &state.portal_access_key {
+        // 有入口凭据时 issuer 由凭据声明，Host 必须保持 CORE_URL 的主机名，
+        // 否则经过按 Host 路由的边缘节点会被送回 Portal。
         upstream = upstream.header(PORTAL_ACCESS_KEY_HEADER, portal_access_key);
+    } else {
+        // 没有凭据时沿用旧的 Host 判断方式。
+        upstream = upstream.header(header::HOST, &state.public_issuer_host);
     }
 
     let body = request.into_body();
@@ -812,7 +816,12 @@ mod tests {
                 .iter()
                 .filter_map(|value| value.to_str().ok().map(str::to_string))
                 .collect::<Vec<_>>();
-            Json(json!({ "portal_keys": portal_keys }))
+            let host = headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            Json(json!({ "portal_keys": portal_keys, "host": host }))
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -842,6 +851,11 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["portal_keys"], json!([PORTAL_KEY]));
+        assert_eq!(
+            body["host"],
+            json!(core_url.authority().to_string()),
+            "有入口凭据时 Host 必须保持 CORE_URL 的主机名"
+        );
 
         let unkeyed = portal_test_config(core_url, None);
         let response = router(AppState::new(&unkeyed).unwrap())
@@ -858,6 +872,11 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["portal_keys"], json!([]));
+        assert_eq!(
+            body["host"],
+            json!("auth-a.example.com"),
+            "没有入口凭据时继续用 PUBLIC_ISSUER 覆盖 Host"
+        );
 
         handle.abort();
         std::fs::remove_dir_all(&keyed.web_root).ok();

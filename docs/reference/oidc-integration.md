@@ -163,7 +163,7 @@ docker compose up -d --force-recreate core
 
 `adscope-portal` 负责 TLS、静态前端、API/OIDC 转发和两组入口路径判断。登录/管理开关由各 Portal 自己的环境变量控制，不依赖 Core 区分来源。Portal 可以自己终止 TLS，也可以由前置反向代理终止后使用 HTTP 监听。
 
-多个 Portal 不是多个 Core，也不各自持有用户目录或签名密钥。它们托管各自的前端，用 `PUBLIC_ISSUER` 覆盖转发 Host，并把 API/OIDC 转发到同一个 Core。同一公开 origin 下的多个副本复用同一个 `PUBLIC_ISSUER`。
+多个 Portal 不是多个 Core，也不各自持有用户目录或签名密钥。它们托管各自的前端，把 API/OIDC 转发到同一个 Core：没有入口凭据时用 `PUBLIC_ISSUER` 覆盖转发 Host，配置了 `PORTAL_ACCESS_KEY` 时保持 Core 的 Host、用 key 声明 issuer。同一公开 origin 下的多个副本复用同一个 `PUBLIC_ISSUER`。
 
 ### 登录与管理开关
 

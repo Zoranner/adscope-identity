@@ -8,7 +8,7 @@
 
 - 托管前端页面：用户访问的 `/login`、`/authorize`、`/admin` 等页面由 Portal 直接返回。
 - 反向代理：把 `/api/*`、`/oauth2/*`、`/.well-known/*` 转发到 Core；Core 只做 API、OIDC 和数据。
-- 绑定 issuer：以 `PUBLIC_ISSUER` 作为本入口的 OIDC issuer，转发时用它覆盖 Host。
+- 绑定 issuer：以 `PUBLIC_ISSUER` 作为本入口的 OIDC issuer；没有入口凭据时转发用它覆盖 Host。
 
 Portal 不保存用户、Token 或 OIDC 签名私钥，也不签发自己的 Token。所有入口共用 Core 的一把签名密钥，但 discovery、登录和回调都停留在各自的 Portal 域名。
 
@@ -35,7 +35,7 @@ docker run -d --name adscope-portal-a \
   -e PUBLIC_ISSUER=https://auth-a.example.com \
   -e LOGIN_ENABLED=true \
   -e ADMIN_ENABLED=true \
-  ghcr.io/zoranner/adscope-portal:0.4.1
+  ghcr.io/zoranner/adscope-portal:0.4.2
 ```
 
 如果 Portal 自己终止 TLS，再同时挂载并设置 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。所有 Portal 使用同一个镜像，按公开入口调整 `PUBLIC_ISSUER`、监听方式和入口开关：
@@ -64,9 +64,9 @@ Portal 容器内固定监听 `18086`，前置代理负责公开 HTTPS 入口并�
 
 `LOGIN_ENABLED=false` 拦截 `/login`、`/authorize`、`/oauth2/authorize`、`/api/auth/login`、`/api/oauth2/authorize/context`；`ADMIN_ENABLED=false` 拦截 `/admin`、`/admin/*`、`/api/admin`、`/api/admin/*`。浏览器路径返回 HTML 403，API 路径返回 JSON 403，其他路径照常处理。
 
-`PUBLIC_ISSUER` 必须是归一化后的 HTTPS origin，不能包含 userinfo、路径、查询参数或片段。Portal 用它覆盖转发到 Core 的 `Host`，不读取客户端 `Host` 或 `X-Forwarded-Host` 作为 issuer。
+`PUBLIC_ISSUER` 必须是归一化后的 HTTPS origin，不能包含 userinfo、路径、查询参数或片段。没有入口凭据时 Portal 用它覆盖转发到 Core 的 `Host`，不读取客户端 `Host` 或 `X-Forwarded-Host` 作为 issuer。
 
-Portal 转发时会用 `PUBLIC_ISSUER` 覆盖 `Host`。没有 `PORTAL_ACCESS_KEY` 时，`CORE_URL` 必须是 Core 的直连地址：经过 CDN 或按 Host 分流的公网域名会把请求路由回 Portal，形成回环并返回 1000 类错误。配置了 `PORTAL_ACCESS_KEY` 后，Core 用这个 key 判断 issuer，`CORE_URL` 可以填 Core 的公网 HTTPS 地址。
+没有 `PORTAL_ACCESS_KEY` 时，Portal 用 `PUBLIC_ISSUER` 覆盖 `Host`，`CORE_URL` 必须是 Core 的直连地址：经过 CDN 或按 Host 分流的公网域名会把请求路由回 Portal，形成回环并返回 1000 类错误。配置 `PORTAL_ACCESS_KEY` 后，Portal 保持 `CORE_URL` 的主机名、用 key 声明 issuer，Core 按 key 反查，`CORE_URL` 因此可以填 Core 的公网 HTTPS 地址。
 
 `TLS_CERT_FILE` 和 `TLS_KEY_FILE` 都不配置时，Portal 监听 HTTP，TLS 由前置反向代理终止；只配置其中一个时启动失败。内网 HTTP 监听只能暴露在本机回环或受信网络。
 
