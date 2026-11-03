@@ -17,7 +17,7 @@ docker network create adscope
 跨主机部署时不需要加入该网络。不配置 `PORTAL_ACCESS_KEY` 时，Portal 的 `CORE_URL` 必须是 Core 的内网直连地址（例如 `http://10.0.0.5:8080`）；不要填经过 CDN 或反向代理的公网域名，否则 Portal 转发时改写的 Host 会被边缘节点路由回 Portal，形成回环。配置 `PORTAL_ACCESS_KEY` 后，入口凭据会替代 Host 判断 issuer，`CORE_URL` 可以直接填 Core 的公网 HTTPS 地址。
 
 Core 和 Portal 镜像随版本标签发布到 GitHub Container Registry。Compose 使用固定版本
-`ghcr.io/zoranner/adscope-core:0.4.1` 和 `ghcr.io/zoranner/adscope-portal:0.4.1`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
+`ghcr.io/zoranner/adscope-core:0.4.2` 和 `ghcr.io/zoranner/adscope-portal:0.4.2`，部署时不需要从 GitHub Release 下载并加载镜像 tar 包；Release 中的镜像归档只用于离线或存档。
 如果镜像包为私有包，先使用具备 `read:packages` 权限的 GitHub 个人访问令牌登录：
 
 ```text
@@ -139,7 +139,7 @@ bun run build
 mkdir -p ../static
 cp -R .output/public/. ../static/
 cd ../..
-docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.4.1 .
+docker build -f portal/Dockerfile -t ghcr.io/zoranner/adscope-portal:0.4.2 .
 ```
 
 静态前端产物先复制到 `portal/static`，镜像构建时直接复制到 `/app/web`。

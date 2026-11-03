@@ -1,6 +1,6 @@
 services:
   portal:
-    image: ghcr.io/zoranner/adscope-portal:0.4.1
+    image: ghcr.io/zoranner/adscope-portal:0.4.2
     restart: unless-stopped
     ports:
       - 18086:18086
