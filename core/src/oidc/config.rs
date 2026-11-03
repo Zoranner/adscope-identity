@@ -11,7 +11,6 @@ use url::Url;
 use crate::auth::constant_time_eq;
 
 const ISSUERS_ENV: &str = "OIDC_ISSUERS";
-const LEGACY_ISSUER_ENV: &str = "OIDC_ISSUER";
 const ALLOW_INSECURE_WEB_LOOPBACK_ENV: &str = "OIDC_LOOPBACK_HTTP";
 const PORTAL_ACCESS_KEYS_ENV: &str = "PORTAL_ACCESS_KEYS";
 const MIN_PORTAL_ACCESS_KEY_LEN: usize = 32;
@@ -195,7 +194,8 @@ fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
 pub struct OidcConfig {
     issuers: Vec<OidcIssuer>,
     portal_access_keys: Vec<PortalAccessKey>,
-    legacy_single_issuer: bool,
+    /// 仅供测试配置：单 issuer 且忽略 Host。生产配置不再支持这种模式。
+    host_independent_issuer: bool,
     private_key_pem: Vec<u8>,
     allow_insecure_web_loopback_redirects: bool,
     authorization_code_ttl: Duration,
@@ -203,16 +203,13 @@ pub struct OidcConfig {
 }
 
 impl OidcConfig {
-    pub fn new_single_issuer_legacy(
-        issuer: &str,
-        private_key_pem: Vec<u8>,
-        allow_insecure_web_loopback_redirects: bool,
-    ) -> anyhow::Result<Self> {
+    #[doc(hidden)]
+    pub fn fixed_issuer_for_tests(issuer: &str, private_key_pem: Vec<u8>) -> anyhow::Result<Self> {
         Self::build(
             vec![OidcIssuer::parse(issuer)?],
             Vec::new(),
             private_key_pem,
-            allow_insecure_web_loopback_redirects,
+            false,
             true,
         )
     }
@@ -266,7 +263,7 @@ impl OidcConfig {
         portal_access_keys: Vec<PortalAccessKey>,
         private_key_pem: Vec<u8>,
         allow_insecure_web_loopback_redirects: bool,
-        legacy_single_issuer: bool,
+        host_independent_issuer: bool,
     ) -> anyhow::Result<Self> {
         ensure!(!issuers.is_empty(), "at least one OIDC issuer is required");
         if !portal_access_keys.is_empty() {
@@ -283,7 +280,7 @@ impl OidcConfig {
         Ok(Self {
             issuers,
             portal_access_keys,
-            legacy_single_issuer,
+            host_independent_issuer,
             private_key_pem,
             allow_insecure_web_loopback_redirects,
             authorization_code_ttl: Duration::from_secs(AUTHORIZATION_CODE_TTL_SECONDS),
@@ -298,16 +295,10 @@ impl OidcConfig {
     }
 
     pub(crate) fn from_env_with_private_key_path(private_key_path: &Path) -> anyhow::Result<Self> {
-        let issuers_env = optional_env(ISSUERS_ENV)?;
-        let legacy_issuer_env = optional_env(LEGACY_ISSUER_ENV)?;
-        let (issuers, legacy_single_issuer) = match (issuers_env, legacy_issuer_env) {
-            (Some(_), Some(_)) => {
-                bail!("{ISSUERS_ENV} and {LEGACY_ISSUER_ENV} must not both be set")
-            }
-            (Some(value), None) => (parse_issuer_list(&value)?, false),
-            (None, Some(value)) => (vec![OidcIssuer::parse(&value)?], true),
-            (None, None) => bail!("{ISSUERS_ENV} or {LEGACY_ISSUER_ENV} is required"),
+        let Some(issuers_env) = optional_env(ISSUERS_ENV)? else {
+            bail!("{ISSUERS_ENV} is required");
         };
+        let issuers = parse_issuer_list(&issuers_env)?;
         let portal_access_keys = match optional_env(PORTAL_ACCESS_KEYS_ENV)? {
             Some(value) if value.trim().is_empty() => {
                 bail!("{PORTAL_ACCESS_KEYS_ENV} must not be empty when set")
@@ -335,7 +326,7 @@ impl OidcConfig {
             portal_access_keys,
             private_key_pem,
             allow_insecure_web_loopback_redirects,
-            legacy_single_issuer,
+            false,
         )
     }
 
@@ -349,7 +340,7 @@ impl OidcConfig {
     }
 
     pub fn issuer_for_host(&self, host: Option<&str>) -> Option<&str> {
-        if self.legacy_single_issuer {
+        if self.host_independent_issuer {
             return self.issuers.first().map(OidcIssuer::as_str);
         }
         let host = normalize_host(host?)?;
@@ -468,12 +459,8 @@ mod tests {
     #[test]
     fn issuer_must_be_an_https_origin() {
         assert!(
-            OidcConfig::new_single_issuer_legacy(
-                "https://core.example.test",
-                PRIVATE_KEY.to_vec(),
-                false,
-            )
-            .is_ok()
+            OidcConfig::fixed_issuer_for_tests("https://core.example.test", PRIVATE_KEY.to_vec())
+                .is_ok()
         );
         for issuer in [
             "http://core.example.test",
@@ -483,7 +470,7 @@ mod tests {
             "https://user@core.example.test",
         ] {
             assert!(
-                OidcConfig::new_single_issuer_legacy(issuer, PRIVATE_KEY.to_vec(), false).is_err(),
+                OidcConfig::fixed_issuer_for_tests(issuer, PRIVATE_KEY.to_vec()).is_err(),
                 "unexpectedly accepted {issuer}"
             );
         }
@@ -491,12 +478,9 @@ mod tests {
 
     #[test]
     fn fixed_protocol_ttls_are_exposed() {
-        let config = OidcConfig::new_single_issuer_legacy(
-            "https://core.example.test",
-            PRIVATE_KEY.to_vec(),
-            false,
-        )
-        .unwrap();
+        let config =
+            OidcConfig::fixed_issuer_for_tests("https://core.example.test", PRIVATE_KEY.to_vec())
+                .unwrap();
         assert_eq!(config.authorization_code_ttl().as_secs(), 120);
         assert_eq!(config.token_ttl().as_secs(), 300);
     }
@@ -590,13 +574,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_single_issuer_ignores_request_host() {
-        let config = OidcConfig::new_single_issuer_legacy(
-            "https://core.example.test",
-            PRIVATE_KEY.to_vec(),
-            false,
-        )
-        .unwrap();
+    fn fixed_test_issuer_ignores_request_host() {
+        let config =
+            OidcConfig::fixed_issuer_for_tests("https://core.example.test", PRIVATE_KEY.to_vec())
+                .unwrap();
 
         assert_eq!(
             config.issuer_for_host(Some("attacker.example.test")),

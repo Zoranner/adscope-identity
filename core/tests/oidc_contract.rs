@@ -3125,12 +3125,8 @@ async fn seed_oidc_client(repository: &Repository) -> OAuthClientRecord {
 
 fn test_oidc_service() -> OidcService {
     OidcService::new(
-        OidcConfig::new_single_issuer_legacy(
-            TEST_OIDC_ISSUER,
-            TEST_OIDC_PRIVATE_KEY.to_vec(),
-            false,
-        )
-        .unwrap(),
+        OidcConfig::fixed_issuer_for_tests(TEST_OIDC_ISSUER, TEST_OIDC_PRIVATE_KEY.to_vec())
+            .unwrap(),
     )
     .unwrap()
 }

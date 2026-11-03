@@ -44,8 +44,9 @@ pub(crate) fn reject_retired_environment_variables() -> anyhow::Result<()> {
         ("ADSCOPE_USER_SESSION_TTL_SECONDS", "SESSION_TTL_SECONDS"),
         ("ADSS_MANAGEMENT_TOKEN", "MANAGEMENT_TOKEN"),
         ("ADSCOPE_MANAGEMENT_TOKEN", "MANAGEMENT_TOKEN"),
-        ("ADSS_OIDC_ISSUER", "OIDC_ISSUER"),
-        ("ADSCOPE_OIDC_ISSUER", "OIDC_ISSUER"),
+        ("OIDC_ISSUER", "OIDC_ISSUERS"),
+        ("ADSS_OIDC_ISSUER", "OIDC_ISSUERS"),
+        ("ADSCOPE_OIDC_ISSUER", "OIDC_ISSUERS"),
         (
             "ADSS_OIDC_PRIVATE_KEY_FILE",
             "/run/secrets/oidc-private-key.pem",

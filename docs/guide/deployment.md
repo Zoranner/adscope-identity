@@ -41,7 +41,7 @@ Core 的变量说明只维护在 [deploy/core/.env.example](../../deploy/core/.e
 
 ## 主服务
 
-Core 是 API 和同步控制面。Core 必须配置 `PASSWORD_ENCRYPTION_KEY`、`PASSWORD_HASH_PROVIDER`、`SESSION_KEY`、`MANAGEMENT_TOKEN` 和 `OIDC_ISSUERS`。生产部署还应显式设置 `OIDC_LOOPBACK_HTTP=false`。旧部署过渡期可以只设置 `OIDC_ISSUER`，但它不能与 `OIDC_ISSUERS` 同时存在。
+Core 是 API 和同步控制面。Core 必须配置 `PASSWORD_ENCRYPTION_KEY`、`PASSWORD_HASH_PROVIDER`、`SESSION_KEY`、`MANAGEMENT_TOKEN` 和 `OIDC_ISSUERS`。生产部署还应显式设置 `OIDC_LOOPBACK_HTTP=false`。`OIDC_ISSUER` 已弃用，设置后 Core 拒绝启动。
 
 Core 只接受 PostgreSQL，启动时从 `DATABASE_URL` 读取连接串，scheme 必须是 `postgres://` 或 `postgresql://`，缺省或写成其他数据库会直接启动失败。连接串里的库名、账号和密码由部署方提供，Core 启动时幂等建表。`deploy/core/docker-compose.yml` 内置 `postgres:16` 服务，容器内主机名是 Compose 服务名 `postgres`，数据目录是宿主机部署目录的 `data/postgres`；`DATABASE_URL` 写在部署目录的 `.env` 里，密码与 `POSTGRES_PASSWORD` 保持一致。SQLite 只保留在自动化测试里，不作为部署数据库。
 
@@ -212,7 +212,7 @@ Portal 终止 TLS 时会看到密码、Cookie、client secret 和 Token 响应�
 5. 依赖方把 issuer 从 Core 后端地址改为所属 Portal 地址。
 6. 验证每个 Portal 的 discovery、登录、Token 和 UserInfo。
 7. 验证每个 Syncer 的同步 revision 正常推进，并确认它们仍直接访问 Core。
-8. 稳定后移除旧的 `OIDC_ISSUER` 兼容配置。
+8. 确认部署中没有残留 `OIDC_ISSUER`；该变量已弃用，存在时 Core 拒绝启动。
 
 受信内网 Portal 可以设置 `ADMIN_ENABLED=true`，面向不受信网络的 Portal 设置 `ADMIN_ENABLED=false`。不同公开 origin 的 Portal 独立登录，不共享 Cookie，不实现跨 Portal SSO；所有 issuer 共用 Core 的一把 RSA 私钥，JWKS 内容相同。
 

@@ -2019,7 +2019,10 @@ async fn app_state_from_env_accepts_password_encryption_key() {
 
     let state = app_state_from_env(repository).unwrap();
     assert_eq!(
-        state.oidc.config().issuer_for_host(None),
+        state
+            .oidc
+            .config()
+            .issuer_for_host(Some("core.example.test")),
         Some(TEST_OIDC_ISSUER)
     );
     assert!(!state.oidc.config().allow_insecure_web_loopback_redirects());
@@ -2037,12 +2040,15 @@ async fn app_state_from_env_accepts_unprefixed_environment_variables() {
         std::env::set_var("PASSWORD_HASH_PROVIDER", "argon2id");
         std::env::set_var("SESSION_KEY", "test-user-session-key");
         std::env::set_var("MANAGEMENT_TOKEN", MANAGEMENT_TOKEN);
-        std::env::set_var("OIDC_ISSUER", TEST_OIDC_ISSUER);
+        std::env::set_var("OIDC_ISSUERS", TEST_OIDC_ISSUER);
     }
 
     let state = app_state_from_env(repository).unwrap();
     assert_eq!(
-        state.oidc.config().issuer_for_host(None),
+        state
+            .oidc
+            .config()
+            .issuer_for_host(Some("core.example.test")),
         Some(TEST_OIDC_ISSUER)
     );
 
@@ -2078,24 +2084,21 @@ async fn app_state_from_env_accepts_oidc_issuers() {
 }
 
 #[tokio::test]
-async fn app_state_from_env_rejects_both_oidc_settings() {
+async fn app_state_from_env_rejects_retired_oidc_issuer() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
     set_valid_server_env();
     unsafe {
-        std::env::set_var(
-            "OIDC_ISSUERS",
-            "https://auth-a.example.com,https://auth-b.example.com",
-        );
+        std::env::set_var("OIDC_ISSUER", TEST_OIDC_ISSUER);
     }
 
     let error = match app_state_from_env(repository) {
-        Ok(_) => panic!("ambiguous OIDC configuration must not configure AppState"),
+        Ok(_) => panic!("retired OIDC_ISSUER must not configure AppState"),
         Err(error) => error,
     };
+    assert!(error.to_string().contains("OIDC_ISSUER is retired"));
     assert!(error.to_string().contains("OIDC_ISSUERS"));
-    assert!(error.to_string().contains("OIDC_ISSUER"));
 
     clear_server_env();
 }
@@ -2184,31 +2187,12 @@ async fn app_state_from_env_rejects_missing_management_token() {
 }
 
 #[tokio::test]
-async fn app_state_from_env_rejects_invalid_legacy_oidc_issuer() {
-    let repository = Repository::connect("sqlite::memory:").await.unwrap();
-    let _guard = ENV_LOCK.lock().unwrap();
-    clear_server_env();
-    set_valid_server_env();
-    unsafe {
-        std::env::set_var("OIDC_ISSUER", "http://core.example.test");
-    }
-
-    let error = match app_state_from_env(repository) {
-        Ok(_) => panic!("HTTP OIDC issuer must not configure AppState"),
-        Err(error) => error,
-    };
-    assert!(error.to_string().contains("OIDC issuer must use HTTPS"));
-    clear_server_env();
-}
-
-#[tokio::test]
 async fn app_state_from_env_rejects_invalid_oidc_issuers() {
     let repository = Repository::connect("sqlite::memory:").await.unwrap();
     let _guard = ENV_LOCK.lock().unwrap();
     clear_server_env();
     set_valid_server_env();
     unsafe {
-        std::env::remove_var("OIDC_ISSUER");
         std::env::set_var("OIDC_ISSUERS", "http://auth-a.example.com");
     }
 
@@ -2227,18 +2211,14 @@ async fn app_state_from_env_requires_one_oidc_issuer_setting() {
     clear_server_env();
     set_valid_server_env();
     unsafe {
-        std::env::remove_var("OIDC_ISSUER");
+        std::env::remove_var("OIDC_ISSUERS");
     }
 
     let error = match app_state_from_env(repository) {
         Ok(_) => panic!("missing OIDC issuer must not configure AppState"),
         Err(error) => error,
     };
-    assert!(
-        error
-            .to_string()
-            .contains("OIDC_ISSUERS or OIDC_ISSUER is required")
-    );
+    assert!(error.to_string().contains("OIDC_ISSUERS is required"));
     clear_server_env();
 }
 
@@ -2807,7 +2787,7 @@ fn clear_server_env() {
 
 fn set_oidc_env() {
     unsafe {
-        std::env::set_var("OIDC_ISSUER", TEST_OIDC_ISSUER);
+        std::env::set_var("OIDC_ISSUERS", TEST_OIDC_ISSUER);
     }
 }
 

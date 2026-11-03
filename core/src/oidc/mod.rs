@@ -328,8 +328,7 @@ mod tests {
     #[test]
     fn invalid_private_key_is_rejected() {
         let config =
-            OidcConfig::new_single_issuer_legacy(ISSUER, b"not a private key".to_vec(), false)
-                .unwrap();
+            OidcConfig::fixed_issuer_for_tests(ISSUER, b"not a private key".to_vec()).unwrap();
         assert!(OidcService::new(config).is_err());
     }
 
@@ -339,8 +338,7 @@ mod tests {
             RsaPrivateKey::from_pkcs8_pem(std::str::from_utf8(PRIVATE_KEY).unwrap()).unwrap();
         let pkcs1_pem = private_key.to_pkcs1_pem(Default::default()).unwrap();
         let config =
-            OidcConfig::new_single_issuer_legacy(ISSUER, pkcs1_pem.as_bytes().to_vec(), false)
-                .unwrap();
+            OidcConfig::fixed_issuer_for_tests(ISSUER, pkcs1_pem.as_bytes().to_vec()).unwrap();
 
         assert!(OidcService::new(config).is_ok());
     }
@@ -445,17 +443,14 @@ mod tests {
     }
 
     fn test_service() -> OidcService {
-        OidcService::new(
-            OidcConfig::new_single_issuer_legacy(ISSUER, PRIVATE_KEY.to_vec(), false).unwrap(),
-        )
-        .unwrap()
+        OidcService::new(OidcConfig::fixed_issuer_for_tests(ISSUER, PRIVATE_KEY.to_vec()).unwrap())
+            .unwrap()
     }
 
     fn service_with_generated_rsa_key(bits: usize) -> anyhow::Result<OidcService> {
         let private_key = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, bits)?;
         let pkcs1_pem = private_key.to_pkcs1_pem(Default::default())?;
-        let config =
-            OidcConfig::new_single_issuer_legacy(ISSUER, pkcs1_pem.as_bytes().to_vec(), false)?;
+        let config = OidcConfig::fixed_issuer_for_tests(ISSUER, pkcs1_pem.as_bytes().to_vec())?;
         OidcService::new(config)
     }
 }

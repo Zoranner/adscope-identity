@@ -158,7 +158,7 @@ impl AppState {
 }
 
 fn oidc_service_for_tests(issuer: &str, private_key_pem: &[u8]) -> OidcService {
-    let config = OidcConfig::new_single_issuer_legacy(issuer, private_key_pem.to_vec(), false)
+    let config = OidcConfig::fixed_issuer_for_tests(issuer, private_key_pem.to_vec())
         .expect("test OIDC configuration must be valid");
     OidcService::new(config).expect("test OIDC private key must be valid")
 }
