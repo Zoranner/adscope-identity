@@ -1,6 +1,6 @@
 services:
   core:
-    image: ghcr.io/zoranner/adscope-core:0.4.0
+    image: ghcr.io/zoranner/adscope-core:0.4.1
     container_name: adscope-core
     restart: unless-stopped
     depends_on:

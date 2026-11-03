@@ -8,7 +8,7 @@ COPY portal/ portal/
 RUN cargo build --release --locked -p adscope-portal
 
 FROM debian:bookworm-slim
-ARG VERSION=0.4.0
+ARG VERSION=0.4.1
 ARG REVISION=unknown
 LABEL org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION
